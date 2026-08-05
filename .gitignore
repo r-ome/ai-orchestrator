@@ -1,0 +1,15 @@
+# OS
+.DS_Store
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Local agent settings
+.claude/settings.local.json
+
+# Env
+.env
+.env.*
+!.env.example

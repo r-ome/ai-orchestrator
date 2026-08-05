@@ -1,0 +1,5 @@
+__pycache__/
+.pytest_cache/
+.venv/
+.controller-data/
+*.py[cod]

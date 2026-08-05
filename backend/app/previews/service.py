@@ -1,0 +1,3286 @@
+import base64
+import io
+import json
+import logging
+import re
+import secrets
+import shlex
+import socket
+import tarfile
+import time
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from pathlib import Path, PurePosixPath
+from threading import Lock
+from typing import Any
+from urllib.parse import quote
+from uuid import uuid4
+
+import yaml
+from docker.client import DockerClient
+from docker.errors import (
+    APIError,
+    BuildError,
+    ContainerError,
+    DockerException,
+    ImageNotFound,
+    NotFound,
+)
+from docker.models.containers import Container
+from requests.exceptions import ReadTimeout
+
+from app.controller.store import ControllerStore
+from app.previews.config import PreviewSettings
+from app.previews.detection import (
+    ENVIRONMENT_FILE_NAMES,
+    capture_source_runtime_files,
+    compare_files,
+    detect_preview,
+    hashes,
+    is_detection_file,
+    parse_environment_names,
+    parse_environment_pairs,
+    proposal_digest,
+)
+from app.previews.models import (
+    ENVIRONMENT_VARIABLE_PATTERN,
+    DatabaseSharingState,
+    ImportProjectSecretsResponse,
+    PreviewAction,
+    PreviewConfiguration,
+    PreviewContainer,
+    PreviewDependencyService,
+    PreviewEnvironmentSource,
+    PreviewLogs,
+    PreviewMode,
+    PreviewNetworkAccess,
+    PreviewPersistence,
+    PreviewProgressEvent,
+    PreviewProposal,
+    PreviewRun,
+    PreviewRuntime,
+    PreviewSharing,
+    ProjectDatabaseSharing,
+    ProjectSecretName,
+    ProjectSecrets,
+    SetProjectSecretsRequest,
+    SharedDatabaseCandidate,
+    StartPreviewRequest,
+    StopPreviewResponse,
+)
+from app.projects.service import (
+    ProjectOperationError,
+    inspect_registered_project,
+    project_id,
+)
+
+
+LABEL_MANAGED = "orchestrator.preview.managed"
+LABEL_DATA_MANAGED = "orchestrator.preview.data-managed"
+LABEL_CONTROLLER_MANAGED = "orchestrator.managed"
+LABEL_SANDBOX_ID = "orchestrator.sandbox.id"
+LABEL_RUN_ID = "orchestrator.run.id"
+LABEL_KIND = "orchestrator.kind"
+LABEL_SERVICE = "orchestrator.preview.service"
+LABEL_EXPIRES_AT = "orchestrator.preview.expires-at"
+LABEL_PERSISTENT = "orchestrator.preview.persistent"
+LABEL_PROJECT_ID = "orchestrator.project.id"
+LABEL_SHARED_DATABASE = "orchestrator.shared-database"
+LABEL_SHARED_DATABASE_IMAGE = "orchestrator.shared-database.image"
+LABEL_PROJECT_SOURCE = "orchestrator.project.source"
+PREVIEW_CONTAINER_PREFIX = "orchestrator-preview-"
+SHARED_DATABASE_PREFIX = "orchestrator-shared-db-"
+MAX_CONTEXT_BYTES = 512 * 1024 * 1024
+MYSQL_PORT = 3306
+_preview_lock = Lock()
+# Serializes get-or-create of a project's shared server across concurrent starts.
+_shared_database_lock = Lock()
+logger = logging.getLogger("uvicorn.error")
+ProgressReporter = Callable[[str, str], None]
+
+
+class PreviewOperationError(Exception):
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+def propose_preview(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    settings: PreviewSettings,
+    project_name: str,
+) -> PreviewProposal:
+    project = _ready_project(docker_client, project_name)
+    _register_sandbox(controller_store, project)
+    files = _volume_runtime_files(
+        docker_client,
+        project.volume_name,
+        settings,
+    )
+    baseline = controller_store.latest_baseline(project.sandbox_id)
+    if not baseline:
+        baseline_files = _original_baseline(project, settings) or files
+        controller_store.record_initial_baseline(
+            project.sandbox_id,
+            baseline_files,
+            hashes(baseline_files),
+        )
+        baseline = controller_store.latest_baseline(project.sandbox_id)
+
+    environment_files = _volume_environment_files(
+        docker_client,
+        project.volume_name,
+        settings,
+    )
+    environment_names = parse_environment_names(environment_files)
+    detection = detect_preview(
+        files,
+        default_expiry_minutes=settings.default_expiry_minutes,
+        environment_names=environment_names,
+    )
+    project_key = project_id(project.source_path)
+    secret_names = set(controller_store.project_secret_names(project_key))
+    controller_managed = {
+        variable
+        for variable, source in detection.config.environment.items()
+        if source.from_service
+    }
+    for name in detection.required_environment:
+        if name in controller_managed or name not in secret_names:
+            continue
+        detection.config.environment[name] = PreviewEnvironmentSource(from_secret=name)
+    configured_environment, missing_environment = _environment_status(
+        detection.required_environment,
+        secret_names,
+        controller_managed,
+    )
+    protected_hashes = hashes(files)
+    changes = compare_files(files, baseline)
+    created_at = _now()
+    expires_at = _time_after(seconds=settings.proposal_lifetime_seconds)
+    digest = proposal_digest(detection.config, protected_hashes)
+    previous_approval = controller_store.latest_approval(project.sandbox_id)
+    approval_required = (
+        previous_approval is None
+        or previous_approval.get("proposal_digest") != digest
+        or bool(changes)
+    )
+    proposal_id = uuid4().hex
+    controller_store.create_review(
+        review_id=proposal_id,
+        sandbox_id=project.sandbox_id,
+        proposal_digest=digest,
+        detected_mode=detection.mode.value,
+        config=detection.config.model_dump(mode="json"),
+        protected_files=protected_hashes,
+        changes=[change.model_dump() for change in changes],
+        created_at=created_at,
+        expires_at=expires_at,
+    )
+    return PreviewProposal(
+        id=proposal_id,
+        digest=digest,
+        sandbox_id=project.sandbox_id,
+        project_name=project.name,
+        detected_mode=detection.mode,
+        detected_runtime=detection.runtime,
+        confidence=detection.confidence,
+        evidence=detection.evidence,
+        available_services=detection.available_services,
+        config=detection.config,
+        protected_files=protected_hashes,
+        changes=changes,
+        approval_required=approval_required,
+        created_at=created_at,
+        expires_at=expires_at,
+        # Sharing is offered only when this sandbox actually runs a database.
+        share_candidates=(
+            _share_candidates(
+                controller_store,
+                project_key=project_id(project.source_path),
+                sandbox_id=project.sandbox_id,
+            )
+            if "database" in detection.config.services
+            else []
+        ),
+        required_environment=detection.required_environment,
+        missing_environment=missing_environment,
+        configured_environment=configured_environment,
+    )
+
+
+def _environment_status(
+    required_environment: list[str],
+    secret_names: set[str],
+    controller_managed: set[str],
+) -> tuple[list[str], list[str]]:
+    configured = sorted(secret_names | controller_managed)
+    missing = sorted(set(required_environment) - set(configured))
+    return configured, missing
+
+
+def start_preview(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    settings: PreviewSettings,
+    project_name: str,
+    request: StartPreviewRequest,
+) -> PreviewRun:
+    project = _ready_project(docker_client, project_name)
+    _register_sandbox(controller_store, project)
+    with _preview_lock:
+        active = controller_store.active_preview(project.sandbox_id)
+        if active is not None:
+            if request.action is PreviewAction.REUSE:
+                return _run_from_record(
+                    docker_client,
+                    project.name,
+                    active,
+                    controller_store,
+                )
+            if request.action is PreviewAction.RESTART:
+                return restart_preview(
+                    docker_client,
+                    controller_store,
+                    settings,
+                    project_name,
+                )
+            if request.action is PreviewAction.REBUILD:
+                stop_preview(
+                    docker_client,
+                    controller_store,
+                    project_name,
+                    remove_data_volumes=True,
+                    status="stopped",
+                )
+            else:
+                raise PreviewOperationError(
+                    409,
+                    "Sandbox already has an active preview; choose reuse, restart, or rebuild",
+                )
+
+        review = controller_store.review(request.proposal_id)
+        if review is None or review.get("sandbox_id") != project.sandbox_id:
+            raise PreviewOperationError(404, "Preview proposal was not found")
+        if review.get("proposal_digest") != request.proposal_digest:
+            raise PreviewOperationError(409, "Preview proposal digest does not match")
+        if str(review.get("expires_at", "")) <= _now():
+            raise PreviewOperationError(409, "Preview proposal expired; inspect again")
+
+        files = _volume_runtime_files(
+            docker_client,
+            project.volume_name,
+            settings,
+        )
+        current_hashes = hashes(files)
+        proposed_hashes = json.loads(str(review.get("protected_files_json") or "{}"))
+        if current_hashes != proposed_hashes:
+            raise PreviewOperationError(
+                409,
+                "Protected runtime files changed after inspection; inspect again",
+            )
+        if request.save_default:
+            _write_preview_manifest(
+                docker_client,
+                project.volume_name,
+                settings.inspection_image,
+                request.config,
+            )
+            files = _volume_runtime_files(
+                docker_client,
+                project.volume_name,
+                settings,
+            )
+            current_hashes = hashes(files)
+        approved_digest = proposal_digest(request.config, current_hashes)
+        _validate_sharing(
+            controller_store,
+            project_key=project_id(project.source_path),
+            sandbox_id=project.sandbox_id,
+            config=request.config,
+        )
+        controller_store.approve_review(
+            review_id=request.proposal_id,
+            sandbox_id=project.sandbox_id,
+            proposal_digest=approved_digest,
+            config=request.config.model_dump(mode="json"),
+            actor=request.actor,
+            files=files,
+            hashes=current_hashes,
+        )
+
+        run_id = uuid4().hex
+        host_port = request.config.host_port or _available_host_port()
+        created_at = _now()
+        expires_at = _expiry(request.config.expiry_minutes)
+        labels = _labels(project.sandbox_id, run_id, expires_at)
+        progress = lambda step, message: _record_preview_progress(
+            controller_store,
+            sandbox_id=project.sandbox_id,
+            proposal_id=request.proposal_id,
+            preview_id=run_id,
+            status="preparing",
+            step=step,
+            message=message,
+        )
+        resources: dict[str, Any] = {
+            "containers": [],
+            "networks": [],
+            "volumes": [],
+            "images": [],
+        }
+        progress(
+            "approved",
+            f"Approved {request.config.mode.value} preview settings; assigned host port {host_port}",
+        )
+        try:
+            if request.config.mode is PreviewMode.NATIVE:
+                resources = _start_native(
+                    docker_client,
+                    settings,
+                    project.volume_name,
+                    request.config,
+                    labels,
+                    run_id,
+                    host_port,
+                    expected_protected_hashes=current_hashes,
+                    progress=progress,
+                    controller_store=controller_store,
+                    project_key=project_id(project.source_path),
+                    source_path=project.source_path,
+                    secrets=controller_store.project_secrets(
+                        project_id(project.source_path)
+                    ),
+                )
+            elif request.config.mode is PreviewMode.DOCKERFILE:
+                resources = _start_dockerfile(
+                    docker_client,
+                    settings,
+                    project.volume_name,
+                    request.config,
+                    labels,
+                    run_id,
+                    host_port,
+                    progress=progress,
+                    secrets=controller_store.project_secrets(
+                        project_id(project.source_path)
+                    ),
+                )
+            elif request.config.mode is PreviewMode.COMPOSE:
+                resources = _start_compose(
+                    docker_client,
+                    settings,
+                    project.volume_name,
+                    files,
+                    request.config,
+                    labels,
+                    run_id,
+                    host_port,
+                    progress=progress,
+                    secrets=controller_store.project_secrets(
+                        project_id(project.source_path)
+                    ),
+                )
+            else:
+                raise PreviewOperationError(
+                    422,
+                    "Unknown projects require an approved native, Dockerfile, or Compose configuration",
+                )
+        except Exception as error:
+            try:
+                resources = _resources_for_run(docker_client, run_id)
+            except DockerException:
+                pass
+            _remove_resources(resources, remove_data_volumes=True)
+            _record_preview_progress(
+                controller_store,
+                sandbox_id=project.sandbox_id,
+                proposal_id=request.proposal_id,
+                preview_id=run_id,
+                status="failed",
+                step="failed",
+                message=f"Preview creation failed: {error}",
+                level="error",
+            )
+            raise
+
+        network_name = ",".join(
+            network.name for network in resources.get("networks") or []
+        )
+        values = {
+            "id": run_id,
+            "sandbox_id": project.sandbox_id,
+            "proposal_id": request.proposal_id,
+            "mode": request.config.mode.value,
+            "status": "running",
+            "selected_service": request.config.selected_service,
+            "container_port": request.config.container_port,
+            "host_port": host_port,
+            "config_json": json.dumps(
+                request.config.model_dump(mode="json"),
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            "config_digest": approved_digest,
+            "network_name": network_name,
+            "created_at": created_at,
+            "started_at": _now(),
+            "expires_at": expires_at,
+            "last_activity_at": _now(),
+        }
+        try:
+            controller_store.create_preview_run(values)
+        except Exception as error:
+            _remove_resources(resources, remove_data_volumes=True)
+            _record_preview_progress(
+                controller_store,
+                sandbox_id=project.sandbox_id,
+                proposal_id=request.proposal_id,
+                preview_id=run_id,
+                status="failed",
+                step="record",
+                message=f"Preview containers started, but controller state failed: {error}",
+                level="error",
+            )
+            raise
+        _record_preview_progress(
+            controller_store,
+            sandbox_id=project.sandbox_id,
+            proposal_id=request.proposal_id,
+            preview_id=run_id,
+            status="running",
+            step="ready",
+            message=f"Preview is running at http://127.0.0.1:{host_port}",
+        )
+        record = controller_store.preview_run(run_id)
+        if record is None:
+            raise PreviewOperationError(500, "Preview state was not recorded")
+        return _run_from_record(docker_client, project.name, record, controller_store)
+
+
+def get_current_preview(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    project_name: str,
+    *,
+    touch: bool = False,
+    expiry_minutes: int | None = None,
+) -> PreviewRun:
+    project = _ready_project(docker_client, project_name)
+    record = controller_store.active_preview(project.sandbox_id)
+    if record is None:
+        raise PreviewOperationError(404, "Sandbox has no active preview")
+    if touch:
+        if expiry_minutes is None:
+            config = PreviewConfiguration.model_validate_json(str(record["config_json"]))
+            expiry_minutes = config.expiry_minutes
+        controller_store.touch_preview(
+            str(record["id"]),
+            expires_at=_expiry(expiry_minutes),
+        )
+        record = controller_store.preview_run(str(record["id"])) or record
+    return _run_from_record(docker_client, project.name, record, controller_store)
+
+
+def reuse_preview(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    settings: PreviewSettings,
+    project_name: str,
+) -> PreviewRun:
+    return get_current_preview(
+        docker_client,
+        controller_store,
+        project_name,
+        touch=True,
+        expiry_minutes=None,
+    )
+
+
+def restart_preview(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    settings: PreviewSettings,
+    project_name: str,
+) -> PreviewRun:
+    project = _ready_project(docker_client, project_name)
+    record = controller_store.active_preview(project.sandbox_id)
+    if record is None:
+        raise PreviewOperationError(404, "Sandbox has no active preview")
+    config = PreviewConfiguration.model_validate_json(str(record["config_json"]))
+    files = _volume_runtime_files(docker_client, project.volume_name, settings)
+    if proposal_digest(config, hashes(files)) != record.get("config_digest"):
+        raise PreviewOperationError(
+            409,
+            "Protected runtime files changed; inspect and approve a rebuild",
+        )
+    containers = _preview_containers(docker_client, str(record["id"]), all=True)
+    if not containers:
+        controller_store.update_preview_run(str(record["id"]), status="missing")
+        raise PreviewOperationError(409, "Preview containers are missing; rebuild it")
+    controller_store.update_preview_run(str(record["id"]), status="restarting")
+    try:
+        database = config.services.get("database")
+        shared = (
+            database is not None
+            and database.sharing is not PreviewSharing.ISOLATED
+        )
+        if config.mode is PreviewMode.NATIVE and database is not None and shared:
+            by_service = {
+                _container_service(container): container for container in containers
+            }
+            application_container = by_service.get("app")
+            if application_container is None:
+                raise PreviewOperationError(
+                    409,
+                    "The preview application container is missing; rebuild it",
+                )
+            database_container = _restart_shared_database(
+                docker_client,
+                settings,
+                project_key=project_id(project.source_path),
+                source_path=project.source_path,
+                database=database,
+                run_id=str(record["id"]),
+            )
+            _wait_for_mysql_health(
+                database_container,
+                timeout_seconds=settings.prepare_timeout_seconds,
+            )
+            application_container.restart(timeout=5)
+            gateway = by_service.get("gateway")
+            if gateway is not None:
+                gateway.restart(timeout=5)
+        elif config.mode is PreviewMode.NATIVE and database is not None:
+            by_service = {
+                _container_service(container): container for container in containers
+            }
+            database_container = by_service.get("database")
+            application_container = by_service.get("app")
+            if database_container is None or application_container is None:
+                raise PreviewOperationError(
+                    409,
+                    "Native database preview containers are missing; rebuild it",
+                )
+            database_container.reload()
+            health = (
+                (database_container.attrs.get("State") or {})
+                .get("Health", {})
+                .get("Status")
+            )
+            if database_container.status != "running":
+                database_container.start()
+            elif health == "unhealthy":
+                database_container.restart(timeout=5)
+            _wait_for_mysql_health(
+                database_container,
+                timeout_seconds=settings.prepare_timeout_seconds,
+            )
+            application_container.restart(timeout=5)
+            gateway = by_service.get("gateway")
+            if gateway is not None:
+                gateway.restart(timeout=5)
+        else:
+            for container in containers:
+                container.restart(timeout=5)
+    except DockerException:
+        controller_store.update_preview_run(str(record["id"]), status="failed")
+        raise
+    except PreviewOperationError:
+        controller_store.update_preview_run(str(record["id"]), status="failed")
+        raise
+    expires_at = _expiry(config.expiry_minutes)
+    controller_store.update_preview_run(
+        str(record["id"]),
+        status="running",
+        last_activity_at=_now(),
+        expires_at=expires_at,
+    )
+    refreshed = controller_store.preview_run(str(record["id"])) or record
+    return _run_from_record(docker_client, project.name, refreshed, controller_store)
+
+
+def stop_preview(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    project_name: str,
+    *,
+    remove_data_volumes: bool,
+    status: str = "stopped",
+) -> StopPreviewResponse:
+    project = inspect_registered_project(docker_client, project_name)
+    record = controller_store.active_preview(project.sandbox_id)
+    if record is None:
+        raise PreviewOperationError(404, "Sandbox has no active preview")
+    run_id = str(record["id"])
+    controller_store.update_preview_run(run_id, status="stopping")
+    resources = _resources_for_run(docker_client, run_id)
+    counts = _remove_resources(resources, remove_data_volumes=remove_data_volumes)
+    controller_store.update_preview_run(
+        run_id,
+        status=status,
+        stopped_at=_now(),
+    )
+    # Released after the run leaves the active set, so the idle check that
+    # decides whether to remove the shared server does not count this run.
+    released = _release_shared_database(
+        docker_client,
+        controller_store,
+        sandbox_id=project.sandbox_id,
+    )
+    controller_store.event(
+        sandbox_id=project.sandbox_id,
+        run_id=run_id,
+        kind=f"preview.{status}",
+        payload={**counts, "shared_database": released},
+    )
+    return StopPreviewResponse(
+        id=run_id,
+        stopped=True,
+        removed_containers=counts["containers"],
+        removed_networks=counts["networks"],
+        removed_volumes=counts["volumes"],
+        removed_images=counts["images"],
+    )
+
+
+def preview_logs(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    settings: PreviewSettings,
+    project_name: str,
+) -> PreviewLogs:
+    run = reuse_preview(docker_client, controller_store, settings, project_name)
+    return _preview_log_response(
+        docker_client,
+        controller_store,
+        proposal_id=run.proposal_id,
+        preview_id=run.id,
+        fallback_status=run.status,
+    )
+
+
+def preview_creation_logs(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    project_name: str,
+    proposal_id: str,
+) -> PreviewLogs:
+    project = _ready_project(docker_client, project_name)
+    _register_sandbox(controller_store, project)
+    review = controller_store.review(proposal_id)
+    if review is None or review.get("sandbox_id") != project.sandbox_id:
+        raise PreviewOperationError(404, "Preview proposal was not found")
+    events = controller_store.events_for_run(
+        proposal_id,
+        kind="preview.progress",
+    )
+    preview_id = ""
+    status = "waiting"
+    if events:
+        payload = events[-1].get("payload") or {}
+        preview_id = str(payload.get("preview_id") or "")
+        status = str(payload.get("status") or "preparing")
+    return _preview_log_response(
+        docker_client,
+        controller_store,
+        proposal_id=proposal_id,
+        preview_id=preview_id,
+        fallback_status=status,
+    )
+
+
+def _preview_log_response(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    *,
+    proposal_id: str,
+    preview_id: str,
+    fallback_status: str,
+) -> PreviewLogs:
+    logs: dict[str, str] = {}
+    containers = (
+        _preview_containers(docker_client, preview_id, all=True)
+        if preview_id
+        else []
+    )
+    for container in containers:
+        try:
+            output = container.logs(
+                stdout=True,
+                stderr=True,
+                tail=200,
+                timestamps=True,
+            )
+        except DockerException as error:
+            logs[container.name] = f"Logs unavailable: {error}"
+            continue
+        if isinstance(output, bytes):
+            logs[container.name] = output.decode("utf-8", errors="replace")[-65_536:]
+        else:
+            logs[container.name] = str(output)[-65_536:]
+    stored_events = controller_store.events_for_run(
+        proposal_id,
+        kind="preview.progress",
+    )
+    events = []
+    status = fallback_status
+    for stored in stored_events:
+        payload = stored.get("payload") or {}
+        status = str(payload.get("status") or status)
+        events.append(
+            PreviewProgressEvent(
+                id=int(stored["id"]),
+                level=str(payload.get("level") or "info"),
+                step=str(payload.get("step") or "preview"),
+                message=str(payload.get("message") or ""),
+                created_at=str(stored["created_at"]),
+            )
+        )
+    return PreviewLogs(
+        proposal_id=proposal_id,
+        preview_id=preview_id,
+        status=status,
+        events=events,
+        logs=logs,
+    )
+
+
+def _record_preview_progress(
+    controller_store: ControllerStore,
+    *,
+    sandbox_id: str,
+    proposal_id: str,
+    preview_id: str,
+    status: str,
+    step: str,
+    message: str,
+    level: str = "info",
+) -> None:
+    limited_message = message[-16_384:]
+    log_method = logger.error if level == "error" else logger.info
+    log_method(
+        "Preview %s proposal %s [%s] %s",
+        preview_id,
+        proposal_id,
+        step,
+        limited_message,
+    )
+    controller_store.event(
+        sandbox_id=sandbox_id,
+        run_id=proposal_id,
+        kind="preview.progress",
+        payload={
+            "preview_id": preview_id,
+            "status": status,
+            "level": level,
+            "step": step,
+            "message": limited_message,
+        },
+    )
+
+
+def _ignore_progress(step: str, message: str) -> None:
+    del step, message
+
+
+def expire_previews(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+) -> int:
+    expired = controller_store.expired_previews(_now())
+    count = 0
+    for record in expired:
+        run_id = str(record["id"])
+        resources = _resources_for_run(docker_client, run_id)
+        _remove_resources(resources, remove_data_volumes=True)
+        controller_store.update_preview_run(
+            run_id,
+            status="expired",
+            stopped_at=_now(),
+        )
+        released = _release_shared_database(
+            docker_client,
+            controller_store,
+            sandbox_id=str(record["sandbox_id"]),
+        )
+        controller_store.event(
+            sandbox_id=str(record["sandbox_id"]),
+            run_id=run_id,
+            kind="preview.expired",
+            payload={"shared_database": released},
+        )
+        count += 1
+    return count
+
+
+def _start_native(
+    docker_client: DockerClient,
+    settings: PreviewSettings,
+    project_volume: str,
+    config: PreviewConfiguration,
+    labels: dict[str, str],
+    run_id: str,
+    host_port: int,
+    expected_protected_hashes: dict[str, str] | None = None,
+    progress: ProgressReporter | None = None,
+    controller_store: ControllerStore | None = None,
+    project_key: str = "",
+    source_path: str = "",
+    secrets: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    report = progress or _ignore_progress
+    report("image", f"Checking runtime image {config.image}")
+    _ensure_image(docker_client, config.image)
+    database = config.services.get("database")
+    data_volumes: list[Any] = []
+    report("workspace", "Creating a runtime workspace without project environment files")
+    workspace = _data_volume(
+        docker_client,
+        run_id,
+        "runtime-workspace",
+        labels,
+        False,
+    )
+    data_volumes.append(workspace)
+    _copy_native_workspace(
+        docker_client,
+        settings.inspection_image,
+        project_volume,
+        workspace.name,
+    )
+    workspace_volume = workspace.name
+    report("workspace", "Runtime workspace is ready")
+    volumes: dict[str, dict[str, str]] = {
+        workspace_volume: {"bind": "/workspace", "mode": "rw"},
+    }
+    if config.runtime.value in {"astro", "vite", "nextjs"}:
+        dependency = _data_volume(docker_client, run_id, "node-modules", labels, False)
+        volumes[dependency.name] = {"bind": "/workspace/node_modules", "mode": "rw"}
+        data_volumes.append(dependency)
+    elif config.runtime.value == "fastapi":
+        dependency = _data_volume(docker_client, run_id, "python-venv", labels, False)
+        volumes[dependency.name] = {"bind": "/opt/venv", "mode": "rw"}
+        data_volumes.append(dependency)
+
+    application_environment = _native_runtime_environment(config)
+    application_environment.update(_secret_environment(config, secrets or {}))
+
+    if config.install_command:
+        report("dependencies", "Running the approved dependency installation command")
+        install = config.install_command
+        if config.runtime.value == "fastapi":
+            install = f"python -m venv /opt/venv\n. /opt/venv/bin/activate\n{install}"
+        _run_prepare(
+            docker_client,
+            settings,
+            image=config.image,
+            command=f"set -eu\n{install}",
+            volumes=volumes,
+            labels=labels,
+            environment=application_environment,
+            size_path=(
+                "/workspace/node_modules"
+                if config.runtime.value in {"astro", "vite", "nextjs"}
+                else "/opt/venv" if config.runtime.value == "fastapi" else None
+            ),
+        )
+        report("dependencies", "Dependency installation completed")
+        if expected_protected_hashes is not None:
+            report("protected-files", "Checking protected runtime files after installation")
+            prepared_files = _volume_runtime_files(
+                docker_client,
+                project_volume,
+                settings,
+            )
+            if hashes(prepared_files) != expected_protected_hashes:
+                raise PreviewOperationError(
+                    409,
+                    "Dependency installation changed protected runtime files; inspect again",
+                )
+
+    report("network", f"Creating {config.network_access.value} preview network")
+    network = _network(docker_client, run_id, labels, config.network_access)
+    containers: list[Container] = []
+    if database is not None and database.sharing is not PreviewSharing.ISOLATED:
+        if controller_store is None or not project_key:
+            raise PreviewOperationError(
+                422,
+                "A shared database needs the controller store and project identity",
+            )
+        credentials, schema_name = _attach_shared_database(
+            docker_client,
+            controller_store,
+            settings,
+            sandbox_id=labels[LABEL_SANDBOX_ID],
+            project_key=project_key,
+            source_path=source_path,
+            database=database,
+            run_network=network,
+            report=report,
+        )
+        application_environment.update(
+            _native_service_environment(
+                config,
+                database,
+                credentials,
+                database_name=schema_name,
+            )
+        )
+        if config.initialize.commands:
+            if database.sharing is PreviewSharing.SHARED_DATA:
+                # A guest must not migrate or seed data it does not own.
+                report(
+                    "initialize",
+                    "Skipping migration and seed commands: this sandbox is a "
+                    "guest on another sandbox's database",
+                )
+            else:
+                report("initialize", "Running approved migration and seed commands")
+                containers.append(
+                    _run_initialization(
+                        docker_client,
+                        settings,
+                        image=config.image,
+                        commands=config.initialize.commands,
+                        runtime=config.runtime.value,
+                        environment=application_environment,
+                        volumes=volumes,
+                        labels=labels,
+                        network=network,
+                        run_id=run_id,
+                    )
+                )
+                report("initialize", "Database initialization completed")
+    elif database is not None:
+        report("database-image", f"Checking database image {database.image}")
+        _ensure_image(docker_client, database.image)
+        persistent = database.persistence is PreviewPersistence.PERSISTENT
+        database_labels = {**labels, LABEL_SERVICE: "database"}
+        database_volume = _data_volume(
+            docker_client,
+            run_id,
+            "database",
+            database_labels,
+            persistent,
+        )
+        data_volumes.append(database_volume)
+        credentials, credentials_volume = _database_credentials(
+            docker_client,
+            settings.inspection_image,
+            run_id,
+            labels,
+            persistent=persistent,
+        )
+        data_volumes.append(credentials_volume)
+        application_environment.update(
+            _native_service_environment(
+                config,
+                database,
+                credentials,
+            )
+        )
+        report("database", "Creating MySQL database container")
+        database_container = docker_client.containers.create(
+            image=database.image,
+            name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-database",
+            init=True,
+            read_only=True,
+            cap_drop=["ALL"],
+            cap_add=["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID"],
+            security_opt=["no-new-privileges:true"],
+            environment={
+                "MYSQL_DATABASE": database.database,
+                "MYSQL_USER": credentials["username"],
+                "MYSQL_PASSWORD": credentials["password"],
+                "MYSQL_ROOT_PASSWORD": credentials["root_password"],
+            },
+            labels=database_labels,
+            volumes={
+                database_volume.name: {"bind": "/var/lib/mysql", "mode": "rw"}
+            },
+            tmpfs={
+                "/tmp": "rw,nosuid,size=256m",
+                "/var/run/mysqld": "rw,nosuid,size=32m,uid=999,gid=999",
+            },
+            network=network.name,
+            ports=None,
+            restart_policy={"Name": "no"},
+            healthcheck={
+                "test": [
+                    "CMD-SHELL",
+                    'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin ping '
+                    "-h 127.0.0.1 -u root --silent",
+                ],
+                "interval": 1_000_000_000,
+                "timeout": 3_000_000_000,
+                "retries": 60,
+                "start_period": 5_000_000_000,
+            },
+            mem_limit=settings.preview_memory,
+            nano_cpus=1_000_000_000,
+            pids_limit=256,
+        )
+        network.disconnect(database_container)
+        network.connect(database_container, aliases=["database"])
+        database_container.start()
+        containers.append(database_container)
+        report("database-health", "Waiting for MySQL health check")
+        _wait_for_mysql_health(
+            database_container,
+            timeout_seconds=settings.prepare_timeout_seconds,
+        )
+        report("database-health", "MySQL is healthy")
+
+        if config.initialize.commands:
+            report("initialize", "Running approved migration and seed commands")
+            initializer = _run_initialization(
+                docker_client,
+                settings,
+                image=config.image,
+                commands=config.initialize.commands,
+                runtime=config.runtime.value,
+                environment=application_environment,
+                volumes=volumes,
+                labels=labels,
+                network=network,
+                run_id=run_id,
+            )
+            containers.append(initializer)
+            report("initialize", "Database initialization completed")
+
+    start = config.start_command
+    if config.runtime.value == "fastapi":
+        start = f". /opt/venv/bin/activate\nexec {start}"
+    else:
+        start = f"exec {start}"
+    report("container", "Creating application container")
+    container = docker_client.containers.create(
+        image=config.image,
+        command=["sh", "-lc", f"set -eu\n{start}"],
+        name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-app",
+        init=True,
+        read_only=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        working_dir="/workspace",
+        environment=application_environment,
+        labels={**labels, LABEL_SERVICE: "app"},
+        volumes=volumes,
+        tmpfs={"/tmp": "rw,nosuid,size=256m"},
+        network=network.name,
+        ports=_direct_ports(config, host_port),
+        restart_policy={"Name": "no"},
+        mem_limit=settings.preview_memory,
+        nano_cpus=1_000_000_000,
+        pids_limit=256,
+    )
+    network.disconnect(container)
+    network.connect(container, aliases=["app"])
+    container.start()
+    report("container", "Application container started")
+    containers.append(container)
+    networks = [network]
+    if config.network_access is PreviewNetworkAccess.ISOLATED:
+        report("gateway", "Creating the loopback preview gateway")
+        gateway, gateway_network, gateway_volume = _gateway_proxy(
+            docker_client,
+            settings.inspection_image,
+            network,
+            "app",
+            config.container_port,
+            host_port,
+            labels,
+            run_id,
+        )
+        containers.append(gateway)
+        networks.append(gateway_network)
+        data_volumes.append(gateway_volume)
+        report("gateway", "Loopback preview gateway started")
+    return {
+        "containers": containers,
+        "networks": networks,
+        "volumes": data_volumes,
+        "images": [],
+    }
+
+
+def _copy_native_workspace(
+    docker_client: DockerClient,
+    image: str,
+    project_volume: str,
+    workspace_volume: str,
+) -> None:
+    docker_client.containers.run(
+        image=image,
+        command=[
+            "sh",
+            "-c",
+            (
+                "set -eu; "
+                "tar -C /source --exclude='./.env' --exclude='./.env.local' "
+                "--exclude='*/.env' --exclude='*/.env.local' "
+                "--exclude='./.orchestrator' -cf - . | "
+                "tar -C /workspace -xf -"
+            ),
+        ],
+        remove=True,
+        network_disabled=True,
+        read_only=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        volumes={
+            project_volume: {"bind": "/source", "mode": "ro"},
+            workspace_volume: {"bind": "/workspace", "mode": "rw"},
+        },
+        tmpfs={"/tmp": "rw,nosuid,size=32m"},
+    )
+
+
+def _database_credentials(
+    docker_client: DockerClient,
+    image: str,
+    run_id: str,
+    labels: dict[str, str],
+    *,
+    persistent: bool,
+) -> tuple[dict[str, str], Any]:
+    credentials_volume = _data_volume(
+        docker_client,
+        run_id,
+        "database-credentials",
+        {**labels, LABEL_SERVICE: "database-credentials"},
+        persistent,
+    )
+    return _read_or_create_credentials(
+        docker_client,
+        image,
+        credentials_volume,
+    ), credentials_volume
+
+
+def _read_or_create_credentials(
+    docker_client: DockerClient,
+    image: str,
+    credentials_volume: Any,
+    *,
+    create_missing: bool = True,
+) -> dict[str, str]:
+    """Reads MySQL credentials from a volume, generating them on first use.
+
+    The volume is the only place the password lives, so a server that keeps its
+    data across restarts keeps working with the same credentials. Callers that
+    only need to authenticate against a running server pass create_missing=False,
+    so a lost volume surfaces as an error instead of a new, wrong password.
+    """
+    output = docker_client.containers.run(
+        image=image,
+        command=[
+            "sh",
+            "-c",
+            "if [ -f /credentials/mysql.json ]; then cat /credentials/mysql.json; fi",
+        ],
+        remove=True,
+        network_disabled=True,
+        read_only=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        volumes={credentials_volume.name: {"bind": "/credentials", "mode": "ro"}},
+    )
+    if output:
+        try:
+            loaded = json.loads(
+                output.decode("utf-8") if isinstance(output, bytes) else str(output)
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise PreviewOperationError(
+                409,
+                "Stored persistent database credentials are invalid",
+            ) from error
+        if not isinstance(loaded, dict) or any(
+            not isinstance(loaded.get(key), str) or not loaded[key]
+            for key in ("username", "password", "root_password")
+        ):
+            raise PreviewOperationError(
+                409,
+                "Stored persistent database credentials are invalid",
+            )
+        return loaded
+
+    if not create_missing:
+        raise PreviewOperationError(
+            409,
+            "Stored database credentials are missing",
+        )
+
+    credentials = {
+        "username": f"preview_{secrets.token_hex(4)}",
+        "password": secrets.token_urlsafe(24),
+        "root_password": secrets.token_urlsafe(32),
+    }
+    encoded = base64.b64encode(
+        json.dumps(credentials, separators=(",", ":")).encode()
+    ).decode("ascii")
+    docker_client.containers.run(
+        image=image,
+        command=[
+            "sh",
+            "-c",
+            (
+                "set -eu; umask 077; printf '%s' \"$DATABASE_CREDENTIALS\" | "
+                "base64 -d > /credentials/mysql.json"
+            ),
+        ],
+        environment={"DATABASE_CREDENTIALS": encoded},
+        remove=True,
+        network_disabled=True,
+        read_only=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        volumes={credentials_volume.name: {"bind": "/credentials", "mode": "rw"}},
+    )
+    return credentials
+
+
+def _native_service_environment(
+    config: PreviewConfiguration,
+    database: PreviewDependencyService,
+    credentials: dict[str, str],
+    *,
+    database_name: str = "",
+) -> dict[str, str]:
+    environment: dict[str, str] = {}
+    schema = database_name or database.database
+    for variable, source in config.environment.items():
+        if not source.from_service:
+            continue
+        if variable != "DATABASE_URL" or source.from_service != "database":
+            raise PreviewOperationError(
+                422,
+                "MySQL previews support only DATABASE_URL from the database service",
+            )
+        username = quote(credentials["username"], safe="")
+        password = quote(credentials["password"], safe="")
+        environment[variable] = (
+            f"mysql://{username}:{password}@database:{MYSQL_PORT}/{schema}"
+        )
+    return environment
+
+
+def _compose_service_environment(
+    declared: Any,
+    application_environment: dict[str, str],
+    *,
+    selected: bool,
+) -> dict[str, str]:
+    """Merges stored secrets into one Compose service.
+
+    Only the selected service receives them. A sidecar keeps exactly the
+    environment its Compose file declares.
+    """
+    environment = _compose_environment(declared)
+    if selected:
+        environment.update(application_environment)
+    return environment
+
+
+def _secret_environment(config: PreviewConfiguration, secrets: dict[str, str]) -> dict[str, str]:
+    """Resolves from_secret entries against stored project secrets.
+
+    Fails before any container starts, so a missing secret never surfaces as a
+    runtime crash inside the preview.
+    """
+    environment: dict[str, str] = {}
+    for variable, source in config.environment.items():
+        if not source.from_secret:
+            continue
+        if source.from_secret not in secrets:
+            raise PreviewOperationError(
+                422,
+                f"Preview secret {source.from_secret!r} is not configured",
+            )
+        environment[variable] = secrets[source.from_secret]
+    return environment
+
+
+def _native_runtime_environment(config: PreviewConfiguration) -> dict[str, str]:
+    if config.runtime is PreviewRuntime.ASTRO:
+        return {"ASTRO_TELEMETRY_DISABLED": "1"}
+    return {}
+
+
+def _shared_database_names(project_key: str) -> dict[str, str]:
+    key = project_key[:12]
+    return {
+        "container": f"{SHARED_DATABASE_PREFIX}{key}",
+        "data": f"{SHARED_DATABASE_PREFIX}{key}-data",
+        "credentials": f"{SHARED_DATABASE_PREFIX}{key}-credentials",
+        "network": f"{SHARED_DATABASE_PREFIX}{key}-net",
+    }
+
+
+def _shared_schema_name(sandbox_id: str) -> str:
+    return f"sbx_{_identifier(sandbox_id)}"
+
+
+def _shared_user_name(sandbox_id: str) -> str:
+    return f"sbx_{_identifier(sandbox_id)}"
+
+
+def _identifier(sandbox_id: str) -> str:
+    """Reduces a sandbox id to characters MySQL accepts unquoted."""
+    cleaned = re.sub(r"[^a-z0-9]+", "", sandbox_id.casefold())[:16]
+    if not cleaned:
+        raise PreviewOperationError(422, "Sandbox id cannot name a database schema")
+    return cleaned
+
+
+def _shared_database_labels(
+    project_key: str,
+    source_path: str,
+    image: str,
+) -> dict[str, str]:
+    """Labels a shared server and its volumes.
+
+    Deliberately carries no run id and no sandbox id. Every teardown path
+    filters on those, so the shared server cannot be swept away with the run
+    that happened to create it.
+    """
+    return {
+        LABEL_CONTROLLER_MANAGED: "true",
+        LABEL_KIND: "shared-database",
+        LABEL_SHARED_DATABASE: "true",
+        LABEL_SHARED_DATABASE_IMAGE: image,
+        LABEL_PROJECT_ID: project_key,
+        LABEL_PROJECT_SOURCE: source_path,
+        LABEL_SERVICE: "database",
+        LABEL_PERSISTENT: "true",
+    }
+
+
+def _shared_volume(docker_client: DockerClient, name: str, labels: dict[str, str]) -> Any:
+    try:
+        return docker_client.volumes.get(name)
+    except NotFound:
+        pass
+    try:
+        return docker_client.volumes.create(name=name, driver="local", labels=labels)
+    except APIError:
+        return docker_client.volumes.get(name)
+
+
+def _shared_network(docker_client: DockerClient, name: str, labels: dict[str, str]) -> Any:
+    existing = docker_client.networks.list(names=[name])
+    for network in existing:
+        if network.name == name:
+            return network
+    try:
+        return docker_client.networks.create(
+            name,
+            driver="bridge",
+            internal=True,
+            labels=labels,
+        )
+    except APIError:
+        for network in docker_client.networks.list(names=[name]):
+            if network.name == name:
+                return network
+        raise
+
+
+def _shared_database_server(
+    docker_client: DockerClient,
+    settings: PreviewSettings,
+    *,
+    project_key: str,
+    source_path: str,
+    database: PreviewDependencyService,
+    report: ProgressReporter,
+) -> tuple[Container, str, Any]:
+    """Returns the project's shared MySQL server, creating it on first use.
+
+    Held under `_shared_database_lock` so two sandboxes starting at the same
+    moment cannot both create the server.
+    """
+    names = _shared_database_names(project_key)
+    labels = _shared_database_labels(project_key, source_path, database.image)
+    with _shared_database_lock:
+        report("database-image", f"Checking database image {database.image}")
+        _ensure_image(docker_client, database.image)
+        network = _shared_network(docker_client, names["network"], labels)
+        data_volume = _shared_volume(
+            docker_client,
+            names["data"],
+            {**labels, LABEL_DATA_MANAGED: "true"},
+        )
+        credentials_volume = _shared_volume(
+            docker_client,
+            names["credentials"],
+            {**labels, LABEL_DATA_MANAGED: "true", LABEL_SERVICE: "database-credentials"},
+        )
+        credentials = _read_or_create_credentials(
+            docker_client,
+            settings.inspection_image,
+            credentials_volume,
+        )
+        root_password = credentials["root_password"]
+
+        container = _existing_shared_server(docker_client, names["container"])
+        if container is not None:
+            stored_image = (
+                (container.attrs.get("Config") or {}).get("Labels") or {}
+            ).get(LABEL_SHARED_DATABASE_IMAGE, "")
+            if stored_image and stored_image != database.image:
+                raise PreviewOperationError(
+                    409,
+                    "This project's shared database runs "
+                    f"{stored_image}; the proposal asks for {database.image}",
+                )
+            if container.status != "running":
+                report("database", "Starting the shared project database")
+                container.start()
+        else:
+            report("database", "Creating the shared project database")
+            container = _create_shared_server(
+                docker_client,
+                settings,
+                names=names,
+                labels=labels,
+                database=database,
+                root_password=root_password,
+                data_volume=data_volume.name,
+                network_name=network.name,
+            )
+            container.start()
+
+        report("database-health", "Waiting for the shared database health check")
+        _wait_for_mysql_health(
+            container,
+            timeout_seconds=settings.prepare_timeout_seconds,
+        )
+        report("database-health", "Shared database is healthy")
+    return container, root_password, network
+
+
+def _existing_shared_server(
+    docker_client: DockerClient,
+    name: str,
+) -> Container | None:
+    try:
+        container = docker_client.containers.get(name)
+    except NotFound:
+        return None
+    container.reload()
+    return container
+
+
+def _create_shared_server(
+    docker_client: DockerClient,
+    settings: PreviewSettings,
+    *,
+    names: dict[str, str],
+    labels: dict[str, str],
+    database: PreviewDependencyService,
+    root_password: str,
+    data_volume: str,
+    network_name: str,
+) -> Container:
+    try:
+        return docker_client.containers.create(
+            image=database.image,
+            name=names["container"],
+            command=[
+                "--max-connections",
+                str(settings.shared_database_max_connections),
+            ],
+            init=True,
+            read_only=True,
+            cap_drop=["ALL"],
+            cap_add=["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID"],
+            security_opt=["no-new-privileges:true"],
+            environment={"MYSQL_ROOT_PASSWORD": root_password},
+            labels=labels,
+            volumes={data_volume: {"bind": "/var/lib/mysql", "mode": "rw"}},
+            tmpfs={
+                "/tmp": "rw,nosuid,size=256m",
+                "/var/run/mysqld": "rw,nosuid,size=32m,uid=999,gid=999",
+            },
+            network=network_name,
+            ports=None,
+            restart_policy={"Name": "no"},
+            healthcheck={
+                "test": [
+                    "CMD-SHELL",
+                    'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin ping '
+                    "-h 127.0.0.1 -u root --silent",
+                ],
+                "interval": 1_000_000_000,
+                "timeout": 3_000_000_000,
+                "retries": 60,
+                "start_period": 5_000_000_000,
+            },
+            mem_limit=settings.shared_database_memory,
+            nano_cpus=2_000_000_000,
+            pids_limit=512,
+        )
+    except APIError:
+        # Another start won the race between the get and the create.
+        existing = _existing_shared_server(docker_client, names["container"])
+        if existing is None:
+            raise
+        return existing
+
+
+def _run_shared_sql(
+    docker_client: DockerClient,
+    *,
+    image: str,
+    network_name: str,
+    host: str,
+    root_password: str,
+    statements: list[str],
+) -> None:
+    """Runs administrative SQL against the shared server as root.
+
+    Root never reaches an application container: it lives in a controller-owned
+    volume and is passed only to this short-lived client.
+    """
+    script = "\n".join(f"{statement};" for statement in statements)
+    try:
+        docker_client.containers.run(
+            image=image,
+            command=[
+                "sh",
+                "-c",
+                'set -eu; printf "%s" "$PREVIEW_SQL" | '
+                'mysql --protocol=TCP -h "$PREVIEW_HOST" -u root',
+            ],
+            environment={
+                "PREVIEW_SQL": script,
+                "PREVIEW_HOST": host,
+                "MYSQL_PWD": root_password,
+            },
+            remove=True,
+            read_only=True,
+            cap_drop=["ALL"],
+            security_opt=["no-new-privileges:true"],
+            network=network_name,
+            tmpfs={"/tmp": "rw,nosuid,size=32m"},
+        )
+    except ContainerError as error:
+        detail = error.stderr
+        text = (
+            detail.decode("utf-8", errors="replace")
+            if isinstance(detail, bytes)
+            else str(detail or "")
+        )[-2_048:]
+        raise PreviewOperationError(
+            500,
+            f"Shared database statement failed: {text}",
+        ) from error
+
+
+def _attach_shared_database(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    settings: PreviewSettings,
+    *,
+    sandbox_id: str,
+    project_key: str,
+    source_path: str,
+    database: PreviewDependencyService,
+    run_network: Any,
+    report: ProgressReporter,
+) -> tuple[dict[str, str], str]:
+    """Gives one sandbox credentials on the project's shared server.
+
+    Returns the credentials and the schema the sandbox must use. For
+    SHARED_SERVER the schema is the sandbox's own. For SHARED_DATA it is the
+    target sandbox's schema, joined with this sandbox's own user so access can
+    be revoked without touching the owner.
+    """
+    server, root_password, shared_network = _shared_database_server(
+        docker_client,
+        settings,
+        project_key=project_key,
+        source_path=source_path,
+        database=database,
+        report=report,
+    )
+
+    owner_sandbox_id = sandbox_id
+    if database.sharing is PreviewSharing.SHARED_DATA:
+        owner_sandbox_id = database.share_target
+    schema_name = _shared_schema_name(owner_sandbox_id)
+    # Schema names are truncated sandbox ids. A collision would silently join
+    # two sandboxes' data, so refuse rather than share by accident.
+    for row in controller_store.shared_schemas_for_project(project_key):
+        if (
+            str(row["schema_name"]) == schema_name
+            and str(row["owner_sandbox_id"]) != owner_sandbox_id
+        ):
+            raise PreviewOperationError(
+                409,
+                f"Schema name {schema_name} already belongs to another sandbox",
+            )
+    user_name = _shared_user_name(sandbox_id)
+    password = secrets.token_urlsafe(24)
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", password):
+        raise PreviewOperationError(500, "Generated database password is unusable")
+
+    statements = [
+        f"CREATE DATABASE IF NOT EXISTS `{schema_name}` "
+        "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+        f"CREATE USER IF NOT EXISTS '{user_name}'@'%' IDENTIFIED BY '{password}'",
+        f"ALTER USER '{user_name}'@'%' IDENTIFIED BY '{password}'",
+        f"GRANT ALL PRIVILEGES ON `{schema_name}`.* TO '{user_name}'@'%'",
+        "FLUSH PRIVILEGES",
+    ]
+    report(
+        "database-schema",
+        f"Provisioning schema {schema_name} on the shared project database",
+    )
+    _run_shared_sql(
+        docker_client,
+        image=database.image,
+        network_name=shared_network.name,
+        host=server.name,
+        root_password=root_password,
+        statements=statements,
+    )
+
+    report("database", "Connecting the shared database to the preview network")
+    _connect_shared_server(run_network, server)
+
+    controller_store.record_shared_schema(
+        sandbox_id=sandbox_id,
+        project_id=project_key,
+        owner_sandbox_id=owner_sandbox_id,
+        sharing=database.sharing.value,
+        schema_name=schema_name,
+        user_name=user_name,
+        image=database.image,
+        persistence=database.persistence.value,
+    )
+    credentials = {
+        "username": user_name,
+        "password": password,
+        "root_password": "",
+    }
+    return credentials, schema_name
+
+
+def _restart_shared_database(
+    docker_client: DockerClient,
+    settings: PreviewSettings,
+    *,
+    project_key: str,
+    source_path: str,
+    database: PreviewDependencyService,
+    run_id: str,
+) -> Container:
+    """Brings the shared server back up and reattaches it to the run network.
+
+    A restart can follow a daemon restart, so the endpoint on the preview
+    network is reasserted rather than assumed.
+    """
+    server, _, _ = _shared_database_server(
+        docker_client,
+        settings,
+        project_key=project_key,
+        source_path=source_path,
+        database=database,
+        report=_ignore_progress,
+    )
+    run_network_name = f"orchestrator-preview-{run_id[:12]}"
+    for network in _preview_networks(docker_client, run_id):
+        if network.name == run_network_name:
+            _connect_shared_server(network, server)
+    server.reload()
+    return server
+
+
+def _connect_shared_server(run_network: Any, server: Container) -> None:
+    """Aliases the shared server as `database` inside one preview network."""
+    try:
+        run_network.connect(server, aliases=["database"])
+    except APIError as error:
+        message = str(error).casefold()
+        if "already exists" not in message and "already connected" not in message:
+            raise
+
+
+def _release_shared_database(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    *,
+    sandbox_id: str,
+) -> dict[str, Any]:
+    """Undoes one sandbox's claim on the shared server.
+
+    A guest loses only its own user. An owner loses its schema only when the
+    data is ephemeral and no guest is still attached to it.
+    """
+    record = controller_store.shared_schema(sandbox_id)
+    if record is None:
+        return {"released": False}
+
+    project_key = str(record["project_id"])
+    schema_name = str(record["schema_name"])
+    user_name = str(record["user_name"])
+    image = str(record["image"])
+    owner = str(record["owner_sandbox_id"]) == sandbox_id
+    ephemeral = str(record["persistence"]) == PreviewPersistence.EPHEMERAL.value
+    siblings = [
+        row
+        for row in controller_store.shared_schemas_for_project(project_key)
+        if str(row["sandbox_id"]) != sandbox_id
+        and str(row["schema_name"]) == schema_name
+    ]
+    drop_schema = owner and ephemeral and not siblings
+
+    names = _shared_database_names(project_key)
+    server = _existing_shared_server(docker_client, names["container"])
+    credentials_volume = _existing_volume(docker_client, names["credentials"])
+    outcome: dict[str, Any] = {
+        "released": True,
+        "schema": schema_name,
+        "dropped_schema": drop_schema,
+        "kept_for_attached_sandboxes": len(siblings) if owner and ephemeral else 0,
+    }
+    applied = False
+    if server is not None and server.status == "running" and credentials_volume is not None:
+        statements = [f"DROP USER IF EXISTS '{user_name}'@'%'"]
+        if drop_schema:
+            statements.append(f"DROP DATABASE IF EXISTS `{schema_name}`")
+        statements.append("FLUSH PRIVILEGES")
+        try:
+            root_password = _read_or_create_credentials(
+                docker_client,
+                image,
+                credentials_volume,
+                create_missing=False,
+            )["root_password"]
+            _run_shared_sql(
+                docker_client,
+                image=image,
+                network_name=names["network"],
+                host=server.name,
+                root_password=root_password,
+                statements=statements,
+            )
+            applied = True
+        except (PreviewOperationError, DockerException) as error:
+            # The sandbox is going away either way. Record the leftover so an
+            # operator can see it instead of losing it silently.
+            outcome["error"] = str(error)
+
+    # The record tracks a schema that exists. It is dropped only when the schema
+    # and user really went away; otherwise the leftover stays visible and the
+    # next start of this sandbox reuses it instead of creating a duplicate.
+    keep_record = not applied or (owner and not drop_schema)
+    if not keep_record:
+        controller_store.delete_shared_schema(sandbox_id)
+    outcome["kept_record"] = keep_record
+    outcome["pending_cleanup"] = not applied
+    _stop_idle_shared_server(docker_client, controller_store, project_key)
+    return outcome
+
+
+def _existing_volume(docker_client: DockerClient, name: str) -> Any | None:
+    try:
+        return docker_client.volumes.get(name)
+    except NotFound:
+        return None
+
+
+def _shared_server_is_idle(
+    controller_store: ControllerStore,
+    project_key: str,
+) -> bool:
+    """True when no preview of this project is still running.
+
+    Persistent schemas keep their records after their preview stops, so idleness
+    is measured by active previews, not by records.
+    """
+    project_sandboxes = {
+        str(sandbox["id"])
+        for sandbox in controller_store.sandboxes()
+        if str(sandbox["project_id"]) == project_key
+    }
+    return not any(
+        str(run["sandbox_id"]) in project_sandboxes
+        for run in controller_store.active_previews()
+    )
+
+
+def _stop_idle_shared_server(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    project_key: str,
+) -> None:
+    """Removes the shared server once no preview of the project is running.
+
+    Only the container goes. Its volumes stay, so persistent schemas and the
+    root credentials survive and the next start finds the same data.
+    """
+    if not _shared_server_is_idle(controller_store, project_key):
+        return
+    names = _shared_database_names(project_key)
+    with _shared_database_lock:
+        server = _existing_shared_server(docker_client, names["container"])
+        if server is not None:
+            try:
+                server.remove(force=True)
+            except DockerException:
+                return
+        for network in docker_client.networks.list(names=[names["network"]]):
+            if network.name != names["network"]:
+                continue
+            try:
+                network.remove()
+            except DockerException:
+                continue
+
+
+def _share_candidates(
+    controller_store: ControllerStore,
+    *,
+    project_key: str,
+    sandbox_id: str,
+) -> list[SharedDatabaseCandidate]:
+    """Sandboxes of this project whose schema another sandbox may join.
+
+    Only schema owners appear. A sandbox with no database has no row, so a
+    static-site sandbox never offers itself as a target.
+    """
+    rows = controller_store.shared_schemas_for_project(project_key)
+    names = {
+        str(sandbox["id"]): str(sandbox["project_name"])
+        for sandbox in controller_store.sandboxes()
+    }
+    attachments: dict[str, int] = {}
+    for row in rows:
+        owner = str(row["owner_sandbox_id"])
+        if owner != str(row["sandbox_id"]):
+            attachments[owner] = attachments.get(owner, 0) + 1
+    candidates = []
+    for row in rows:
+        owner = str(row["owner_sandbox_id"])
+        candidate_id = str(row["sandbox_id"])
+        if owner != candidate_id or candidate_id == sandbox_id:
+            continue
+        candidates.append(
+            SharedDatabaseCandidate(
+                sandbox_id=candidate_id,
+                project_name=names.get(candidate_id, candidate_id[:12]),
+                schema_name=str(row["schema_name"]),
+                image=str(row["image"]),
+                persistence=PreviewPersistence(str(row["persistence"])),
+                attached_sandboxes=attachments.get(candidate_id, 0),
+                created_at=str(row["created_at"]),
+            )
+        )
+    return candidates
+
+
+def _sharing_state(
+    controller_store: ControllerStore,
+    sandbox_id: str,
+) -> DatabaseSharingState | None:
+    record = controller_store.shared_schema(sandbox_id)
+    if record is None:
+        return None
+    project_key = str(record["project_id"])
+    owner_sandbox_id = str(record["owner_sandbox_id"])
+    schema_name = str(record["schema_name"])
+    names = {
+        str(sandbox["id"]): str(sandbox["project_name"])
+        for sandbox in controller_store.sandboxes()
+    }
+    attached = [
+        names.get(str(row["sandbox_id"]), str(row["sandbox_id"])[:12])
+        for row in controller_store.shared_schemas_for_project(project_key)
+        if str(row["schema_name"]) == schema_name
+        and str(row["sandbox_id"]) != owner_sandbox_id
+    ]
+    return DatabaseSharingState(
+        sandbox_id=sandbox_id,
+        sharing=PreviewSharing(str(record["sharing"])),
+        schema_name=schema_name,
+        owner_sandbox_id=owner_sandbox_id,
+        owner_project_name=names.get(owner_sandbox_id, owner_sandbox_id[:12]),
+        image=str(record["image"]),
+        persistence=PreviewPersistence(str(record["persistence"])),
+        server_container=_shared_database_names(project_key)["container"],
+        attached_project_names=attached,
+    )
+
+
+def database_sharing_state(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    project_name: str,
+) -> ProjectDatabaseSharing:
+    """The database coupling of one sandbox, plus what it could join."""
+    project = _ready_project(docker_client, project_name)
+    _register_sandbox(controller_store, project)
+    project_key = project_id(project.source_path)
+    return ProjectDatabaseSharing(
+        project_name=project.name,
+        sandbox_id=project.sandbox_id,
+        current=_sharing_state(controller_store, project.sandbox_id),
+        candidates=_share_candidates(
+            controller_store,
+            project_key=project_key,
+            sandbox_id=project.sandbox_id,
+        ),
+    )
+
+
+def get_project_secrets(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    project_name: str,
+) -> ProjectSecrets:
+    project = _ready_project(docker_client, project_name)
+    _register_sandbox(controller_store, project)
+    project_key = project_id(project.source_path)
+    return _project_secrets_response(controller_store, project, project_key)
+
+
+def set_project_secrets(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    project_name: str,
+    request: SetProjectSecretsRequest,
+) -> ProjectSecrets:
+    project = _ready_project(docker_client, project_name)
+    _register_sandbox(controller_store, project)
+    project_key = project_id(project.source_path)
+    controller_store.set_project_secrets(project_key, request.values)
+    controller_store.event(
+        sandbox_id=project.sandbox_id,
+        run_id=None,
+        kind="preview.secrets.set",
+        payload={"names": sorted(request.values)},
+    )
+    return _project_secrets_response(controller_store, project, project_key)
+
+
+def delete_project_secret(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    project_name: str,
+    name: str,
+) -> ProjectSecrets:
+    project = _ready_project(docker_client, project_name)
+    _register_sandbox(controller_store, project)
+    project_key = project_id(project.source_path)
+    controller_store.delete_project_secret(project_key, name)
+    controller_store.event(
+        sandbox_id=project.sandbox_id,
+        run_id=None,
+        kind="preview.secrets.deleted",
+        payload={"names": [name]},
+    )
+    return _project_secrets_response(controller_store, project, project_key)
+
+
+def import_project_secrets(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    settings: PreviewSettings,
+    project_name: str,
+) -> ImportProjectSecretsResponse:
+    project = _ready_project(docker_client, project_name)
+    _register_sandbox(controller_store, project)
+    project_key = project_id(project.source_path)
+    environment_files = _volume_environment_files(
+        docker_client,
+        project.volume_name,
+        settings,
+    )
+    pairs = parse_environment_pairs(environment_files)
+    imported: list[str] = []
+    skipped: list[str] = []
+    values: dict[str, str] = {}
+    for name, value in pairs.items():
+        if not ENVIRONMENT_VARIABLE_PATTERN.fullmatch(name) or len(
+            value.encode("utf-8")
+        ) > 8_192:
+            skipped.append(name)
+            continue
+        values[name] = value
+        imported.append(name)
+    if values:
+        controller_store.set_project_secrets(project_key, values)
+    controller_store.event(
+        sandbox_id=project.sandbox_id,
+        run_id=None,
+        kind="preview.secrets.imported",
+        payload={"imported": sorted(imported), "skipped": sorted(skipped)},
+    )
+    return ImportProjectSecretsResponse(
+        project_name=project.name,
+        imported=sorted(imported),
+        skipped=sorted(skipped),
+    )
+
+
+def _project_secrets_response(
+    controller_store: ControllerStore,
+    project: Any,
+    project_key: str,
+) -> ProjectSecrets:
+    return ProjectSecrets(
+        project_name=project.name,
+        names=[
+            ProjectSecretName(name=entry["name"], updated_at=entry["updated_at"])
+            for entry in controller_store.project_secret_entries(project_key)
+        ],
+    )
+
+
+def _validate_sharing(
+    controller_store: ControllerStore,
+    *,
+    project_key: str,
+    sandbox_id: str,
+    config: PreviewConfiguration,
+) -> None:
+    database = config.services.get("database")
+    if database is None or database.sharing is PreviewSharing.ISOLATED:
+        return
+    if config.mode is not PreviewMode.NATIVE:
+        raise PreviewOperationError(
+            422,
+            "Shared databases are supported only for native previews",
+        )
+    if database.sharing is not PreviewSharing.SHARED_DATA:
+        return
+    target = controller_store.shared_schema(database.share_target)
+    if target is None or str(target["project_id"]) != project_key:
+        raise PreviewOperationError(
+            409,
+            "The chosen database belongs to no sandbox of this project",
+        )
+    if str(target["owner_sandbox_id"]) != database.share_target:
+        raise PreviewOperationError(
+            409,
+            "The chosen sandbox does not own its database; pick its owner instead",
+        )
+    if database.share_target == sandbox_id:
+        raise PreviewOperationError(
+            409,
+            "A sandbox cannot join its own database as a guest",
+        )
+    if str(target["image"]) != database.image:
+        raise PreviewOperationError(
+            409,
+            f"The chosen database runs {target['image']}; "
+            f"the proposal asks for {database.image}",
+        )
+
+
+def _wait_for_mysql_health(
+    container: Container,
+    *,
+    timeout_seconds: int,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        container.reload()
+        state = container.attrs.get("State") or {}
+        status = str(state.get("Status") or container.status)
+        health = str((state.get("Health") or {}).get("Status") or "")
+        if status == "running" and health == "healthy":
+            return
+        if status in {"dead", "exited"} or health == "unhealthy":
+            logs = container.logs(stdout=True, stderr=True, tail=100)
+            detail = (
+                logs.decode("utf-8", errors="replace")
+                if isinstance(logs, bytes)
+                else str(logs)
+            )[-8_192:]
+            raise PreviewOperationError(
+                422,
+                f"MySQL failed its health check: {detail}",
+            )
+        time.sleep(0.5)
+    raise PreviewOperationError(
+        408,
+        f"MySQL health check exceeded {timeout_seconds} seconds",
+    )
+
+
+def _run_initialization(
+    docker_client: DockerClient,
+    settings: PreviewSettings,
+    *,
+    image: str,
+    commands: list[str],
+    runtime: str,
+    environment: dict[str, str],
+    volumes: dict[str, dict[str, str]],
+    labels: dict[str, str],
+    network: Any,
+    run_id: str,
+) -> Container:
+    command = "set -eu\n"
+    if runtime == "fastapi":
+        command += ". /opt/venv/bin/activate\n"
+    command += "\n".join(commands)
+    container = docker_client.containers.create(
+        image=image,
+        command=["sh", "-lc", command],
+        name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-initialize",
+        init=True,
+        read_only=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        working_dir="/workspace",
+        environment=environment,
+        labels={**labels, LABEL_SERVICE: "initialize"},
+        volumes=volumes,
+        tmpfs={"/tmp": "rw,nosuid,size=256m"},
+        network=network.name,
+        ports=None,
+        restart_policy={"Name": "no"},
+        mem_limit=settings.preview_memory,
+        nano_cpus=1_000_000_000,
+        pids_limit=256,
+    )
+    network.disconnect(container)
+    network.connect(container, aliases=["initialize"])
+    container.start()
+    try:
+        result = container.wait(timeout=settings.prepare_timeout_seconds)
+    except ReadTimeout as error:
+        container.stop(timeout=2)
+        raise PreviewOperationError(
+            408,
+            f"Database initialization exceeded {settings.prepare_timeout_seconds} seconds",
+        ) from error
+    exit_code = int(result.get("StatusCode", 1))
+    if exit_code != 0:
+        logs = container.logs(stdout=True, stderr=True, tail=100)
+        detail = (
+            logs.decode("utf-8", errors="replace")
+            if isinstance(logs, bytes)
+            else str(logs)
+        )[-8_192:]
+        raise PreviewOperationError(
+            422,
+            f"Database initialization failed with code {exit_code}: {detail}",
+        )
+    return container
+
+
+def _run_prepare(
+    docker_client: DockerClient,
+    settings: PreviewSettings,
+    *,
+    image: str,
+    command: str,
+    volumes: dict[str, dict[str, str]],
+    labels: dict[str, str],
+    size_path: str | None,
+    environment: dict[str, str] | None = None,
+) -> None:
+    container: Container | None = None
+    try:
+        checked_command = command
+        if size_path:
+            maximum_kib = settings.maximum_dependency_bytes // 1024
+            checked_command += (
+                f"\nused_kib=$(du -sk {shlex.quote(size_path)} | awk '{{print $1}}')"
+                f"\nif [ \"$used_kib\" -gt {maximum_kib} ]; then"
+                " echo 'Installed dependencies exceed the configured size limit' >&2;"
+                " exit 73; fi"
+            )
+        container = docker_client.containers.create(
+            image=image,
+            command=["sh", "-lc", checked_command],
+            working_dir="/workspace",
+            network="bridge",
+            environment=environment,
+            labels={**labels, LABEL_SERVICE: "prepare"},
+            volumes=volumes,
+            cap_drop=["ALL"],
+            security_opt=["no-new-privileges:true"],
+            mem_limit=settings.preview_memory,
+            pids_limit=256,
+        )
+        container.start()
+        try:
+            result = container.wait(timeout=settings.prepare_timeout_seconds)
+        except ReadTimeout as error:
+            container.stop(timeout=2)
+            raise PreviewOperationError(
+                408,
+                f"Dependency installation exceeded {settings.prepare_timeout_seconds} seconds",
+            ) from error
+        exit_code = int(result.get("StatusCode", 1))
+        if exit_code != 0:
+            logs = container.logs(stdout=True, stderr=True, tail=100)
+            if isinstance(logs, bytes):
+                detail = logs.decode("utf-8", errors="replace")[-8_192:]
+            else:
+                detail = str(logs)[-8_192:]
+            raise PreviewOperationError(
+                422,
+                f"Dependency installation failed with code {exit_code}: {detail}",
+            )
+    finally:
+        if container is not None:
+            try:
+                container.remove(force=True)
+            except DockerException:
+                pass
+
+
+def _start_dockerfile(
+    docker_client: DockerClient,
+    settings: PreviewSettings,
+    project_volume: str,
+    config: PreviewConfiguration,
+    labels: dict[str, str],
+    run_id: str,
+    host_port: int,
+    progress: ProgressReporter | None = None,
+    secrets: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    report = progress or _ignore_progress
+    application_environment = _secret_environment(config, secrets or {})
+    report("build-context", "Exporting the current sandbox as a Docker build context")
+    context = _volume_context_tar(
+        docker_client,
+        project_volume,
+        ".",
+        settings.inspection_image,
+    )
+    tag = f"orchestrator-preview:{run_id}"
+    dockerfile = _safe_relative_path(config.dockerfile, field="dockerfile")
+    report("build", f"Building image from {dockerfile}")
+    try:
+        built_image, _ = docker_client.images.build(
+            fileobj=io.BytesIO(context),
+            custom_context=True,
+            dockerfile=dockerfile,
+            tag=tag,
+            rm=True,
+            forcerm=True,
+            labels=labels,
+            timeout=settings.build_timeout_seconds,
+        )
+        _validate_built_image(built_image, settings)
+    except (BuildError, APIError) as error:
+        raise PreviewOperationError(422, f"Dockerfile build failed: {error}") from error
+    report("build", "Docker image build completed")
+    report("network", f"Creating {config.network_access.value} preview network")
+    network = _network(docker_client, run_id, labels, config.network_access)
+    report("container", "Creating application container")
+    container = docker_client.containers.create(
+        image=tag,
+        name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-app",
+        init=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        labels={**labels, LABEL_SERVICE: "app"},
+        environment=application_environment,
+        volumes={project_volume: {"bind": "/sandbox", "mode": "ro"}},
+        tmpfs={"/tmp": "rw,nosuid,size=256m"},
+        network=network.name,
+        ports=_direct_ports(config, host_port),
+        restart_policy={"Name": "no"},
+        mem_limit=settings.preview_memory,
+        nano_cpus=1_000_000_000,
+        pids_limit=256,
+    )
+    network.disconnect(container)
+    network.connect(container, aliases=["app"])
+    container.start()
+    report("container", "Application container started")
+    containers = [container]
+    networks = [network]
+    if config.network_access is PreviewNetworkAccess.ISOLATED:
+        report("gateway", "Creating the loopback preview gateway")
+        gateway, gateway_network, gateway_volume = _gateway_proxy(
+            docker_client,
+            settings.inspection_image,
+            network,
+            "app",
+            config.container_port,
+            host_port,
+            labels,
+            run_id,
+        )
+        containers.append(gateway)
+        networks.append(gateway_network)
+        data_volumes = [gateway_volume]
+        report("gateway", "Loopback preview gateway started")
+    else:
+        data_volumes = []
+    return {
+        "containers": containers,
+        "networks": networks,
+        "volumes": data_volumes,
+        "images": [built_image],
+    }
+
+
+def _start_compose(
+    docker_client: DockerClient,
+    settings: PreviewSettings,
+    project_volume: str,
+    files: dict[str, bytes],
+    config: PreviewConfiguration,
+    labels: dict[str, str],
+    run_id: str,
+    host_port: int,
+    progress: ProgressReporter | None = None,
+    secrets: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    report = progress or _ignore_progress
+    # Stored secrets reach the selected service only. Sidecars keep the
+    # environment their Compose file declares and nothing more.
+    application_environment = _secret_environment(config, secrets or {})
+    compose_path = _safe_relative_path(config.compose_file, field="compose_file")
+    report("compose", f"Reading Compose file {compose_path}")
+    content = files.get(compose_path)
+    if content is None:
+        raise PreviewOperationError(422, "Approved Compose file is missing")
+    try:
+        document = yaml.safe_load(content.decode("utf-8")) or {}
+    except (UnicodeDecodeError, yaml.YAMLError) as error:
+        raise PreviewOperationError(422, "Compose file is invalid") from error
+    services = document.get("services") if isinstance(document, dict) else None
+    if not isinstance(services, dict) or not services:
+        raise PreviewOperationError(422, "Compose file has no services")
+    if config.selected_service not in services:
+        raise PreviewOperationError(422, "Selected preview service is not in Compose")
+
+    report("network", f"Creating {config.network_access.value} preview network")
+    network = _network(docker_client, run_id, labels, config.network_access)
+    data_volumes: list[Any] = []
+    named_volumes: dict[str, Any] = {}
+    containers: list[Container] = []
+    try:
+        for service_name, raw_service in services.items():
+            if not isinstance(raw_service, dict):
+                raise PreviewOperationError(422, f"Compose service '{service_name}' is invalid")
+            _validate_compose_service(str(service_name), raw_service)
+            action = "Building" if raw_service.get("build") is not None else "Checking"
+            report("compose-image", f"{action} image for service {service_name}")
+            image = _compose_image(
+                docker_client,
+                settings,
+                project_volume,
+                str(service_name),
+                raw_service,
+                labels,
+                run_id,
+            )
+            mounts = _compose_volumes(
+                docker_client,
+                project_volume,
+                raw_service.get("volumes") or [],
+                named_volumes,
+                data_volumes,
+                config,
+                labels,
+                run_id,
+            )
+            mounts.setdefault(
+                project_volume,
+                {"bind": "/sandbox", "mode": "ro"},
+            )
+            service_labels = {**labels, LABEL_SERVICE: str(service_name)}
+            ports = (
+                {f"{config.container_port}/tcp": ("127.0.0.1", host_port)}
+                if service_name == config.selected_service
+                and config.network_access is PreviewNetworkAccess.INTERNET
+                else None
+            )
+            report("compose-container", f"Creating service container {service_name}")
+            container = docker_client.containers.create(
+                image=image,
+                command=_command(raw_service.get("command")),
+                entrypoint=_command(raw_service.get("entrypoint")),
+                name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-{_slug(str(service_name))}",
+                init=True,
+                read_only=bool(raw_service.get("read_only", False)),
+                cap_drop=["ALL"],
+                security_opt=["no-new-privileges:true"],
+                working_dir=raw_service.get("working_dir"),
+                user=raw_service.get("user"),
+                environment=_compose_service_environment(
+                    raw_service.get("environment"),
+                    application_environment,
+                    selected=service_name == config.selected_service,
+                ),
+                labels=service_labels,
+                volumes=mounts,
+                tmpfs={"/tmp": "rw,nosuid,size=256m"},
+                network=network.name,
+                ports=ports,
+                restart_policy={"Name": "no"},
+                mem_limit=settings.preview_memory,
+                nano_cpus=1_000_000_000,
+                pids_limit=256,
+            )
+            network.disconnect(container)
+            network.connect(container, aliases=[str(service_name)])
+            containers.append(container)
+
+        by_service = {
+            ((container.attrs.get("Config") or {}).get("Labels") or {}).get(
+                LABEL_SERVICE, ""
+            ): container
+            for container in containers
+        }
+        for service_name in _service_order(services):
+            report("compose-start", f"Starting service {service_name}")
+            by_service[service_name].start()
+    except Exception:
+        _remove_resources(
+            {
+                "containers": containers,
+                "networks": [network],
+                "volumes": data_volumes,
+                "images": [],
+            },
+            remove_data_volumes=True,
+        )
+        raise
+    networks = [network]
+    if config.network_access is PreviewNetworkAccess.ISOLATED:
+        report("gateway", "Creating the loopback preview gateway")
+        gateway, gateway_network, gateway_volume = _gateway_proxy(
+            docker_client,
+            settings.inspection_image,
+            network,
+            config.selected_service,
+            config.container_port,
+            host_port,
+            labels,
+            run_id,
+        )
+        containers.append(gateway)
+        networks.append(gateway_network)
+        data_volumes.append(gateway_volume)
+        report("gateway", "Loopback preview gateway started")
+    return {
+        "containers": containers,
+        "networks": networks,
+        "volumes": data_volumes,
+        "images": _preview_images(docker_client, run_id),
+    }
+
+
+def _volume_runtime_files(
+    docker_client: DockerClient,
+    volume_name: str,
+    settings: PreviewSettings,
+) -> dict[str, bytes]:
+    command = (
+        "set -eu\n"
+        "cd /workspace\n"
+        "find . -maxdepth 5 -type f \\( -name 'compose.yaml' -o -name 'compose.yml' "
+        "-o -name 'docker-compose.yaml' -o -name 'docker-compose.yml' "
+        "-o -name 'Dockerfile*' -o -name '.dockerignore' "
+        "-o -name 'package.json' -o -name 'package-lock.json' "
+        "-o -name 'npm-shrinkwrap.json' -o -name 'pnpm-lock.yaml' "
+        "-o -name 'yarn.lock' -o -name 'pyproject.toml' "
+        "-o -name 'requirements*.txt' -o -name 'Pipfile' "
+        "-o -name 'Pipfile.lock' -o -name 'poetry.lock' -o -name 'uv.lock' "
+        "-o -name 'schema.prisma' "
+        "-o -name 'vite.config.*' -o -name 'next.config.*' "
+        "-o -path './.agent/preview.yaml' -o -name 'index.html' \\) "
+        f"-size -{settings.maximum_file_bytes + 1}c -print > /tmp/files\n"
+        "tar -cf - -T /tmp/files\n"
+    )
+    output = docker_client.containers.run(
+        image=settings.inspection_image,
+        command=["sh", "-c", command],
+        remove=True,
+        network_disabled=True,
+        read_only=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
+        tmpfs={"/tmp": "rw,nosuid,size=32m"},
+    )
+    if not isinstance(output, bytes):
+        output = bytes(output)
+    files: dict[str, bytes] = {}
+    total = 0
+    try:
+        with tarfile.open(fileobj=io.BytesIO(output), mode="r:*") as archive:
+            for member in archive:
+                normalized = member.name.removeprefix("./")
+                if not member.isfile() or not is_detection_file(normalized):
+                    continue
+                if member.size > settings.maximum_file_bytes:
+                    continue
+                source = archive.extractfile(member)
+                if source is None:
+                    continue
+                content = source.read(settings.maximum_file_bytes + 1)
+                total += len(content)
+                if total > settings.maximum_snapshot_bytes:
+                    raise PreviewOperationError(
+                        422,
+                        "Protected runtime files exceed the inspection limit",
+                    )
+                files[normalized] = content
+    except tarfile.TarError as error:
+        raise PreviewOperationError(502, "Sandbox inspection returned invalid data") from error
+    return files
+
+
+def _volume_environment_files(
+    docker_client: DockerClient,
+    volume_name: str,
+    settings: PreviewSettings,
+) -> dict[str, bytes]:
+    """Reads the project volume's top-level env files. Never feeds hashes/baselines."""
+    name_clauses = " -o ".join(
+        f"-name {shlex.quote(name)}" for name in ENVIRONMENT_FILE_NAMES
+    )
+    command = (
+        "set -eu\n"
+        "cd /workspace\n"
+        f"find . -maxdepth 1 -type f \\( {name_clauses} \\) "
+        f"-size -{settings.maximum_file_bytes + 1}c -print > /tmp/files\n"
+        "tar -cf - -T /tmp/files\n"
+    )
+    output = docker_client.containers.run(
+        image=settings.inspection_image,
+        command=["sh", "-c", command],
+        remove=True,
+        network_disabled=True,
+        read_only=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
+        tmpfs={"/tmp": "rw,nosuid,size=32m"},
+    )
+    if not isinstance(output, bytes):
+        output = bytes(output)
+    files: dict[str, bytes] = {}
+    total = 0
+    try:
+        with tarfile.open(fileobj=io.BytesIO(output), mode="r:*") as archive:
+            for member in archive:
+                normalized = member.name.removeprefix("./")
+                if not member.isfile() or normalized not in ENVIRONMENT_FILE_NAMES:
+                    continue
+                if member.size > settings.maximum_file_bytes:
+                    continue
+                source = archive.extractfile(member)
+                if source is None:
+                    continue
+                content = source.read(settings.maximum_file_bytes + 1)
+                total += len(content)
+                if total > settings.maximum_snapshot_bytes:
+                    raise PreviewOperationError(
+                        422,
+                        "Environment files exceed the inspection limit",
+                    )
+                files[normalized] = content
+    except tarfile.TarError as error:
+        raise PreviewOperationError(502, "Sandbox inspection returned invalid data") from error
+    return files
+
+
+def _volume_context_tar(
+    docker_client: DockerClient,
+    volume_name: str,
+    context: str,
+    inspection_image: str,
+) -> bytes:
+    relative = _safe_relative_path(context, field="build context", allow_dot=True)
+    directory = "/workspace" if relative == "." else f"/workspace/{relative}"
+    output = docker_client.containers.run(
+        image=inspection_image,
+        command=["tar", "-C", directory, "-cf", "-", "."],
+        remove=True,
+        network_disabled=True,
+        read_only=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
+    )
+    if not isinstance(output, bytes):
+        output = bytes(output)
+    if len(output) > MAX_CONTEXT_BYTES:
+        raise PreviewOperationError(422, "Docker build context exceeds 512 MiB")
+    return output
+
+
+def _write_preview_manifest(
+    docker_client: DockerClient,
+    volume_name: str,
+    inspection_image: str,
+    config: PreviewConfiguration,
+) -> None:
+    document = yaml.safe_dump(
+        config.model_dump(mode="json"),
+        sort_keys=True,
+        default_flow_style=False,
+    ).encode()
+    encoded = base64.b64encode(document).decode("ascii")
+    docker_client.containers.run(
+        image=inspection_image,
+        command=[
+            "sh",
+            "-c",
+            (
+                "set -eu; mkdir -p /workspace/.agent; "
+                "printf '%s' \"$PREVIEW_MANIFEST\" | base64 -d "
+                "> /workspace/.agent/preview.yaml"
+            ),
+        ],
+        environment={"PREVIEW_MANIFEST": encoded},
+        remove=True,
+        network_disabled=True,
+        read_only=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        volumes={volume_name: {"bind": "/workspace", "mode": "rw"}},
+        tmpfs={"/tmp": "rw,nosuid,size=8m"},
+    )
+
+
+def _validate_compose_service(service_name: str, service: dict[str, Any]) -> None:
+    forbidden = {
+        "privileged",
+        "network_mode",
+        "pid",
+        "ipc",
+        "devices",
+        "cap_add",
+        "security_opt",
+        "env_file",
+        "secrets",
+        "configs",
+    }
+    present = sorted(key for key in forbidden if service.get(key))
+    if present:
+        raise PreviewOperationError(
+            422,
+            f"Compose service '{service_name}' uses blocked fields: {', '.join(present)}",
+        )
+
+
+def _compose_image(
+    docker_client: DockerClient,
+    settings: PreviewSettings,
+    project_volume: str,
+    service_name: str,
+    service: dict[str, Any],
+    labels: dict[str, str],
+    run_id: str,
+) -> str:
+    build = service.get("build")
+    if build is not None:
+        if isinstance(build, str):
+            context = build
+            dockerfile = "Dockerfile"
+        elif isinstance(build, dict):
+            context = str(build.get("context", "."))
+            dockerfile = str(build.get("dockerfile", "Dockerfile"))
+            if build.get("ssh") or build.get("secrets") or build.get("privileged"):
+                raise PreviewOperationError(
+                    422,
+                    f"Compose service '{service_name}' requests blocked build privileges",
+                )
+        else:
+            raise PreviewOperationError(422, f"Compose service '{service_name}' has invalid build")
+        context_path = _safe_relative_path(context, field="build context", allow_dot=True)
+        dockerfile_path = _safe_relative_path(dockerfile, field="dockerfile")
+        archive = _volume_context_tar(
+            docker_client,
+            project_volume,
+            context_path,
+            settings.inspection_image,
+        )
+        tag = f"orchestrator-preview:{run_id}-{_slug(service_name)}"
+        try:
+            built_image, _ = docker_client.images.build(
+                fileobj=io.BytesIO(archive),
+                custom_context=True,
+                dockerfile=dockerfile_path,
+                tag=tag,
+                rm=True,
+                forcerm=True,
+                labels=labels,
+                timeout=settings.build_timeout_seconds,
+            )
+            _validate_built_image(built_image, settings)
+        except (BuildError, APIError) as error:
+            raise PreviewOperationError(
+                422,
+                f"Compose service '{service_name}' build failed: {error}",
+            ) from error
+        return tag
+    image = service.get("image")
+    if not isinstance(image, str) or not image:
+        raise PreviewOperationError(
+            422,
+            f"Compose service '{service_name}' requires image or build",
+        )
+    if "${" in image:
+        raise PreviewOperationError(422, "Compose environment interpolation is disabled")
+    _ensure_image(docker_client, image)
+    return image
+
+
+def _compose_volumes(
+    docker_client: DockerClient,
+    project_volume: str,
+    declarations: Any,
+    named_volumes: dict[str, Any],
+    data_volumes: list[Any],
+    config: PreviewConfiguration,
+    labels: dict[str, str],
+    run_id: str,
+) -> dict[str, dict[str, str]]:
+    if not isinstance(declarations, list):
+        raise PreviewOperationError(422, "Compose service volumes must be a list")
+    mounts: dict[str, dict[str, str]] = {}
+    for declaration in declarations:
+        source: str
+        target: str
+        mode = "rw"
+        mount_type = "volume"
+        if isinstance(declaration, str):
+            pieces = declaration.split(":")
+            if len(pieces) == 1:
+                source = ""
+                target = pieces[0]
+            elif len(pieces) in {2, 3}:
+                source, target = pieces[:2]
+                if len(pieces) == 3 and pieces[2] == "ro":
+                    mode = "ro"
+            else:
+                raise PreviewOperationError(422, "Compose volume syntax is unsupported")
+            if source.startswith(".") or source.startswith("/"):
+                mount_type = "bind"
+        elif isinstance(declaration, dict):
+            mount_type = str(declaration.get("type", "volume"))
+            source = str(declaration.get("source", ""))
+            target = str(declaration.get("target", ""))
+            if declaration.get("read_only"):
+                mode = "ro"
+        else:
+            raise PreviewOperationError(422, "Compose volume declaration is invalid")
+        if not target.startswith("/"):
+            raise PreviewOperationError(422, "Compose volume target must be absolute")
+        if mount_type == "bind":
+            if source not in {".", "./"}:
+                raise PreviewOperationError(
+                    422,
+                    "Compose host bind mounts are blocked; only the sandbox root may be mounted",
+                )
+            mounts[project_volume] = {"bind": target, "mode": mode}
+            continue
+        logical_name = source or f"anonymous-{len(data_volumes) + 1}"
+        volume = named_volumes.get(logical_name)
+        if volume is None:
+            persistent = logical_name in config.persistent_volumes
+            volume = _data_volume(
+                docker_client,
+                run_id,
+                logical_name,
+                labels,
+                persistent,
+            )
+            named_volumes[logical_name] = volume
+            data_volumes.append(volume)
+        mounts[volume.name] = {"bind": target, "mode": mode}
+    return mounts
+
+
+def _compose_environment(value: Any) -> dict[str, str]:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        environment = {str(key): "" if item is None else str(item) for key, item in value.items()}
+    elif isinstance(value, list):
+        environment = {}
+        for entry in value:
+            key, separator, item = str(entry).partition("=")
+            if not separator:
+                raise PreviewOperationError(
+                    422,
+                    "Compose environment variables must include explicit values",
+                )
+            environment[key] = item
+    else:
+        raise PreviewOperationError(422, "Compose environment is invalid")
+    if any("${" in item for item in environment.values()):
+        raise PreviewOperationError(422, "Compose environment interpolation is disabled")
+    return environment
+
+
+def _service_order(services: dict[str, Any]) -> list[str]:
+    ordered: list[str] = []
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in visited:
+            return
+        if name in visiting:
+            raise PreviewOperationError(422, "Compose dependency cycle is unsupported")
+        visiting.add(name)
+        service = services.get(name) or {}
+        dependencies = service.get("depends_on") or []
+        dependency_names = dependencies if isinstance(dependencies, list) else dependencies.keys()
+        for dependency in dependency_names:
+            dependency_name = str(dependency)
+            if dependency_name not in services:
+                raise PreviewOperationError(
+                    422,
+                    f"Compose service '{name}' depends on missing service '{dependency_name}'",
+                )
+            visit(dependency_name)
+        visiting.remove(name)
+        visited.add(name)
+        ordered.append(name)
+
+    for service_name in services:
+        visit(str(service_name))
+    return ordered
+
+
+def _command(value: Any) -> str | list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and all(isinstance(item, (str, int, float)) for item in value):
+        return [str(item) for item in value]
+    raise PreviewOperationError(422, "Compose command or entrypoint is invalid")
+
+
+def _ensure_image(docker_client: DockerClient, image: str) -> None:
+    try:
+        docker_client.images.get(image)
+    except ImageNotFound:
+        try:
+            docker_client.images.pull(image)
+        except DockerException as error:
+            raise PreviewOperationError(424, f"Preview image '{image}' is unavailable") from error
+
+
+def _validate_built_image(image: Any, settings: PreviewSettings) -> None:
+    image.reload()
+    size = int(image.attrs.get("Size") or 0)
+    if size <= settings.maximum_built_image_bytes:
+        return
+    try:
+        image.remove(force=True)
+    except DockerException:
+        pass
+    raise PreviewOperationError(
+        422,
+        f"Built preview image exceeds {settings.maximum_built_image_bytes} bytes",
+    )
+
+
+def _network(
+    docker_client: DockerClient,
+    run_id: str,
+    labels: dict[str, str],
+    access: PreviewNetworkAccess,
+) -> Any:
+    return docker_client.networks.create(
+        f"orchestrator-preview-{run_id[:12]}",
+        driver="bridge",
+        internal=access is PreviewNetworkAccess.ISOLATED,
+        labels=labels,
+    )
+
+
+def _direct_ports(
+    config: PreviewConfiguration,
+    host_port: int,
+) -> dict[str, tuple[str, int]] | None:
+    if config.network_access is PreviewNetworkAccess.ISOLATED:
+        return None
+    return {f"{config.container_port}/tcp": ("127.0.0.1", host_port)}
+
+
+def _gateway_proxy(
+    docker_client: DockerClient,
+    image: str,
+    service_network: Any,
+    target_service: str,
+    target_port: int,
+    host_port: int,
+    labels: dict[str, str],
+    run_id: str,
+) -> tuple[Container, Any, Any]:
+    _ensure_image(docker_client, image)
+    gateway_network = docker_client.networks.create(
+        f"orchestrator-preview-{run_id[:12]}-gateway",
+        driver="bridge",
+        internal=False,
+        labels=labels,
+    )
+    gateway_volume = _data_volume(
+        docker_client,
+        run_id,
+        "gateway-script",
+        labels,
+        False,
+    )
+    script = f"#!/bin/sh\nexec nc {shlex.quote(target_service)} {target_port}\n"
+    docker_client.containers.run(
+        image=image,
+        command=[
+            "sh",
+            "-c",
+            "set -eu; printf '%s' \"$FORWARD_SCRIPT\" > /proxy/forward; chmod 700 /proxy/forward",
+        ],
+        environment={"FORWARD_SCRIPT": script},
+        remove=True,
+        network_disabled=True,
+        read_only=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        volumes={gateway_volume.name: {"bind": "/proxy", "mode": "rw"}},
+    )
+    gateway: Container | None = None
+    try:
+        gateway = docker_client.containers.create(
+            image=image,
+            command=["nc", "-lk", "-p", "8080", "-e", "/proxy/forward"],
+            name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-gateway",
+            init=True,
+            read_only=True,
+            cap_drop=["ALL"],
+            security_opt=["no-new-privileges:true"],
+            labels={**labels, LABEL_SERVICE: "gateway"},
+            volumes={gateway_volume.name: {"bind": "/proxy", "mode": "ro"}},
+            network=gateway_network.name,
+            ports={"8080/tcp": ("127.0.0.1", host_port)},
+            restart_policy={"Name": "no"},
+            mem_limit="128m",
+            nano_cpus=250_000_000,
+            pids_limit=32,
+        )
+        service_network.connect(gateway, aliases=["preview-gateway"])
+        gateway.start()
+    except Exception:
+        if gateway is not None:
+            try:
+                gateway.remove(force=True)
+            except DockerException:
+                pass
+        try:
+            gateway_network.remove()
+        except DockerException:
+            pass
+        try:
+            gateway_volume.remove(force=True)
+        except DockerException:
+            pass
+        raise
+    return gateway, gateway_network, gateway_volume
+
+
+def _data_volume(
+    docker_client: DockerClient,
+    run_id: str,
+    logical_name: str,
+    labels: dict[str, str],
+    persistent: bool,
+) -> Any:
+    if persistent:
+        sandbox_id = labels[LABEL_SANDBOX_ID]
+        name = (
+            f"orchestrator-preview-persistent-{sandbox_id[:12]}-"
+            f"{_slug(logical_name)[:24]}"
+        )
+        try:
+            volume = docker_client.volumes.get(name)
+        except NotFound:
+            volume = None
+        if volume is not None:
+            existing_labels = volume.attrs.get("Labels") or {}
+            if (
+                existing_labels.get(LABEL_DATA_MANAGED) != "true"
+                or existing_labels.get(LABEL_PERSISTENT) != "true"
+                or existing_labels.get(LABEL_SANDBOX_ID) != sandbox_id
+            ):
+                raise PreviewOperationError(
+                    409,
+                    f"Docker volume '{name}' is not trusted preview data",
+                )
+            return volume
+    else:
+        name = f"orchestrator-preview-{run_id[:12]}-{_slug(logical_name)[:24]}"
+    return docker_client.volumes.create(
+        name=name,
+        driver="local",
+        labels={
+            **labels,
+            LABEL_DATA_MANAGED: "true",
+            LABEL_PERSISTENT: "true" if persistent else "false",
+        },
+    )
+
+
+def _labels(
+    sandbox_id: str,
+    run_id: str,
+    expires_at: str | None,
+) -> dict[str, str]:
+    return {
+        LABEL_MANAGED: "true",
+        LABEL_CONTROLLER_MANAGED: "true",
+        LABEL_SANDBOX_ID: sandbox_id,
+        LABEL_RUN_ID: run_id,
+        LABEL_KIND: "preview",
+        LABEL_EXPIRES_AT: expires_at or "",
+    }
+
+
+def _preview_containers(
+    docker_client: DockerClient,
+    run_id: str,
+    *,
+    all: bool,
+) -> list[Container]:
+    return docker_client.containers.list(
+        all=all,
+        filters={"label": [f"{LABEL_MANAGED}=true", f"{LABEL_RUN_ID}={run_id}"]},
+    )
+
+
+def _preview_networks(docker_client: DockerClient, run_id: str) -> list[Any]:
+    return docker_client.networks.list(
+        filters={"label": [f"{LABEL_MANAGED}=true", f"{LABEL_RUN_ID}={run_id}"]}
+    )
+
+
+def _preview_volumes(docker_client: DockerClient, run_id: str) -> list[Any]:
+    return docker_client.volumes.list(
+        filters={
+            "label": [f"{LABEL_DATA_MANAGED}=true", f"{LABEL_RUN_ID}={run_id}"]
+        }
+    )
+
+
+def _preview_images(docker_client: DockerClient, run_id: str) -> list[Any]:
+    return docker_client.images.list(
+        filters={
+            "label": [f"{LABEL_MANAGED}=true", f"{LABEL_RUN_ID}={run_id}"]
+        }
+    )
+
+
+def _resources_for_run(docker_client: DockerClient, run_id: str) -> dict[str, Any]:
+    return {
+        "containers": _preview_containers(docker_client, run_id, all=True),
+        "networks": _preview_networks(docker_client, run_id),
+        "volumes": _preview_volumes(docker_client, run_id),
+        "images": _preview_images(docker_client, run_id),
+    }
+
+
+def _disconnect_foreign_endpoints(network: Any) -> None:
+    """Detaches containers the run does not own, such as a shared database.
+
+    Docker refuses to remove a network that still has endpoints, and the shared
+    server outlives the run, so it is disconnected instead of removed.
+    """
+    try:
+        network.reload()
+    except DockerException:
+        return
+    for container_id in (network.attrs.get("Containers") or {}):
+        try:
+            network.disconnect(container_id, force=True)
+        except DockerException:
+            continue
+
+
+def _remove_resources(
+    resources: dict[str, Any],
+    *,
+    remove_data_volumes: bool,
+) -> dict[str, int]:
+    counts = {"containers": 0, "networks": 0, "volumes": 0, "images": 0}
+    for container in resources.get("containers") or []:
+        try:
+            container.remove(force=True)
+            counts["containers"] += 1
+        except NotFound:
+            counts["containers"] += 1
+        except DockerException:
+            continue
+    for network in resources.get("networks") or []:
+        _disconnect_foreign_endpoints(network)
+        try:
+            network.remove()
+            counts["networks"] += 1
+        except NotFound:
+            counts["networks"] += 1
+        except DockerException:
+            continue
+    for volume in resources.get("volumes") or []:
+        labels = volume.attrs.get("Labels") or {}
+        if labels.get(LABEL_PERSISTENT) == "true":
+            continue
+        database_data = labels.get(LABEL_SERVICE) in {
+            "database",
+            "database-credentials",
+        }
+        if not remove_data_volumes and not database_data:
+            continue
+        try:
+            volume.remove(force=True)
+            counts["volumes"] += 1
+        except NotFound:
+            counts["volumes"] += 1
+        except DockerException:
+            continue
+    for image in resources.get("images") or []:
+        try:
+            image.remove(force=True)
+            counts["images"] += 1
+        except (AttributeError, NotFound):
+            try:
+                image_id = getattr(image, "id", str(image))
+                image.client.images.remove(image=image_id, force=True)
+                counts["images"] += 1
+            except (AttributeError, DockerException):
+                continue
+        except DockerException:
+            continue
+    return counts
+
+
+def _run_from_record(
+    docker_client: DockerClient,
+    project_name: str,
+    record: dict[str, Any],
+    controller_store: ControllerStore | None = None,
+) -> PreviewRun:
+    config = PreviewConfiguration.model_validate_json(str(record["config_json"]))
+    containers = _preview_containers(docker_client, str(record["id"]), all=True)
+    summaries = []
+    for container in containers:
+        labels = (container.attrs.get("Config") or {}).get("Labels") or {}
+        summaries.append(
+            PreviewContainer(
+                id=container.id,
+                name=container.name,
+                service=labels.get(LABEL_SERVICE, "app"),
+                status=container.status,
+            )
+        )
+    host_port = record.get("host_port")
+    return PreviewRun(
+        id=str(record["id"]),
+        sandbox_id=str(record["sandbox_id"]),
+        project_name=project_name,
+        proposal_id=str(record["proposal_id"]),
+        mode=PreviewMode(str(record["mode"])),
+        runtime=config.runtime,
+        status=str(record["status"]),
+        selected_service=str(record.get("selected_service") or "app"),
+        container_port=int(record["container_port"]),
+        host_port=int(host_port) if host_port else None,
+        url=f"http://127.0.0.1:{host_port}" if host_port else "",
+        network_access=config.network_access,
+        created_at=str(record["created_at"]),
+        started_at=str(record.get("started_at") or ""),
+        expires_at=str(record.get("expires_at") or ""),
+        last_activity_at=str(record["last_activity_at"]),
+        containers=summaries,
+        database_sharing=(
+            _sharing_state(controller_store, str(record["sandbox_id"]))
+            if controller_store is not None
+            else None
+        ),
+    )
+
+
+def _container_service(container: Container) -> str:
+    labels = (container.attrs.get("Config") or {}).get("Labels") or {}
+    return str(labels.get(LABEL_SERVICE) or "app")
+
+
+def _ready_project(docker_client: DockerClient, project_name: str) -> Any:
+    try:
+        project = inspect_registered_project(docker_client, project_name)
+    except ProjectOperationError as error:
+        raise PreviewOperationError(error.status_code, error.detail) from error
+    if not project.ready:
+        raise PreviewOperationError(409, f"Project '{project_name}' is not ready")
+    return project
+
+
+def _register_sandbox(controller_store: ControllerStore, project: Any) -> None:
+    controller_store.register_sandbox(
+        sandbox_id=project.sandbox_id,
+        project_id=project_id(project.source_path),
+        project_name=project.name,
+        source_path=project.source_path,
+        volume_name=project.volume_name,
+        status="ready" if project.ready else project.copy_status,
+        created_at=project.created_at,
+    )
+
+
+def _original_baseline(project: Any, settings: PreviewSettings) -> dict[str, bytes]:
+    try:
+        return capture_source_runtime_files(
+            Path(project.source_path),
+            maximum_file_bytes=settings.maximum_file_bytes,
+            maximum_snapshot_bytes=settings.maximum_snapshot_bytes,
+        )
+    except (AttributeError, OSError, TypeError, ValueError):
+        return {}
+
+
+def _available_host_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
+        candidate.bind(("127.0.0.1", 0))
+        return int(candidate.getsockname()[1])
+
+
+def _safe_relative_path(value: str, *, field: str, allow_dot: bool = False) -> str:
+    path = PurePosixPath(value)
+    if path.is_absolute() or ".." in path.parts:
+        raise PreviewOperationError(422, f"{field} must stay inside the sandbox")
+    text = path.as_posix()
+    if not text or (text == "." and not allow_dot):
+        raise PreviewOperationError(422, f"{field} is required")
+    return text
+
+
+def _slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9_.-]+", "-", value.casefold()).strip("-._") or "data"
+
+
+def _expiry(minutes: int) -> str | None:
+    return None if minutes == 0 else _time_after(minutes=minutes)
+
+
+def _time_after(*, seconds: int = 0, minutes: int = 0) -> str:
+    value = datetime.now(UTC) + timedelta(seconds=seconds, minutes=minutes)
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")

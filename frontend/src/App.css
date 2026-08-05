@@ -1,0 +1,940 @@
+.page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+  text-align: left;
+}
+
+.main-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.35);
+  margin-bottom: 0.5rem;
+}
+
+.main-nav a {
+  color: inherit;
+  text-decoration: none;
+  opacity: 0.7;
+  padding: 0.25rem 0;
+}
+
+.main-nav a.active {
+  opacity: 1;
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 currentColor;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.page-header h1 {
+  font-size: 1.5rem;
+  margin: 0;
+}
+
+/* --- Buttons ----------------------------------------------------------
+   One base rule for every button in the app. Variants add only what
+   differs: `.danger` recolors, `.small` shrinks, `.ghost` drops the border.
+   Nothing else should restate padding, radius, or font size. */
+
+.page button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  box-sizing: border-box;
+  min-height: 2.1rem;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.page button:hover:not(:disabled) {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.page button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.page button.danger {
+  border-color: #d03b3b;
+  color: #d03b3b;
+}
+
+.page button.danger:hover:not(:disabled) {
+  background: rgba(208, 59, 59, 0.12);
+}
+
+.page button.small {
+  min-height: 1.7rem;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+.page button.ghost {
+  border-color: transparent;
+}
+
+/* The one affirmative action in a form or dialog. */
+.page button.primary {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.page button.primary:hover:not(:disabled) {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.1rem;
+  box-sizing: border-box;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: inherit;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  text-decoration: none;
+}
+
+.button-link.primary {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.status {
+  margin: 0.5rem 0 1rem;
+  opacity: 0.8;
+}
+
+.status-error {
+  color: #d03b3b;
+  opacity: 1;
+}
+
+.status-ok {
+  color: #0ca30c;
+  opacity: 1;
+}
+
+.status-warning {
+  color: #c47a00;
+  opacity: 1;
+  font-weight: 600;
+}
+
+.breadcrumb {
+  margin: 0 0 0.25rem;
+  font-size: 0.85rem;
+}
+
+.button-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* --- Sandbox preview -------------------------------------------------- */
+
+.preview-section {
+  margin: 2rem 0;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.preview-current,
+.preview-proposal,
+.preview-logs {
+  margin-top: 1rem;
+}
+
+.preview-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+  margin: 1rem 0 1.5rem;
+}
+
+.preview-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  font-size: 0.85rem;
+}
+
+.preview-form-grid input,
+.preview-form-grid select,
+.preview-form-grid textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.dependency-settings {
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.dependency-settings > .checkbox-label {
+  flex-direction: row;
+  align-items: center;
+}
+
+.dependency-settings > .checkbox-label input {
+  width: auto;
+}
+
+.dependency-settings > .preview-form-grid {
+  margin-bottom: 0;
+}
+
+.preview-form-grid .wide-field {
+  grid-column: 1 / -1;
+}
+
+.preview-actions,
+.proposal-actions {
+  flex-wrap: wrap;
+  margin: 0.75rem 0;
+}
+
+.protected-changes details,
+.preview-logs details {
+  margin: 0.6rem 0;
+}
+
+.protected-changes summary,
+.preview-logs summary {
+  cursor: pointer;
+  margin-bottom: 0.4rem;
+}
+
+.preview-progress-events {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+  padding-left: 1.5rem;
+}
+
+.preview-progress-events li {
+  display: grid;
+  grid-template-columns: minmax(8rem, auto) 1fr auto;
+  gap: 0.75rem;
+  align-items: baseline;
+  font-size: 0.85rem;
+}
+
+.preview-progress-events time {
+  color: var(--text);
+  opacity: 0.75;
+  white-space: nowrap;
+}
+
+.preview-environment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.25rem;
+  margin: 0.5rem 0 1rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+}
+
+.approval-check {
+  margin-top: 1.25rem;
+  font-weight: 600;
+}
+
+.inline-confirm {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid #d03b3b;
+  border-radius: 8px;
+}
+
+@media (max-width: 720px) {
+  .preview-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .preview-form-grid .wide-field {
+    grid-column: auto;
+  }
+}
+
+/* --- Volume detail ---------------------------------------------------- */
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1.25rem;
+  margin: 0 0 1.5rem;
+  font-size: 0.9rem;
+}
+
+.detail-grid dt {
+  opacity: 0.7;
+}
+
+.detail-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.file-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.file-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.file-form input,
+.file-form select {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: inherit;
+}
+
+.file-form input {
+  min-width: 260px;
+}
+
+.file-content {
+  max-height: 420px;
+  overflow: auto;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  background: var(--code-bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+/* --- Confirm dialog --------------------------------------------------- */
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 10;
+}
+
+.dialog {
+  width: min(480px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem 1.5rem;
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  text-align: left;
+}
+
+.dialog h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.15rem;
+}
+
+.dialog-body p {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+}
+
+.dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 1rem 0;
+  font-size: 0.85rem;
+}
+
+.dialog-field input {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: inherit;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+/* --- Copy status badge ------------------------------------------------ */
+/* Status colors are reserved for state and pair with an icon plus a word,
+   so meaning never rests on color alone. */
+
+.copy-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.copy-queued {
+  color: #fab219;
+}
+
+.copy-copying {
+  color: #2a78d6;
+}
+
+.copy-completed {
+  color: #0ca30c;
+}
+
+.copy-failed {
+  color: #d03b3b;
+}
+
+.copy-unknown {
+  opacity: 0.7;
+}
+
+/* --- Copy log modal --------------------------------------------------- */
+
+.log-modal {
+  width: min(820px, 100%);
+  display: flex;
+  flex-direction: column;
+}
+
+.log-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.log-modal-header h2 {
+  margin: 0;
+}
+
+.log-modal-id {
+  margin: 0.15rem 0 0;
+  font-size: 0.75rem;
+  opacity: 0.65;
+  overflow-wrap: anywhere;
+}
+
+.log-modal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.75rem;
+  margin: 0 0 0.9rem;
+}
+
+.log-modal-meta dt {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.65;
+}
+
+.log-modal-meta dd {
+  margin: 0.1rem 0 0;
+  font-size: 0.9rem;
+}
+
+.log-modal-excluded {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+}
+
+.log-modal-excluded summary {
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.log-modal-excluded p {
+  margin: 0.4rem 0 0;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+  opacity: 0.8;
+}
+
+.log-modal-body {
+  min-height: 220px;
+  max-height: 45vh;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.log-modal-actions {
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 1rem;
+}
+
+.log-modal-note {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+/* --- Folder picker ---------------------------------------------------- */
+
+.dialog.picker {
+  width: min(560px, 100%);
+}
+
+.picker-path {
+  margin: 0 0 0.75rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  background: var(--code-bg);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.picker-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.picker-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.15rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.picker-list li:last-child {
+  border-bottom: none;
+}
+
+.picker-empty {
+  padding: 0.6rem;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+/* A full-width row that happens to be a button; `.ghost` drops the border. */
+.picker-row {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-start;
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+}
+
+/* A fixed icon column so every folder name starts at the same offset —
+   the glyphs themselves have different widths. */
+.picker-icon {
+  flex-shrink: 0;
+  width: 1.25rem;
+  text-align: center;
+}
+
+.picker-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.picker-field {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 2.1rem;
+}
+
+.picker-field span {
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.picker-field button {
+  flex-shrink: 0;
+}
+
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+.volumes-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.volumes-table th,
+.volumes-table td {
+  border-bottom: 1px solid rgba(128, 128, 128, 0.35);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.volumes-table th {
+  font-weight: 600;
+  border-bottom-width: 2px;
+}
+
+.volumes-table tbody tr:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Storage figures & bars ------------------------------------------ */
+/* Series hues are categorical slots 1 and 2 of the validated palette.
+   Both modes pass all six checks against this app's own surfaces. */
+.page {
+  --surface: #fff;
+  --series-in-use: #2a78d6;
+  --series-reclaimable: #eb6834;
+}
+
+@media (prefers-color-scheme: dark) {
+  .page {
+    --surface: #16171d;
+    --series-in-use: #3987e5;
+    --series-reclaimable: #d95926;
+  }
+}
+
+.total-figure {
+  margin: 1rem 0 1.25rem;
+}
+
+.total-label {
+  margin: 0;
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+.total-value {
+  margin: 0.1rem 0;
+  font-size: 3rem;
+  line-height: 1.1;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.total-sub {
+  margin: 0;
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+.legend {
+  display: flex;
+  gap: 1.25rem;
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  font-size: 0.85rem;
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.legend-swatch.in-use,
+.storage-bar-segment.in-use {
+  background: var(--series-in-use);
+}
+
+.legend-swatch.reclaimable,
+.storage-bar-segment.reclaimable {
+  background: var(--series-reclaimable);
+}
+
+/* Single-series meter: filled portion over a recessive track. */
+.meter-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.meter-cell .mono {
+  white-space: nowrap;
+}
+
+.meter {
+  flex: 1;
+  min-width: 60px;
+  height: 14px;
+  border-radius: 2px;
+  background: rgba(42, 120, 214, 0.18);
+  overflow: hidden;
+}
+
+.meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px 4px 4px 2px;
+  background: var(--series-in-use);
+}
+
+.storage-table .bar-column {
+  width: 40%;
+  min-width: 220px;
+  white-space: normal;
+}
+
+.storage-bar {
+  display: flex;
+  /* Bars grow from a shared baseline at the left edge. */
+  height: 14px;
+  width: 100%;
+}
+
+.storage-bar-segment {
+  height: 100%;
+}
+
+/* 2px surface gap separates the two stacked segments. */
+.storage-bar-segment + .storage-bar-segment {
+  margin-left: 2px;
+}
+
+/* Square at the baseline, 4px rounded at the data end. */
+.storage-bar-segment:first-child {
+  border-radius: 2px 0 0 2px;
+}
+
+.storage-bar-segment:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+.storage-bar-segment:only-child {
+  border-radius: 2px 4px 4px 2px;
+}
+
+/* --- Agents ----------------------------------------------------------- */
+
+.status-warn {
+  color: #8a5200;
+  opacity: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+  .status-warn {
+    color: #e0a44a;
+  }
+}
+
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.agent-phase {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.agent-phase-live {
+  color: #0ca30c;
+  opacity: 1;
+}
+
+.agent-phase-closed {
+  color: #d03b3b;
+  opacity: 1;
+}
+
+/* xterm sizes itself to this host, so the host must have a real height.
+   FitAddon subtracts the padding when it computes rows and columns. */
+.agent-terminal {
+  height: 65vh;
+  min-height: 320px;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #16171d;
+  overflow: hidden;
+}
+
+/* Embedded in a detail page rather than filling a page of its own, so it
+   takes less height than the full-page agent terminal. */
+.container-shell {
+  height: 45vh;
+  min-height: 260px;
+}
+
+/* A caption on the left, its controls pushed to the right edge. */
+.section-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.5rem 0;
+}
+
+.section-toolbar .status {
+  margin: 0;
+}
+
+/* An h2 with an action beside it, inside a page that already has a header. */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.75rem 0 0.5rem;
+}
+
+.section-header h2 {
+  margin: 0;
+}
+
+/* --- Container status badge ------------------------------------------- */
+/* Same rule as the copy badge: an icon plus the state word, so meaning
+   never rests on color alone. */
+
+.container-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  text-transform: capitalize;
+}
+
+.container-running {
+  color: #0ca30c;
+}
+
+.container-restarting,
+.container-removing {
+  color: #2a78d6;
+}
+
+.container-created,
+.container-paused {
+  color: #fab219;
+}
+
+.container-exited {
+  opacity: 0.7;
+}
+
+.container-dead {
+  color: #d03b3b;
+}
+
+.container-unknown {
+  opacity: 0.7;
+}
+
+/* --- Filter chips ------------------------------------------------------ */
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+}
+
+.filter-chip {
+  font-size: 0.85rem;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  opacity: 0.7;
+}
+
+.filter-chip.active {
+  opacity: 1;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+/* Two meters share a row here, so each takes half the width a lone meter
+   column gets on the storage tables. */
+.usage-column {
+  width: 18%;
+  min-width: 150px;
+  white-space: normal;
+}
