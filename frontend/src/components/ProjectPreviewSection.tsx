@@ -34,8 +34,10 @@ function ProjectPreviewSection({
   const [current, setCurrent] = useState<PreviewRun | null>(null)
   const [proposal, setProposal] = useState<PreviewProposal | null>(null)
   const [config, setConfig] = useState<PreviewConfiguration | null>(null)
+  const [proposalOpen, setProposalOpen] = useState(false)
   const [logs, setLogs] = useState<PreviewLogs | null>(null)
   const [creationProposalId, setCreationProposalId] = useState<string | null>(null)
+  const [buildLogsOpen, setBuildLogsOpen] = useState(false)
   const [followRuntimeLogs, setFollowRuntimeLogs] = useState(false)
   const [approved, setApproved] = useState(false)
   const [configEdited, setConfigEdited] = useState(false)
@@ -132,6 +134,7 @@ function ProjectPreviewSection({
     setNotice(null)
     setLogs(null)
     setCreationProposalId(null)
+    setBuildLogsOpen(false)
     setFollowRuntimeLogs(false)
     try {
       const detected = await inspectPreview(projectName)
@@ -139,6 +142,7 @@ function ProjectPreviewSection({
       setConfig(detected.config)
       setApproved(false)
       setConfigEdited(false)
+      setProposalOpen(true)
       setNotice('Inspection completed. Review every setting before approval.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -154,6 +158,8 @@ function ProjectPreviewSection({
     setError(null)
     setNotice(null)
     const proposalId = proposal.id
+    setProposalOpen(false)
+    setBuildLogsOpen(true)
     setCreationProposalId(proposalId)
     setFollowRuntimeLogs(false)
     setLogs({
@@ -176,6 +182,7 @@ function ProjectPreviewSection({
       setConfig(null)
       setApproved(false)
       setConfigEdited(false)
+      setProposalOpen(false)
       setNotice(current ? 'Preview rebuilt.' : 'Preview started.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -186,8 +193,17 @@ function ProjectPreviewSection({
         // Keep the latest successful polling result.
       }
       setCreationProposalId(null)
+      setBuildLogsOpen(false)
       setLoading(false)
     }
+  }
+
+  const clearProposal = () => {
+    setProposal(null)
+    setConfig(null)
+    setApproved(false)
+    setConfigEdited(false)
+    setProposalOpen(false)
   }
 
   const action = async (name: 'reuse' | 'restart') => {
@@ -405,17 +421,29 @@ function ProjectPreviewSection({
   }
 
   return (
-    <section className="preview-section">
+    <section className="preview-section card">
       <div className="section-header">
         <h2>Preview</h2>
-        <button
-          type="button"
-          className="small"
-          onClick={() => void inspect()}
-          disabled={!projectReady || loading}
-        >
-          {loading ? 'Working…' : current ? 'Inspect for rebuild' : 'Inspect sandbox'}
-        </button>
+        <div className="button-row">
+          {proposal && !proposalOpen && (
+            <button
+              type="button"
+              className="small"
+              onClick={() => setProposalOpen(true)}
+              disabled={loading}
+            >
+              Review proposal
+            </button>
+          )}
+          <button
+            type="button"
+            className="small"
+            onClick={() => void inspect()}
+            disabled={!projectReady || loading}
+          >
+            {loading ? 'Working…' : current ? 'Inspect for rebuild' : 'Inspect sandbox'}
+          </button>
+        </div>
       </div>
 
       <p className="status">
@@ -530,8 +558,29 @@ function ProjectPreviewSection({
         </div>
       )}
 
-      {proposal && config && (
-        <div className="preview-proposal">
+      {proposal && config && proposalOpen && (
+        <div className="dialog-backdrop preview-modal-backdrop">
+          <section
+            className="dialog preview-proposal-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="preview-proposal-title"
+          >
+            <div className="preview-modal-header">
+              <div>
+                <h2 id="preview-proposal-title">Rebuild preview stack</h2>
+                <p className="status">Review the exact settings and protected-file changes before rebuilding.</p>
+              </div>
+              <button
+                type="button"
+                className="small ghost"
+                aria-label="Close rebuild proposal"
+                onClick={() => setProposalOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="preview-proposal">
           <h3>Proposed settings</h3>
           <p className="status">
             Detected {proposal.detected_runtime} in {proposal.detected_mode} mode.
@@ -884,12 +933,7 @@ function ProjectPreviewSection({
           <div className="button-row proposal-actions">
             <button
               type="button"
-              onClick={() => {
-                setProposal(null)
-                setConfig(null)
-                setApproved(false)
-                setConfigEdited(false)
-              }}
+              onClick={clearProposal}
             >
               Cancel
             </button>
@@ -906,14 +950,28 @@ function ProjectPreviewSection({
               {current ? 'Approve and rebuild' : 'Approve and start'}
             </button>
           </div>
+            </div>
+          </section>
         </div>
       )}
 
-      {logs && (
-        <div className="preview-logs">
+      {logs && (!creationProposalId || buildLogsOpen) && (
+        <div
+          className={`preview-logs${creationProposalId ? ' preview-build-modal' : ''}`}
+        >
+          <div className={creationProposalId ? 'preview-build-surface' : undefined}>
           <div className="section-header">
             <h3>{creationProposalId ? 'Creating preview' : 'Live preview logs'}</h3>
             <div className="button-row">
+              {creationProposalId && (
+                <button
+                  type="button"
+                  className="small"
+                  onClick={() => setBuildLogsOpen(false)}
+                >
+                  Run in background
+                </button>
+              )}
               {current && !creationProposalId && (
                 <>
                   <button
@@ -976,6 +1034,7 @@ function ProjectPreviewSection({
               </pre>
             </details>
           ))}
+          </div>
         </div>
       )}
     </section>

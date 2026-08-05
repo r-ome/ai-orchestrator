@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import {
   createProjectSandbox,
@@ -22,6 +22,7 @@ function ProjectsPage() {
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const createSandboxCard = useRef<HTMLDivElement>(null)
 
   const pathValid = path.startsWith('/')
   const canSubmit = pathValid && !busy
@@ -72,69 +73,95 @@ function ProjectsPage() {
     <section>
       <header className="page-header">
         <h1>Projects</h1>
-        <button
-          type="button"
-          onClick={() => {
-            reload()
-            reloadJobs()
-          }}
-          disabled={loading}
-        >
-          {loading ? 'Loading…' : 'Refresh'}
-        </button>
+        <div className="button-row">
+          <button
+            type="button"
+            className="primary"
+            onClick={() =>
+              createSandboxCard.current?.scrollIntoView({
+                behavior: 'smooth',
+                block: 'start',
+              })
+            }
+          >
+            Create sandbox
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              reload()
+              reloadJobs()
+            }}
+            disabled={loading}
+          >
+            {loading ? 'Loading…' : 'Refresh'}
+          </button>
+        </div>
       </header>
 
-      <h2>Create a project sandbox</h2>
-      <form className="file-form" onSubmit={submit}>
-        <label>
-          Project folder
-          <div className="picker-field">
-            <span className="mono">{path || 'No folder chosen'}</span>
-            <button type="button" onClick={() => setPicking(true)}>
-              Browse…
-            </button>
-          </div>
-        </label>
-
-        <button type="submit" className="primary" disabled={!canSubmit}>
-          {busy ? 'Starting…' : 'Create sandbox'}
-        </button>
-      </form>
-
       <p className="status">
-        Each request copies the original host folder into a new Docker volume.
-        Names use the folder name with an incrementing suffix, such as
-        <span className="mono"> my-project-sandbox-1</span>. Each sandbox is a
-        one-time snapshot. Later edits to the folder do not sync.
+        Each sandbox is a one-time snapshot of a host folder, copied into a
+        dedicated Docker volume. Names use the folder name with an
+        incrementing suffix, such as
+        <span className="mono"> my-project-sandbox-1</span>. Later edits to
+        the source folder do not sync.
       </p>
 
-      {formError && (
-        <p className="status status-error" role="alert">
-          {formError}
-        </p>
-      )}
+      <div ref={createSandboxCard} className="card" id="create-sandbox">
+        <div className="card-header">
+          <h2>Create a project sandbox</h2>
+        </div>
+        <div className="card-body">
+          <form className="file-form" onSubmit={submit}>
+            <label>
+              Project folder
+              <div className="picker-field">
+                <span className="mono">{path || 'No folder chosen'}</span>
+                <button type="button" onClick={() => setPicking(true)}>
+                  Browse…
+                </button>
+              </div>
+            </label>
 
-      {notice && <p className="status status-ok">{notice}</p>}
+            <button type="submit" className="primary" disabled={!canSubmit}>
+              {busy ? 'Starting…' : 'Create sandbox'}
+            </button>
+          </form>
 
-      <h2>Project sandboxes</h2>
+          {formError && (
+            <p className="status status-error" role="alert">
+              {formError}
+            </p>
+          )}
 
-      {error && (
-        <p className="status status-error" role="alert">
-          Failed to load projects: {error}
-        </p>
-      )}
+          {notice && <p className="status status-ok">{notice}</p>}
+        </div>
+      </div>
 
-      {!error && loading && <p className="status">Loading projects…</p>}
+      <div className="card">
+        <div className="card-header">
+          <div className="card-header-title">
+            <h2>Project sandboxes</h2>
+            {data && <span className="pill">{data.count}</span>}
+          </div>
+        </div>
+        <div className="card-body">
+          {error && (
+            <p className="status status-error" role="alert">
+              Failed to load projects: {error}
+            </p>
+          )}
 
-      {!error && !loading && data && data.projects.length === 0 && (
-        <p className="status">No project sandboxes yet.</p>
-      )}
+          {!error && loading && <p className="status">Loading projects…</p>}
 
-      {!error && !loading && data && data.projects.length > 0 && (
-        <>
-          <p className="status">{data.count} project(s)</p>
+          {!error && !loading && data && data.projects.length === 0 && (
+            <p className="status">No project sandboxes yet.</p>
+          )}
+        </div>
+
+        {!error && !loading && data && data.projects.length > 0 && (
           <div className="table-wrapper">
-            <table className="volumes-table">
+            <table className="chrome-table">
               <thead>
                 <tr>
                   <th>Name</th>
@@ -177,40 +204,53 @@ function ProjectsPage() {
               </tbody>
             </table>
           </div>
-        </>
-      )}
+        )}
+      </div>
 
-      <h2>Copy jobs</h2>
+      <div className="card">
+        <div className="card-header">
+          <div className="card-header-title">
+            <h2>Copy jobs</h2>
+            {jobs.data && <span className="pill">{jobs.data.count}</span>}
+          </div>
+        </div>
+        <div className="card-body">
+          {jobs.error && (
+            <p className="status status-error" role="alert">
+              Failed to load copy jobs: {jobs.error}
+            </p>
+          )}
 
-      {jobs.error && (
-        <p className="status status-error" role="alert">
-          Failed to load copy jobs: {jobs.error}
-        </p>
-      )}
+          {!jobs.error && jobs.loading && (
+            <p className="status">Loading jobs…</p>
+          )}
 
-      {!jobs.error && jobs.loading && <p className="status">Loading jobs…</p>}
-
-      {!jobs.error && !jobs.loading && jobs.data && (
-        <>
-          {jobs.data.jobs.length === 0 ? (
-            <p className="status">No copy jobs yet.</p>
-          ) : (
+          {!jobs.error && !jobs.loading && jobs.data && (
             <>
-              <p className="status">
-                {jobs.data.count} job(s)
-                {copyIsActive ? ' · refreshing every second' : ''}
-              </p>
-              <CopyJobsTable jobs={jobs.data.jobs} onShowLog={setLogJobId} />
-              <p className="status">
-                Job status and logs are stored inside each project volume, at
-                <span className="mono"> .orchestrator/copy-job</span>. They
-                survive removing the helper container, and disappear only when
-                the volume does.
-              </p>
+              {jobs.data.jobs.length === 0 ? (
+                <p className="status">No copy jobs yet.</p>
+              ) : (
+                <>
+                  {copyIsActive && (
+                    <p className="status">Refreshing every second.</p>
+                  )}
+                  <CopyJobsTable
+                    jobs={jobs.data.jobs}
+                    onShowLog={setLogJobId}
+                  />
+                  <p className="status">
+                    Job status and logs are stored inside each project
+                    volume, at
+                    <span className="mono"> .orchestrator/copy-job</span>.
+                    They survive removing the helper container, and
+                    disappear only when the volume does.
+                  </p>
+                </>
+              )}
             </>
           )}
-        </>
-      )}
+        </div>
+      </div>
 
       {/* Rendered outside the list block so a background refresh cannot
           unmount it mid-read. */}

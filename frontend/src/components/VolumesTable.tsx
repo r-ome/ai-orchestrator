@@ -7,7 +7,7 @@ interface VolumesTableProps {
 function VolumesTable({ volumes }: VolumesTableProps) {
   return (
     <div className="table-wrapper">
-      <table className="volumes-table">
+      <table className="chrome-table">
         <thead>
           <tr>
             <th>Container</th>

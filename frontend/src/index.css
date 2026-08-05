@@ -1,23 +1,38 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  --bg: #0d0d10;
+  --panel: #16161c;
+  --panel2: #1c1c23;
+  --border: #282832;
+  --line: #20202a;
+  --text: #c9c9d2;
+  --text-h: #f3f3f7;
+  --muted: #7d7d8a;
+  --accent: #a855f7;
+  --ok: #3ecf8e;
+  --warn: #e6a23c;
+  --err: #f0616d;
+  --info: #4c8dff;
+  --code-bg: #16161c;
+  --social-bg: #1c1c23;
+  /* Text sitting on the accent gradient itself, not on a page ground, so it
+     stays light in both themes rather than following --text-h. */
+  --mark-text: #ffffff;
+  /* The terminal well sits a step below --bg, so the xterm surface reads as
+     recessed rather than as another panel. */
+  --terminal-bg: #0a0a0d;
+  --shadow: rgba(0,0,0,0.5) 0 10px 24px -6px, rgba(0,0,0,0.3) 0 3px 8px -2px;
+  --accent-bg: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 30%, transparent);
+  --soft: color-mix(in srgb, var(--accent) 12%, transparent);
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  --sans: 'Space Grotesk', system-ui, sans-serif;
+  --heading: 'Space Grotesk', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
+  font: 14px/145% var(--sans);
+  color-scheme: dark;
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
@@ -26,35 +41,18 @@
   -moz-osx-font-smoothing: grayscale;
 
   @media (max-width: 1024px) {
-    font-size: 16px;
+    font-size: 13px;
   }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
+#social .button-icon {
+  filter: invert(1) brightness(2);
 }
 
 #root {
-  width: 1126px;
+  width: 100%;
   max-width: 100%;
   margin: 0 auto;
-  text-align: center;
   border-inline: 1px solid var(--border);
   min-height: 100svh;
   display: flex;
@@ -74,21 +72,21 @@ h2 {
 }
 
 h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
+  font-size: 30px;
+  letter-spacing: -0.5px;
   margin: 32px 0;
   @media (max-width: 1024px) {
-    font-size: 36px;
+    font-size: 24px;
     margin: 20px 0;
   }
 }
 h2 {
-  font-size: 24px;
+  font-size: 15.5px;
   line-height: 118%;
-  letter-spacing: -0.24px;
+  letter-spacing: -0.2px;
   margin: 0 0 8px;
   @media (max-width: 1024px) {
-    font-size: 20px;
+    font-size: 14px;
   }
 }
 p {
@@ -104,8 +102,9 @@ code,
 }
 
 code {
-  font-size: 15px;
+  font-size: 12.5px;
   line-height: 135%;
   padding: 4px 8px;
   background: var(--code-bg);
+  border-radius: 6px;
 }

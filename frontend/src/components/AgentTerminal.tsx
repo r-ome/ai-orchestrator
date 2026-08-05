@@ -48,7 +48,7 @@ function AgentTerminal({ agent, onPhase, onError }: AgentTerminalProps) {
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
       fontSize: 13,
       scrollback: 10_000,
-      theme: { background: '#16171d', foreground: '#e6e6e6' },
+      theme: { background: '#0a0a0d', foreground: '#d4d4dd' },
     })
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)

@@ -3,7 +3,6 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { fetchAgent } from '../api/agents'
 import AgentTerminal, { type TerminalPhase } from '../components/AgentTerminal'
 import { useApiResource } from '../hooks/useApiResource'
-import { formatTimestamp } from '../utils/format'
 
 function AgentTerminalPage() {
   const { projectName = '', agentId = '' } = useParams()
@@ -21,34 +20,42 @@ function AgentTerminalPage() {
 
   return (
     <section className="agent-page">
-      <header className="page-header">
-        <div>
-          <p className="breadcrumb">
-            <Link to={projectPath}>← {projectName}</Link>
-          </p>
-          <h1>{data ? data.name : 'Agent terminal'}</h1>
+      <header className="agent-terminal-header">
+        <Link className="agent-terminal-back" to={projectPath}>
+          ← {projectName}
+        </Link>
+        <span className="agent-terminal-divider" aria-hidden="true" />
+        <span className="agent-terminal-dot" aria-hidden="true" />
+        <div className="agent-terminal-identity">
+          <div className="agent-terminal-name">
+            {data ? data.name : 'Agent terminal'}
+          </div>
+          {data && (
+            <div className="agent-terminal-meta">
+              {data.provider} · profile {data.credential_profile} · workspace{' '}
+              {data.workspace}
+            </div>
+          )}
         </div>
-        <div className="page-header-actions">
-          <span className={`agent-phase agent-phase-${phase}`}>
+        <div className="agent-terminal-controls">
+          <span className={`agent-terminal-status agent-phase-${phase}`}>
+            <span className="agent-terminal-status-dot" aria-hidden="true" />
             {phase === 'connecting' && 'Connecting…'}
             {phase === 'live' && 'Connected'}
             {phase === 'closed' && 'Disconnected'}
           </span>
-          {phase === 'closed' && data && (
-            <button
-              type="button"
-              className="primary"
-              onClick={() => {
-                setTerminalError(null)
-                setPhase('connecting')
-                setTerminalGeneration((generation) => generation + 1)
-              }}
-            >
-              Reconnect
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => {
+              setTerminalError(null)
+              setPhase('connecting')
+              setTerminalGeneration((generation) => generation + 1)
+            }}
+          >
+            ↻ Reconnect
+          </button>
           <button type="button" onClick={() => navigate(projectPath)}>
-            Back to project
+            ⤡ Restore
           </button>
         </div>
       </header>
@@ -63,20 +70,8 @@ function AgentTerminalPage() {
 
       {data && (
         <>
-          <p className="status">
-            <span className="mono">{data.provider}</span> · profile{' '}
-            <span className="mono">{data.credential_profile}</span> · workspace{' '}
-            <span className="mono">{data.workspace}</span> · started{' '}
-            {formatTimestamp(data.created_at)}
-          </p>
-
-          <p className="status" role="status">
-            Leaving this page detaches the terminal. The agent keeps running,
-            and you can open this page again to reattach to the same session.
-          </p>
-
           {terminalError && (
-            <p className="status status-error" role="alert">
+            <p className="agent-terminal-error status-error" role="alert">
               {terminalError}
             </p>
           )}
@@ -88,13 +83,15 @@ function AgentTerminalPage() {
             onError={setTerminalError}
           />
 
-          {phase === 'closed' && (
-            <p className="status">
-              The terminal disconnected. The agent container and its session
-              are still running. Select Reconnect, or{' '}
-              <Link to={projectPath}>return to {data.project_name}</Link>.
-            </p>
-          )}
+          <footer className="agent-terminal-footer">
+            <span className="agent-terminal-live">
+              <span aria-hidden="true" /> live
+            </span>
+            <span>ws · agent socket · binary frames</span>
+            <span className="agent-terminal-footer-note">
+              Leaving detaches the terminal — the agent keeps running.
+            </span>
+          </footer>
         </>
       )}
     </section>

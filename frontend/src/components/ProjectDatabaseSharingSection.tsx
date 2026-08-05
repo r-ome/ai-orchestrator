@@ -36,58 +36,63 @@ function ProjectDatabaseSharingSection({
   const guest = current?.sharing === 'shared_data'
 
   return (
-    <section>
-      <div className="section-header">
+    <section className="card">
+      <div className="card-header">
         <h2>Database</h2>
         <button type="button" className="small" onClick={reload} disabled={loading}>
           {loading ? 'Working…' : 'Refresh'}
         </button>
       </div>
 
-      {error && (
-        <p className="status status-error" role="alert">
-          Failed to load database sharing: {error}
-        </p>
-      )}
-
-      {!error && !loading && !current && (
-        <p className="status">
-          This sandbox holds no database on a shared server. A preview with an
-          isolated database creates and removes its own server.
-        </p>
-      )}
-
-      {!error && current && (
-        <>
-          <p className={`status ${guest ? 'status-warning' : ''}`}>
-            {describeSharing(current)}
+      <div className="card-body">
+        {error && (
+          <p className="status status-error" role="alert">
+            Failed to load database sharing: {error}
           </p>
-          <dl className="detail-grid">
-            <dt>Schema</dt>
-            <dd className="mono">{current.schema_name}</dd>
-            <dt>Server container</dt>
-            <dd className="mono">{current.server_container}</dd>
-            <dt>Image</dt>
-            <dd className="mono">{current.image}</dd>
-            <dt>Data</dt>
-            <dd>{current.persistence}</dd>
-            <dt>Owned by</dt>
-            <dd>
-              {current.owner_sandbox_id === current.sandbox_id
-                ? 'This sandbox'
-                : current.owner_project_name}
-            </dd>
-          </dl>
-        </>
-      )}
+        )}
 
-      {!error && data && data.candidates.length > 0 && (
-        <p className="status">
-          {data.candidates.length} sibling sandbox(es) of this project hold a
-          database a new preview could join:{' '}
-          {data.candidates.map((candidate) => candidate.project_name).join(', ')}.
-        </p>
-      )}
+        {!error && !loading && !current && (
+          <p className="status">
+            This sandbox holds no database on a shared server. A preview with
+            an isolated database creates and removes its own server.
+          </p>
+        )}
+
+        {!error && current && (
+          <>
+            <p className={`status ${guest ? 'status-warning' : ''}`}>
+              {describeSharing(current)}
+            </p>
+            <dl className="detail-grid">
+              <dt>Schema</dt>
+              <dd className="mono">{current.schema_name}</dd>
+              <dt>Server container</dt>
+              <dd className="mono">{current.server_container}</dd>
+              <dt>Image</dt>
+              <dd className="mono">{current.image}</dd>
+              <dt>Data</dt>
+              <dd>{current.persistence}</dd>
+              <dt>Owned by</dt>
+              <dd>
+                {current.owner_sandbox_id === current.sandbox_id
+                  ? 'This sandbox'
+                  : current.owner_project_name}
+              </dd>
+            </dl>
+          </>
+        )}
+
+        {!error && data && data.candidates.length > 0 && (
+          <p className="status">
+            {data.candidates.length} sibling sandbox(es) of this project hold
+            a database a new preview could join:{' '}
+            {data.candidates
+              .map((candidate) => candidate.project_name)
+              .join(', ')}
+            .
+          </p>
+        )}
+      </div>
     </section>
   )
 }

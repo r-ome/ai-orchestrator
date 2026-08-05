@@ -30,7 +30,7 @@ function StorageStatusPage() {
     : 0
 
   return (
-    <section>
+    <section className="operations-page">
       <header className="page-header">
         <h1>Docker storage status</h1>
         <button type="button" onClick={reload} disabled={loading}>
@@ -48,28 +48,50 @@ function StorageStatusPage() {
 
       {!error && !loading && data && (
         <>
-          <div className="total-figure">
-            <p className="total-label">Total Docker storage</p>
-            <p className="total-value">{data.total_size}</p>
-            <p className="total-sub">
-              {formatBytes(totalInUseBytes)} in use ·{' '}
-              {data.total_reclaimable} reclaimable
-            </p>
+          <div className="metric-strip storage-metric-strip">
+            <div className="card metric-card storage-metric-card">
+              <div className="section-heading">Total Docker storage</div>
+              <div className="storage-metric-value">{data.total_size}</div>
+            </div>
+            <div className="card metric-card storage-metric-card">
+              <div className="section-heading">In use</div>
+              <div className="storage-metric-value">
+                {formatBytes(totalInUseBytes)}
+              </div>
+            </div>
+            <div className="card metric-card storage-metric-card">
+              <div className="section-heading">Reclaimable</div>
+              <div className="storage-metric-value">
+                {data.total_reclaimable}
+              </div>
+            </div>
           </div>
 
-          <ul className="legend">
-            <li>
-              <span className="legend-swatch in-use" aria-hidden="true" />
-              In use
-            </li>
-            <li>
-              <span className="legend-swatch reclaimable" aria-hidden="true" />
-              Reclaimable
-            </li>
-          </ul>
+          <div className="card">
+            <div className="card-header">
+              <div className="card-header-title">
+                <h2>Storage by category</h2>
+                <span className="pill">{rows.length}</span>
+              </div>
+            </div>
+            <div className="card-body storage-card-legend">
+              <ul className="legend">
+                <li>
+                  <span className="legend-swatch in-use" aria-hidden="true" />
+                  In use
+                </li>
+                <li>
+                  <span
+                    className="legend-swatch reclaimable"
+                    aria-hidden="true"
+                  />
+                  Reclaimable
+                </li>
+              </ul>
+            </div>
 
-          <div className="table-wrapper">
-            <table className="volumes-table storage-table">
+            <div className="table-wrapper">
+              <table className="chrome-table storage-table">
               <thead>
                 <tr>
                   <th>Type</th>
@@ -102,13 +124,16 @@ function StorageStatusPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
-          </div>
+              </table>
+            </div>
 
-          <p className="status">
-            Bars share one scale, so lengths compare across rows. Docker does
-            not count host bind-mount data as Docker-managed storage.
-          </p>
+            <div className="card-body storage-card-note">
+              <p className="status">
+                Bars share one scale, so lengths compare across rows. Docker
+                does not count host bind-mount data as Docker-managed storage.
+              </p>
+            </div>
+          </div>
         </>
       )}
     </section>

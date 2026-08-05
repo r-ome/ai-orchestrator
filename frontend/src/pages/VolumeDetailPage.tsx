@@ -6,6 +6,7 @@ import {
   type VolumeAttachment,
 } from '../api/volumes'
 import ConfirmDialog from '../components/ConfirmDialog'
+import ContainerStatusBadge from '../components/ContainerStatusBadge'
 import VolumeFileReader from '../components/VolumeFileReader'
 import { useApiResource } from '../hooks/useApiResource'
 import { formatRelativeTime, formatTimestamp } from '../utils/format'
@@ -42,7 +43,7 @@ function VolumeDetailPage() {
   }
 
   return (
-    <section>
+    <section className="operations-page">
       <header className="page-header">
         <div>
           <p className="breadcrumb">
@@ -67,41 +68,74 @@ function VolumeDetailPage() {
 
       {!error && !loading && data && (
         <>
-          <dl className="detail-grid">
-            <dt>Driver</dt>
-            <dd>{data.driver || '—'}</dd>
-            <dt>Scope</dt>
-            <dd>{data.scope || '—'}</dd>
-            <dt>Created</dt>
-            <dd title={formatTimestamp(data.created_at)}>
-              {formatRelativeTime(data.created_at)}
-            </dd>
-            <dt>Mountpoint</dt>
-            <dd className="mono">{data.mountpoint || '—'}</dd>
-            <dt>Labels</dt>
-            <dd className="mono">
-              {data.labels && Object.keys(data.labels).length > 0
-                ? Object.entries(data.labels)
-                    .map(([key, value]) => `${key}=${value}`)
-                    .join(', ')
-                : '—'}
-            </dd>
-            <dt>Options</dt>
-            <dd className="mono">
-              {data.options && Object.keys(data.options).length > 0
-                ? Object.entries(data.options)
-                    .map(([key, value]) => `${key}=${value}`)
-                    .join(', ')
-                : '—'}
-            </dd>
-          </dl>
+          <div className="detail-status-row">
+            <span className="pill muted">{data.driver || 'No driver'}</span>
+            <span className="mono" title={formatTimestamp(data.created_at)}>
+              created {formatRelativeTime(data.created_at)}
+            </span>
+          </div>
 
-          <h2>Attached containers</h2>
-          {data.attachments.length === 0 ? (
-            <p className="status">No container uses this volume.</p>
-          ) : (
-            <div className="table-wrapper">
-              <table className="volumes-table">
+          <div className="metric-strip">
+            <div className="card metric-card">
+              <div className="section-heading">Driver</div>
+              <div className="metric-value">{data.driver || '—'}</div>
+            </div>
+            <div className="card metric-card">
+              <div className="section-heading">Scope</div>
+              <div className="metric-value">{data.scope || '—'}</div>
+            </div>
+            <div className="card metric-card">
+              <div className="section-heading">Mountpoint</div>
+              <div className="metric-value">{data.mountpoint || '—'}</div>
+            </div>
+            <div className="card metric-card">
+              <div className="section-heading">Attached containers</div>
+              <div className="metric-value">{data.attachments.length}</div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <h2>Volume details</h2>
+            </div>
+            <dl className="card-body detail-grid">
+              <dt>Created</dt>
+              <dd title={formatTimestamp(data.created_at)}>
+                {formatRelativeTime(data.created_at)}
+              </dd>
+              <dt>Labels</dt>
+              <dd className="mono">
+                {data.labels && Object.keys(data.labels).length > 0
+                  ? Object.entries(data.labels)
+                      .map(([key, value]) => `${key}=${value}`)
+                      .join(', ')
+                  : '—'}
+              </dd>
+              <dt>Options</dt>
+              <dd className="mono">
+                {data.options && Object.keys(data.options).length > 0
+                  ? Object.entries(data.options)
+                      .map(([key, value]) => `${key}=${value}`)
+                      .join(', ')
+                  : '—'}
+              </dd>
+            </dl>
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <div className="card-header-title">
+                <h2>Attached containers</h2>
+                <span className="pill">{data.attachments.length}</span>
+              </div>
+            </div>
+            {data.attachments.length === 0 ? (
+              <div className="card-body">
+                <p className="status">No container uses this volume.</p>
+              </div>
+            ) : (
+              <div className="table-wrapper">
+                <table className="chrome-table">
                 <thead>
                   <tr>
                     <th>Container</th>
@@ -119,7 +153,11 @@ function VolumeDetailPage() {
                     >
                       <td>{attachment.container_name}</td>
                       <td className="mono">{attachment.container_id}</td>
-                      <td>{attachment.container_status}</td>
+                      <td>
+                        <ContainerStatusBadge
+                          status={attachment.container_status}
+                        />
+                      </td>
                       <td className="mono">{attachment.destination}</td>
                       <td>{attachment.read_write ? 'rw' : 'ro'}</td>
                       <td>
@@ -135,15 +173,22 @@ function VolumeDetailPage() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
-          )}
+                </table>
+              </div>
+            )}
+          </div>
 
-          <h2>Read a file</h2>
-          <VolumeFileReader
-            volumeName={volumeName}
-            attachments={data.attachments}
-          />
+          <div className="card">
+            <div className="card-header">
+              <h2>Read a file</h2>
+            </div>
+            <div className="card-body">
+              <VolumeFileReader
+                volumeName={volumeName}
+                attachments={data.attachments}
+              />
+            </div>
+          </div>
         </>
       )}
 

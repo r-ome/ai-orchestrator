@@ -6,7 +6,7 @@ function VolumesPage() {
   const { data, loading, error, reload } = useApiResource(fetchVolumes)
 
   return (
-    <section>
+    <section className="operations-page">
       <header className="page-header">
         <h1>Running container volumes</h1>
         <button type="button" onClick={reload} disabled={loading}>
@@ -27,10 +27,15 @@ function VolumesPage() {
       )}
 
       {!error && !loading && data && data.volumes.length > 0 && (
-        <>
-          <p className="status">{data.count} volume(s)</p>
+        <div className="card">
+          <div className="card-header">
+            <div className="card-header-title">
+              <h2>Mounted volumes</h2>
+              <span className="pill">{data.count}</span>
+            </div>
+          </div>
           <VolumesTable volumes={data.volumes} />
-        </>
+        </div>
       )}
     </section>
   )

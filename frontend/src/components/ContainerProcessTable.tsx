@@ -42,7 +42,7 @@ function ContainerProcessTable({ containerId }: ContainerProcessTableProps) {
 
       {!error && data && data.count > 0 && (
         <div className="table-wrapper">
-          <table className="volumes-table">
+          <table className="chrome-table">
             <thead>
               <tr>
                 {data.titles.map((title) => (

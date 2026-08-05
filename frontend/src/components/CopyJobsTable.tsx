@@ -15,7 +15,7 @@ interface CopyJobsTableProps {
 function CopyJobsTable({ jobs, onShowLog }: CopyJobsTableProps) {
   return (
     <div className="table-wrapper">
-      <table className="volumes-table">
+      <table className="chrome-table">
         <thead>
           <tr>
             <th>Project</th>

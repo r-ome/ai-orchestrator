@@ -160,7 +160,7 @@ function ContainersPage() {
   }
 
   return (
-    <section>
+    <section className="operations-page">
       <header className="page-header">
         <h1>Containers</h1>
         <div className="button-row">
@@ -201,47 +201,66 @@ function ContainersPage() {
           )}
 
           {usage && (
-            <div className="total-figure">
-              <p className="total-label">
-                Total CPU across {usage.count} running container(s)
-              </p>
-              <p className="total-value">
-                {usage.total_cpu_percent.toFixed(1)}%
-              </p>
-              <p className="total-sub">
-                {usage.total_memory_usage} memory · {usage.total_pids} PIDs ·{' '}
-                {formatBytes(usage.total_network_received_bytes)} in /{' '}
-                {formatBytes(usage.total_network_sent_bytes)} out ·{' '}
-                {formatBytes(usage.total_block_read_bytes)} read /{' '}
-                {formatBytes(usage.total_block_write_bytes)} written
-              </p>
+            <div className="card container-usage-card">
+              <div className="card-header">
+                <h2>Resource usage</h2>
+                <span className="pill ok">{usage.count} running</span>
+              </div>
+              <div className="card-body">
+                <p className="section-heading">Total CPU</p>
+                <p className="total-value">
+                  {usage.total_cpu_percent.toFixed(1)}%
+                </p>
+                <p className="total-sub">
+                  {usage.total_memory_usage} memory · {usage.total_pids} PIDs ·{' '}
+                  {formatBytes(usage.total_network_received_bytes)} in /{' '}
+                  {formatBytes(usage.total_network_sent_bytes)} out ·{' '}
+                  {formatBytes(usage.total_block_read_bytes)} read /{' '}
+                  {formatBytes(usage.total_block_write_bytes)} written
+                </p>
+              </div>
             </div>
           )}
 
-          <div className="filter-row" role="group" aria-label="Filter by state">
-            {FILTERS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`filter-chip${filter === option.value ? ' active' : ''}`}
-                aria-pressed={filter === option.value}
-                onClick={() => setFilter(option.value)}
+          <div className="card container-list-card">
+            <div className="card-header">
+              <div className="card-header-title">
+                <h2>Container inventory</h2>
+                <span className="pill">{containers.length}</span>
+              </div>
+              <div
+                className="filter-row"
+                role="group"
+                aria-label="Filter by state"
               >
-                {option.label}
-              </button>
-            ))}
-          </div>
+                {FILTERS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`filter-chip${filter === option.value ? ' active' : ''}`}
+                    aria-pressed={filter === option.value}
+                    onClick={() => setFilter(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-          <p className="status">
-            {containers.length} container(s), {runningCount} running
-            {filter === 'all' ? '' : ` — showing ${visible.length}`}
-          </p>
+            <div className="card-body container-list-summary">
+              <p className="status">
+                {containers.length} container(s), {runningCount} running
+                {filter === 'all' ? '' : ` — showing ${visible.length}`}
+              </p>
+            </div>
 
-          {visible.length === 0 ? (
-            <p className="status">No containers match this filter.</p>
-          ) : (
-            <div className="table-wrapper">
-              <table className="volumes-table">
+            {visible.length === 0 ? (
+              <div className="card-body">
+                <p className="status">No containers match this filter.</p>
+              </div>
+            ) : (
+              <div className="table-wrapper">
+                <table className="chrome-table">
                 <thead>
                   <tr>
                     <th>Status</th>
@@ -305,17 +324,21 @@ function ContainersPage() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
-          )}
+                </table>
+              </div>
+            )}
 
-          {usage && (
-            <p className="status">
-              CPU and memory are sampled at load for running containers only.
-              CPU percent can exceed 100% — it sums across cores. Meters cap at
-              100%. Hover a meter for network I/O, block I/O, and PID count.
-            </p>
-          )}
+            {usage && (
+              <div className="card-body container-list-note">
+                <p className="status">
+                  CPU and memory are sampled at load for running containers
+                  only. CPU percent can exceed 100% — it sums across cores.
+                  Meters cap at 100%. Hover a meter for network I/O, block I/O,
+                  and PID count.
+                </p>
+              </div>
+            )}
+          </div>
         </>
       )}
 

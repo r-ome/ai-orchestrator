@@ -25,7 +25,7 @@ interface VolumeRowsProps {
 function VolumeRows({ volumes, onRemove }: VolumeRowsProps) {
   return (
     <div className="table-wrapper">
-      <table className="volumes-table">
+      <table className="chrome-table">
         <thead>
           <tr>
             <th>Name</th>
@@ -115,7 +115,7 @@ function ManagedVolumesPage() {
     setPending({ kind: 'remove', volume })
 
   return (
-    <section>
+    <section className="operations-page">
       <header className="page-header">
         <h1>Docker-managed volumes</h1>
         <div className="button-row">
@@ -148,15 +148,16 @@ function ManagedVolumesPage() {
       )}
 
       {!error && !loading && data && data.volumes.length > 0 && (
-        <>
+        <div className="managed-volume-groups">
           <p className="status">
             {data.count} volume(s) in {grouped.groups.length} project(s)
           </p>
 
           {grouped.groups.map((group) => (
-            <div key={group.key}>
-              <div className="section-header">
-                <h2>
+            <div key={group.key} className="card">
+              <div className="card-header">
+                <div className="card-header-title">
+                  <h2>
                   {group.projectName ? (
                     <Link
                       to={`/projects/${encodeURIComponent(group.projectName)}`}
@@ -166,29 +167,32 @@ function ManagedVolumesPage() {
                   ) : (
                     group.title
                   )}
-                </h2>
-                <span className="status">{group.volumes.length} volume(s)</span>
+                  </h2>
+                  <span className="pill">{group.volumes.length}</span>
+                </div>
               </div>
               <VolumeRows volumes={group.volumes} onRemove={requestRemove} />
             </div>
           ))}
 
           {grouped.ungrouped.length > 0 && (
-            <div>
-              <div className="section-header">
-                <h2>Not owned by a project</h2>
-                <span className="status">
-                  {grouped.ungrouped.length} volume(s)
-                </span>
+            <div className="card">
+              <div className="card-header">
+                <div className="card-header-title">
+                  <h2>Not owned by a project</h2>
+                  <span className="pill">{grouped.ungrouped.length}</span>
+                </div>
               </div>
-              <p className="status">
-                Shared volumes such as agent credentials. Projects mount them,
-                but no project owns them.
-              </p>
+              <div className="card-body">
+                <p className="status">
+                  Shared volumes such as agent credentials. Projects mount them,
+                  but no project owns them.
+                </p>
+              </div>
               <VolumeRows volumes={grouped.ungrouped} onRemove={requestRemove} />
             </div>
           )}
-        </>
+        </div>
       )}
 
       {pending?.kind === 'remove' && (

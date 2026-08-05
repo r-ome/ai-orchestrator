@@ -12,6 +12,7 @@ import {
   type CodingAgent,
 } from '../api/agents'
 import ConfirmDialog from './ConfirmDialog'
+import ContainerStatusBadge from './ContainerStatusBadge'
 import { useApiResource } from '../hooks/useApiResource'
 import { formatRelativeTime, formatTimestamp } from '../utils/format'
 
@@ -20,11 +21,17 @@ interface ProjectAgentsSectionProps {
   /** False while the project copy is still running; the backend rejects an
    *  agent for a project that is not ready. */
   projectReady: boolean
+  summonOpen: boolean
+  onSummonOpen: () => void
+  onSummonClose: () => void
 }
 
 function ProjectAgentsSection({
   projectName,
   projectReady,
+  summonOpen,
+  onSummonOpen,
+  onSummonClose,
 }: ProjectAgentsSectionProps) {
   const navigate = useNavigate()
   const { data, loading, error, reload } = useApiResource(fetchAgents)
@@ -109,176 +116,235 @@ function ProjectAgentsSection({
 
   return (
     <>
-      <div className="section-header">
-        <h2>Agents</h2>
-        <button
-          type="button"
-          className="small"
-          onClick={reload}
-          disabled={loading}
-        >
-          {loading ? 'Loading…' : 'Refresh'}
-        </button>
-      </div>
+      <section id="coding-agents" className="card">
+        <div className="card-header">
+          <div className="card-header-title">
+            <h2>Coding agents</h2>
+            {!error && !loading && (
+              <span className="pill">{agents.length}</span>
+            )}
+          </div>
+          <div className="button-row">
+            <button
+              type="button"
+              className="primary small"
+              onClick={onSummonOpen}
+              disabled={!projectReady || loading || Boolean(activeAgent)}
+            >
+              Summon agent
+            </button>
+            <button
+              type="button"
+              className="small"
+              onClick={reload}
+              disabled={loading}
+            >
+              {loading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
+        </div>
 
-      <form className="file-form" onSubmit={submit}>
-        <label>
-          Provider
-          <select
-            value={provider}
-            onChange={(event) =>
-              setProvider(event.target.value as AgentProvider)
-            }
-          >
-            {providerList.map((details) => (
-              <option key={details.provider} value={details.provider}>
-                {details.provider}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="card-body">
+          {!projectReady && (
+            <p className="status">
+              This project is not ready yet. Wait for the copy to finish
+              before summoning an agent.
+            </p>
+          )}
 
-        <label>
-          Credential profile
-          <input
-            type="text"
-            value={credentialProfile}
-            placeholder="default"
-            maxLength={CREDENTIAL_PROFILE_MAX_LENGTH}
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(event) => setCredentialProfile(event.target.value)}
-          />
-        </label>
+          {activeAgent && (
+            <p className="status">
+              This sandbox already has an active coding agent. Stop it or
+              explicitly replace it. Sandbox files remain in place during
+              replacement.
+            </p>
+          )}
 
-        <button type="submit" className="primary" disabled={!canSubmit}>
-          {busy ? 'Summoning…' : 'Summon'}
-        </button>
-      </form>
+          {credentialProfile !== '' && !profileValid && (
+            <p className="status status-error">
+              Profile must start with a letter or digit, then letters,
+              digits, dots, underscores, or hyphens.
+            </p>
+          )}
 
-      <p className="status">
-        The agent mounts this project's volume read-write at
-        <span className="mono"> /workspace</span>. Each profile is its own Docker
-        volume holding that provider's login: the first agent on a new profile
-        starts signed out, and later agents on the same profile reuse it.
-        {selectedProvider && (
-          <>
-            {' '}
-            Image: <span className="mono">{selectedProvider.image}</span>,
-            command:{' '}
-            <span className="mono">{selectedProvider.command.join(' ')}</span>.
-          </>
-        )}
-      </p>
+          {providers.error && (
+            <p className="status status-error" role="alert">
+              Failed to load providers: {providers.error}
+            </p>
+          )}
 
-      {!projectReady && (
-        <p className="status">
-          This project is not ready yet. Wait for the copy to finish before
-          summoning an agent.
-        </p>
-      )}
+          {formError && (
+            <p className="status status-error" role="alert">
+              {formError}
+            </p>
+          )}
 
-      {activeAgent && (
-        <p className="status">
-          This sandbox already has an active coding agent. Stop it or explicitly
-          replace it. Sandbox files remain in place during replacement.
-        </p>
-      )}
+          {error && (
+            <p className="status status-error" role="alert">
+              Failed to load agents: {error}
+            </p>
+          )}
 
-      {credentialProfile !== '' && !profileValid && (
-        <p className="status status-error">
-          Profile must start with a letter or digit, then letters, digits, dots,
-          underscores, or hyphens.
-        </p>
-      )}
+          {!error && loading && <p className="status">Loading agents…</p>}
 
-      {providers.error && (
-        <p className="status status-error" role="alert">
-          Failed to load providers: {providers.error}
-        </p>
-      )}
+          {!error && !loading && agents.length === 0 && (
+            <p className="status">No agents running for this project.</p>
+          )}
+        </div>
 
-      {formError && (
-        <p className="status status-error" role="alert">
-          {formError}
-        </p>
-      )}
-
-      {error && (
-        <p className="status status-error" role="alert">
-          Failed to load agents: {error}
-        </p>
-      )}
-
-      {!error && loading && <p className="status">Loading agents…</p>}
-
-      {!error && !loading && agents.length === 0 && (
-        <p className="status">No agents running for this project.</p>
-      )}
-
-      {!error && !loading && agents.length > 0 && (
-        <div className="table-wrapper">
-          <table className="volumes-table">
-            <thead>
-              <tr>
-                <th>Agent</th>
-                <th>Provider</th>
-                <th>Profile</th>
-                <th>Status</th>
-                <th>Started</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {agents.map((agent) => (
-                <tr key={agent.id}>
-                  <td className="mono">{agent.name}</td>
-                  <td>{agent.provider}</td>
-                  <td className="mono">{agent.credential_profile}</td>
-                  <td>{agent.status}</td>
-                  <td title={formatTimestamp(agent.created_at)}>
-                    {formatRelativeTime(agent.created_at)}
-                  </td>
-                  <td>
-                    <div className="button-row">
-                      <button
-                        type="button"
-                        className="small"
-                        onClick={() =>
-                          navigate(
-                            `/projects/${encodeURIComponent(projectName)}/agents/${encodeURIComponent(agent.id)}`,
-                          )
-                        }
-                      >
-                        Open
-                      </button>
-                      <button
-                        type="button"
-                        className="danger small"
-                        onClick={() => {
-                          setPending(agent)
-                          setStopError(null)
-                        }}
-                      >
-                        Stop
-                      </button>
-                      <button
-                        type="button"
-                        className="small"
-                        disabled={!profileValid}
-                        onClick={() => {
-                          setPendingReplace(agent)
-                          setStopError(null)
-                        }}
-                      >
-                        Replace
-                      </button>
-                    </div>
-                  </td>
+        {!error && !loading && agents.length > 0 && (
+          <div className="table-wrapper">
+            <table className="chrome-table">
+              <thead>
+                <tr>
+                  <th>Agent</th>
+                  <th>Provider</th>
+                  <th>Profile</th>
+                  <th>Status</th>
+                  <th>Started</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {agents.map((agent) => (
+                  <tr key={agent.id}>
+                    <td className="mono">{agent.name}</td>
+                    <td>{agent.provider}</td>
+                    <td className="mono">{agent.credential_profile}</td>
+                    <td>
+                      <ContainerStatusBadge status={agent.status} />
+                    </td>
+                    <td title={formatTimestamp(agent.created_at)}>
+                      {formatRelativeTime(agent.created_at)}
+                    </td>
+                    <td>
+                      <div className="button-row">
+                        <button
+                          type="button"
+                          className="small"
+                          onClick={() =>
+                            navigate(
+                              `/projects/${encodeURIComponent(projectName)}/agents/${encodeURIComponent(agent.id)}`,
+                            )
+                          }
+                        >
+                          Open
+                        </button>
+                        <button
+                          type="button"
+                          className="danger small"
+                          onClick={() => {
+                            setPending(agent)
+                            setStopError(null)
+                          }}
+                        >
+                          Stop
+                        </button>
+                        <button
+                          type="button"
+                          className="small"
+                          disabled={!profileValid}
+                          onClick={() => {
+                            setPendingReplace(agent)
+                            setStopError(null)
+                          }}
+                        >
+                          Replace
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {summonOpen && (
+        <div className="dialog-backdrop" role="presentation">
+          <form
+            className="dialog summon-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="summon-agent-title"
+            onSubmit={submit}
+          >
+            <div className="dialog-header">
+              <h2 id="summon-agent-title">Summon coding agent</h2>
+              <button
+                type="button"
+                className="dialog-close"
+                aria-label="Close summon dialog"
+                onClick={onSummonClose}
+                disabled={busy}
+              >
+                ×
+              </button>
+            </div>
+            <div className="dialog-body">
+              <p className="status">
+                Start an agent for <span className="mono">{projectName}</span>.
+                It mounts the project at <span className="mono">/workspace</span>.
+              </p>
+              <label className="dialog-field">
+                Provider
+                <select
+                  value={provider}
+                  onChange={(event) =>
+                    setProvider(event.target.value as AgentProvider)
+                  }
+                  disabled={busy || providers.loading}
+                >
+                  {providerList.map((details) => (
+                    <option key={details.provider} value={details.provider}>
+                      {details.provider}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="dialog-field">
+                Credential profile
+                <input
+                  type="text"
+                  value={credentialProfile}
+                  placeholder="default"
+                  maxLength={CREDENTIAL_PROFILE_MAX_LENGTH}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => setCredentialProfile(event.target.value)}
+                  disabled={busy}
+                />
+              </label>
+              {selectedProvider && (
+                <p className="status summon-provider-note">
+                  Image: <span className="mono">{selectedProvider.image}</span>, command:{' '}
+                  <span className="mono">{selectedProvider.command.join(' ')}</span>
+                </p>
+              )}
+              {credentialProfile !== '' && !profileValid && (
+                <p className="status status-error">Profile name is not valid.</p>
+              )}
+              {providers.error && (
+                <p className="status status-error" role="alert">
+                  Failed to load providers: {providers.error}
+                </p>
+              )}
+              {formError && (
+                <p className="status status-error" role="alert">
+                  {formError}
+                </p>
+              )}
+            </div>
+            <div className="dialog-actions">
+              <button type="button" onClick={onSummonClose} disabled={busy}>
+                Cancel
+              </button>
+              <button type="submit" className="primary" disabled={!canSubmit}>
+                {busy ? 'Summoning…' : 'Summon agent'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

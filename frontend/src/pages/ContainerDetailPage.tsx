@@ -9,6 +9,7 @@ import {
 import ConfirmDialog from '../components/ConfirmDialog'
 import ContainerProcessTable from '../components/ContainerProcessTable'
 import ContainerShell, { type ShellPhase } from '../components/ContainerShell'
+import ContainerStatusBadge from '../components/ContainerStatusBadge'
 import FileReader from '../components/FileReader'
 import { useApiResource } from '../hooks/useApiResource'
 import { formatRelativeTime, formatTimestamp } from '../utils/format'
@@ -55,7 +56,7 @@ function ContainerDetailPage() {
   }
 
   return (
-    <section>
+    <section className="operations-page">
       <header className="page-header">
         <div>
           <p className="breadcrumb">
@@ -91,63 +92,95 @@ function ContainerDetailPage() {
 
       {!error && !loading && data && (
         <>
-          <dl className="detail-grid">
-            <dt>Status</dt>
-            <dd>{data.status}</dd>
-            <dt>Image</dt>
-            <dd className="mono">{data.image}</dd>
-            <dt>Image ID</dt>
-            <dd className="mono">{data.image_id || '—'}</dd>
-            <dt>Full ID</dt>
-            <dd className="mono">{data.id}</dd>
-            <dt>Platform</dt>
-            <dd>{data.platform || '—'}</dd>
-            <dt>Created</dt>
-            <dd title={formatTimestamp(data.created)}>
-              {formatRelativeTime(data.created)}
-            </dd>
-            <dt>Started</dt>
-            <dd title={formatTimestamp(data.started_at)}>
-              {formatRelativeTime(data.started_at)}
-            </dd>
-            <dt>Finished</dt>
-            <dd title={formatTimestamp(data.finished_at)}>
-              {formatRelativeTime(data.finished_at)}
-            </dd>
-            <dt>Restarts</dt>
-            <dd>{data.restart_count}</dd>
-            <dt>Ports</dt>
-            <dd className="mono">
-              {data.ports.length === 0
-                ? '—'
-                : data.ports.map(formatPort).join(', ')}
-            </dd>
-            <dt>Labels</dt>
-            <dd className="mono">
-              {Object.keys(data.labels).length === 0
-                ? '—'
-                : Object.entries(data.labels)
-                    .map(([key, value]) => `${key}=${value}`)
-                    .join(', ')}
-            </dd>
-          </dl>
+          <div className="detail-status-row">
+            <ContainerStatusBadge status={data.status} />
+            <span className="pill muted">{data.platform || 'Unknown platform'}</span>
+            <span className="mono" title={formatTimestamp(data.created)}>
+              created {formatRelativeTime(data.created)}
+            </span>
+          </div>
 
-          <h2>Processes</h2>
-          {data.status === 'running' ? (
-            <ContainerProcessTable containerId={containerId} />
-          ) : (
-            <p className="status">
-              This container is {data.status}, so it runs no processes.
-            </p>
-          )}
+          <div className="metric-strip">
+            <div className="card metric-card">
+              <div className="section-heading">Image</div>
+              <div className="metric-value">{data.image}</div>
+            </div>
+            <div className="card metric-card">
+              <div className="section-heading">Platform</div>
+              <div className="metric-value">{data.platform || '—'}</div>
+            </div>
+            <div className="card metric-card">
+              <div className="section-heading">Restarts</div>
+              <div className="metric-value">{data.restart_count}</div>
+            </div>
+            <div className="card metric-card">
+              <div className="section-heading">Ports</div>
+              <div className="metric-value">
+                {data.ports.length === 0
+                  ? '—'
+                  : data.ports.map(formatPort).join(', ')}
+              </div>
+            </div>
+          </div>
 
-          <h2>Shell</h2>
-          {data.status !== 'running' ? (
-            <p className="status">
-              This container is {data.status}. A shell needs it running.
-            </p>
-          ) : (
-            <>
+          <div className="card">
+            <div className="card-header">
+              <h2>Container details</h2>
+            </div>
+            <dl className="card-body detail-grid">
+              <dt>Image ID</dt>
+              <dd className="mono">{data.image_id || '—'}</dd>
+              <dt>Full ID</dt>
+              <dd className="mono">{data.id}</dd>
+              <dt>Created</dt>
+              <dd title={formatTimestamp(data.created)}>
+                {formatRelativeTime(data.created)}
+              </dd>
+              <dt>Started</dt>
+              <dd title={formatTimestamp(data.started_at)}>
+                {formatRelativeTime(data.started_at)}
+              </dd>
+              <dt>Finished</dt>
+              <dd title={formatTimestamp(data.finished_at)}>
+                {formatRelativeTime(data.finished_at)}
+              </dd>
+              <dt>Labels</dt>
+              <dd className="mono">
+                {Object.keys(data.labels).length === 0
+                  ? '—'
+                  : Object.entries(data.labels)
+                      .map(([key, value]) => `${key}=${value}`)
+                      .join(', ')}
+              </dd>
+            </dl>
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <h2>Processes</h2>
+            </div>
+            <div className="card-body">
+              {data.status === 'running' ? (
+                <ContainerProcessTable containerId={containerId} />
+              ) : (
+                <p className="status">
+                  This container is {data.status}, so it runs no processes.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <h2>Shell</h2>
+            </div>
+            <div className="card-body">
+              {data.status !== 'running' ? (
+                <p className="status">
+                  This container is {data.status}. A shell needs it running.
+                </p>
+              ) : (
+                <>
               <div className="section-toolbar">
                 <p className="status">
                   Opens a new shell inside <span className="mono">{data.name}</span>.
@@ -190,15 +223,25 @@ function ContainerDetailPage() {
                   onError={setShellError}
                 />
               )}
-            </>
-          )}
+                </>
+              )}
+            </div>
+          </div>
 
-          <h2>Mounts</h2>
-          {data.mounts.length === 0 ? (
-            <p className="status">No mounts.</p>
-          ) : (
-            <div className="table-wrapper">
-              <table className="volumes-table">
+          <div className="card">
+            <div className="card-header">
+              <div className="card-header-title">
+                <h2>Mounts</h2>
+                <span className="pill">{data.mounts.length}</span>
+              </div>
+            </div>
+            {data.mounts.length === 0 ? (
+              <div className="card-body">
+                <p className="status">No mounts.</p>
+              </div>
+            ) : (
+              <div className="table-wrapper">
+                <table className="chrome-table">
                 <thead>
                   <tr>
                     <th>Type</th>
@@ -229,16 +272,25 @@ function ContainerDetailPage() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
-          )}
+                </table>
+              </div>
+            )}
+          </div>
 
-          <h2>Networks</h2>
-          {data.networks.length === 0 ? (
-            <p className="status">No networks.</p>
-          ) : (
-            <div className="table-wrapper">
-              <table className="volumes-table">
+          <div className="card">
+            <div className="card-header">
+              <div className="card-header-title">
+                <h2>Networks</h2>
+                <span className="pill">{data.networks.length}</span>
+              </div>
+            </div>
+            {data.networks.length === 0 ? (
+              <div className="card-body">
+                <p className="status">No networks.</p>
+              </div>
+            ) : (
+              <div className="table-wrapper">
+                <table className="chrome-table">
                 <thead>
                   <tr>
                     <th>Name</th>
@@ -257,29 +309,36 @@ function ContainerDetailPage() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
-          )}
+                </table>
+              </div>
+            )}
+          </div>
 
-          <h2>Read a file</h2>
-          {data.status === 'running' ? (
-            <FileReader
-              placeholder="/etc/hostname"
-              hint="Paths are absolute inside the container. Max 1 MiB."
-              onRead={async (path) => {
-                const response = await fetchContainerFile(containerId, path)
-                return {
-                  file: response.file,
-                  resolvedPath: response.file.path,
-                  via: response.container_name,
-                }
-              }}
-            />
-          ) : (
-            <p className="status">
-              This container is {data.status}. File reads need it running.
-            </p>
-          )}
+          <div className="card">
+            <div className="card-header">
+              <h2>Read a file</h2>
+            </div>
+            <div className="card-body">
+              {data.status === 'running' ? (
+                <FileReader
+                  placeholder="/etc/hostname"
+                  hint="Paths are absolute inside the container. Max 1 MiB."
+                  onRead={async (path) => {
+                    const response = await fetchContainerFile(containerId, path)
+                    return {
+                      file: response.file,
+                      resolvedPath: response.file.path,
+                      via: response.container_name,
+                    }
+                  }}
+                />
+              ) : (
+                <p className="status">
+                  This container is {data.status}. File reads need it running.
+                </p>
+              )}
+            </div>
+          </div>
         </>
       )}
 

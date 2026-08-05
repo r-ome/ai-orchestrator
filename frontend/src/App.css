@@ -1,30 +1,356 @@
 .page {
-  max-width: 1200px;
+  max-width: 1080px;
   margin: 0 auto;
-  padding: 2rem 1.5rem;
+  padding: 26px 30px 44px;
   text-align: left;
 }
 
-.main-nav {
+/* --- App shell ---------------------------------------------------------
+   A fixed-width left rail plus a scrolling main area, ported from the
+   prototype's two-pane layout. The next stage restyles individual pages
+   inside `.app-main .page` — this block only owns the chrome around them. */
+
+.app-shell {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.25rem;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.35);
-  margin-bottom: 0.5rem;
+  align-items: stretch;
+  min-height: 100svh;
 }
 
-.main-nav a {
-  color: inherit;
-  text-decoration: none;
-  opacity: 0.7;
-  padding: 0.25rem 0;
+.app-rail {
+  display: flex;
+  flex-direction: column;
+  width: 236px;
+  flex-shrink: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
 }
 
-.main-nav a.active {
-  opacity: 1;
+.app-rail-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1.1rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.app-rail-mark {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  background: linear-gradient(135deg, var(--accent), oklch(0.6 0.2 320));
+  color: var(--mark-text);
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.app-rail-wordmark {
   font-weight: 600;
-  box-shadow: inset 0 -2px 0 currentColor;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  color: var(--text-h);
+}
+
+.app-rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.75rem 0.6rem;
+  font-size: 13.5px;
+}
+
+.app-rail-nav a {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.app-rail-nav a:hover {
+  background: var(--panel2);
+  color: var(--text-h);
+}
+
+/* Active state pairs a background tint with an accent color, so the
+   current item never rests on color alone. */
+.app-rail-nav a.active {
+  background: var(--accent);
+  color: var(--mark-text);
+  font-weight: 600;
+  box-shadow: 0 6px 16px -8px var(--accent);
+}
+
+.rail-icon {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border: 1.6px solid currentColor;
+}
+
+.rail-icon-square {
+  border-radius: 4px;
+}
+
+.rail-icon-bars {
+  position: relative;
+  border-radius: 4px;
+}
+
+.rail-icon-bars span {
+  position: absolute;
+  inset: 3px 4px auto 3px;
+  height: 1.6px;
+  background: currentColor;
+}
+
+.rail-icon-circle {
+  border-radius: 50%;
+}
+
+.rail-current {
+  margin-top: auto;
+  padding: 0.9rem;
+  border-top: 1px solid var(--line);
+}
+
+.rail-current-label {
+  margin-bottom: 0.5rem;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+
+.rail-current-name {
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-h);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.rail-current-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 9px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.rail-current-stats div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rail-current-stats span {
+  color: var(--muted);
+}
+
+.rail-current-stats strong {
+  color: var(--text);
+  font-weight: 400;
+}
+
+.rail-current-stats strong.live {
+  color: var(--ok);
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+/* --- Shared surfaces ----------------------------------------------------
+   Conventions the next stage builds page content on top of: a panel
+   surface, a table treatment, a pill/badge, and a section heading. */
+
+/* Cards stack down a page with an even gutter between them. The spacing
+   lives here rather than on each usage so pages don't each pick their own
+   near-identical margin. */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  margin-top: 1.25rem;
+}
+
+/* A card's own body already pads its contents, so a bare .detail-grid
+   dropped straight into one needs the padding it would otherwise miss. */
+.card > .detail-grid {
+  padding: 1rem 1.1rem;
+  margin: 0;
+}
+
+.section-heading {
+  margin: 0 0 0.5rem;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+/* Status-colored pill variants. Meaning still comes from the word inside,
+   never the color alone — callers pair these with a status word or icon. */
+.pill.ok {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
+}
+
+.pill.warn {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+}
+
+.pill.err {
+  background: color-mix(in srgb, var(--err) 14%, transparent);
+  color: var(--err);
+}
+
+.pill.muted {
+  background: var(--panel2);
+  color: var(--muted);
+}
+
+/* --- Card header / body --------------------------------------------------
+   A `.card`'s title row: label on the left, a count pill or action on the
+   right, separated from the body by the same hairline the tables use.
+   Reusable across any page that groups content into `.card` panels. */
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1.1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.card-header h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.card-header-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.card-body {
+  padding: 1rem 1.1rem;
+}
+
+.project-support-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.project-support-grid > .card {
+  min-width: 0;
+}
+
+#create-sandbox,
+#coding-agents {
+  scroll-margin-top: 1rem;
+}
+
+/* --- Metric strip -------------------------------------------------------
+   A row of small stat cards, e.g. sandbox id / volume / mode / mountpoint.
+   Reusable anywhere a detail page wants a few highlighted facts up top. */
+
+.metric-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 1.25rem 0 0.25rem;
+}
+
+.metric-card {
+  padding: 0.85rem 1rem;
+}
+
+.metric-card .section-heading {
+  margin-bottom: 0.45rem;
+}
+
+.metric-value {
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  color: var(--text-h);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 720px) {
+  .metric-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* A row of status pills under a page or detail heading. */
+.detail-status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+}
+
+.chrome-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.chrome-table th {
+  padding: 0.6rem 1rem;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.chrome-table td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.chrome-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.chrome-table tbody tr:hover {
+  background: var(--panel2);
 }
 
 .page-header {
@@ -37,8 +363,12 @@
 }
 
 .page-header h1 {
-  font-size: 1.5rem;
+  font-size: 30px;
   margin: 0;
+}
+
+.project-detail-header .breadcrumb {
+  padding-bottom: 10px;
 }
 
 /* --- Buttons ----------------------------------------------------------
@@ -55,7 +385,7 @@
   min-height: 2.1rem;
   padding: 0.4rem 0.9rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: inherit;
   font: inherit;
@@ -66,7 +396,7 @@
 }
 
 .page button:hover:not(:disabled) {
-  background: rgba(128, 128, 128, 0.12);
+  background: var(--panel2);
 }
 
 .page button:disabled {
@@ -75,12 +405,12 @@
 }
 
 .page button.danger {
-  border-color: #d03b3b;
-  color: #d03b3b;
+  border-color: var(--err);
+  color: var(--err);
 }
 
 .page button.danger:hover:not(:disabled) {
-  background: rgba(208, 59, 59, 0.12);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
 }
 
 .page button.small {
@@ -96,13 +426,13 @@
 /* The one affirmative action in a form or dialog. */
 .page button.primary {
   border-color: var(--accent-border);
-  background: var(--accent-bg);
-  color: var(--accent);
+  background: var(--accent);
+  color: var(--mark-text);
   font-weight: 600;
 }
 
 .page button.primary:hover:not(:disabled) {
-  background: var(--accent-bg);
+  background: color-mix(in srgb, var(--accent) 88%, white);
   border-color: var(--accent);
 }
 
@@ -114,7 +444,7 @@
   box-sizing: border-box;
   padding: 0.4rem 0.9rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   color: inherit;
   font-size: 0.9rem;
   line-height: 1.2;
@@ -123,8 +453,8 @@
 
 .button-link.primary {
   border-color: var(--accent-border);
-  background: var(--accent-bg);
-  color: var(--accent);
+  background: var(--accent);
+  color: var(--mark-text);
   font-weight: 600;
 }
 
@@ -134,24 +464,44 @@
 }
 
 .status-error {
-  color: #d03b3b;
+  color: var(--err);
   opacity: 1;
 }
 
 .status-ok {
-  color: #0ca30c;
+  color: var(--ok);
   opacity: 1;
 }
 
 .status-warning {
-  color: #c47a00;
+  color: var(--warn);
   opacity: 1;
   font-weight: 600;
 }
 
 .breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   margin: 0 0 0.25rem;
-  font-size: 0.85rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.breadcrumb a {
+  color: inherit;
+}
+
+.breadcrumb-separator {
+  opacity: 0.5;
+}
+
+.breadcrumb-current {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .button-row {
@@ -197,7 +547,7 @@
   box-sizing: border-box;
   padding: 0.4rem 0.55rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--bg);
   color: inherit;
   font: inherit;
@@ -207,7 +557,7 @@
 .dependency-settings {
   padding: 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
 }
 
 .dependency-settings > .checkbox-label {
@@ -291,11 +641,15 @@
 .inline-confirm {
   margin-top: 0.75rem;
   padding: 0.75rem;
-  border: 1px solid #d03b3b;
+  border: 1px solid var(--err);
   border-radius: 8px;
 }
 
 @media (max-width: 720px) {
+  .project-support-grid {
+    grid-template-columns: 1fr;
+  }
+
   .preview-form-grid {
     grid-template-columns: 1fr;
   }
@@ -344,7 +698,7 @@
   font: inherit;
   font-size: 0.9rem;
   padding: 0.35rem 0.5rem;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: inherit;
@@ -360,7 +714,7 @@
   padding: 0.75rem 1rem;
   border-radius: 8px;
   background: var(--code-bg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 0.8rem;
   line-height: 1.5;
   white-space: pre;
@@ -394,6 +748,26 @@
   font-size: 1.15rem;
 }
 
+.dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.dialog-header h2 {
+  margin-bottom: 0;
+}
+
+.dialog-close {
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0;
+  color: var(--muted);
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
 .dialog-body p {
   margin: 0 0 0.75rem;
   font-size: 0.9rem;
@@ -411,16 +785,89 @@
   font: inherit;
   font-size: 0.9rem;
   padding: 0.4rem 0.6rem;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: inherit;
+}
+
+.dialog-field select {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: inherit;
+}
+
+.summon-provider-note {
+  overflow-wrap: anywhere;
 }
 
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
+.preview-modal-backdrop {
+  z-index: 20;
+}
+
+.preview-proposal-modal {
+  width: min(900px, 100%);
+  max-height: 90vh;
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+
+.preview-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.preview-modal-header h2 {
+  margin: 0;
+}
+
+.preview-modal-header .status {
+  margin: 0.35rem 0 0;
+}
+
+.preview-proposal-modal .preview-proposal {
+  margin-top: 1rem;
+}
+
+.preview-build-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.preview-build-surface {
+  width: min(860px, 100%);
+  max-height: 90vh;
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+}
+
+.preview-build-surface > .section-header {
+  margin-top: 0;
 }
 
 /* --- Copy status badge ------------------------------------------------ */
@@ -436,19 +883,19 @@
 }
 
 .copy-queued {
-  color: #fab219;
+  color: var(--warn);
 }
 
 .copy-copying {
-  color: #2a78d6;
+  color: var(--info);
 }
 
 .copy-completed {
-  color: #0ca30c;
+  color: var(--ok);
 }
 
 .copy-failed {
-  color: #d03b3b;
+  color: var(--err);
 }
 
 .copy-unknown {
@@ -546,7 +993,7 @@
 .picker-path {
   margin: 0 0 0.75rem;
   padding: 0.4rem 0.6rem;
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--code-bg);
   font-size: 0.8rem;
   overflow-wrap: anywhere;
@@ -634,7 +1081,7 @@
 
 .volumes-table th,
 .volumes-table td {
-  border-bottom: 1px solid rgba(128, 128, 128, 0.35);
+  border-bottom: 1px solid var(--border);
   padding: 0.5rem 0.75rem;
   text-align: left;
 }
@@ -645,11 +1092,11 @@
 }
 
 .volumes-table tbody tr:hover {
-  background: rgba(128, 128, 128, 0.12);
+  background: var(--panel2);
 }
 
 .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 0.85em;
 }
 
@@ -661,15 +1108,15 @@
 /* Series hues are categorical slots 1 and 2 of the validated palette.
    Both modes pass all six checks against this app's own surfaces. */
 .page {
-  --surface: #fff;
-  --series-in-use: #2a78d6;
+  --surface: var(--panel);
+  --series-in-use: var(--info);
   --series-reclaimable: #eb6834;
 }
 
 @media (prefers-color-scheme: dark) {
   .page {
-    --surface: #16171d;
-    --series-in-use: #3987e5;
+    --surface: var(--panel);
+    --series-in-use: var(--info);
     --series-reclaimable: #d95926;
   }
 }
@@ -745,7 +1192,7 @@
   min-width: 60px;
   height: 14px;
   border-radius: 2px;
-  background: rgba(42, 120, 214, 0.18);
+  background: color-mix(in srgb, var(--info) 18%, transparent);
   overflow: hidden;
 }
 
@@ -794,13 +1241,13 @@
 /* --- Agents ----------------------------------------------------------- */
 
 .status-warn {
-  color: #8a5200;
+  color: var(--warn);
   opacity: 1;
 }
 
 @media (prefers-color-scheme: dark) {
   .status-warn {
-    color: #e0a44a;
+    color: var(--warn);
   }
 }
 
@@ -816,12 +1263,12 @@
 }
 
 .agent-phase-live {
-  color: #0ca30c;
+  color: var(--ok);
   opacity: 1;
 }
 
 .agent-phase-closed {
-  color: #d03b3b;
+  color: var(--err);
   opacity: 1;
 }
 
@@ -833,8 +1280,187 @@
   padding: 0.5rem;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #16171d;
+  background: var(--panel);
   overflow: hidden;
+}
+
+/* Full-screen agent session layout from the reference terminal screen. */
+.page.page-terminal {
+  max-width: none;
+  height: 100%;
+  min-height: 100svh;
+  padding: 0;
+}
+
+.agent-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100svh;
+  background: var(--terminal-bg);
+}
+
+.agent-terminal-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-shrink: 0;
+  padding: 0.875rem 1.375rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.agent-terminal-back,
+.agent-terminal-meta,
+.agent-terminal-name,
+.agent-terminal-controls,
+.agent-terminal-status,
+.agent-terminal-footer {
+  font-family: var(--mono);
+}
+
+.agent-terminal-back {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-decoration: none;
+}
+
+.agent-terminal-back:hover {
+  color: var(--text);
+}
+
+.agent-terminal-divider {
+  width: 1px;
+  height: 20px;
+  flex-shrink: 0;
+  background: var(--border);
+}
+
+.agent-terminal-dot,
+.agent-terminal-status-dot,
+.agent-terminal-live span {
+  display: inline-block;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.agent-terminal-dot {
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 15%, transparent);
+}
+
+.agent-terminal-identity {
+  min-width: 0;
+}
+
+.agent-terminal-name {
+  overflow: hidden;
+  color: var(--text-h);
+  font-size: 14px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.agent-terminal-meta {
+  overflow: hidden;
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.agent-terminal-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.agent-terminal-controls button,
+.agent-terminal-status {
+  min-height: 0;
+  padding: 0.4375rem 0.8125rem;
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+
+.agent-terminal-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+
+.agent-terminal-status-dot {
+  width: 7px;
+  height: 7px;
+}
+
+.agent-terminal-status.agent-phase-connecting {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+
+.agent-terminal-status.agent-phase-closed {
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 10%, transparent);
+}
+
+.agent-terminal-status.agent-phase-connecting .agent-terminal-status-dot {
+  background: var(--warn);
+}
+
+.agent-terminal-status.agent-phase-closed .agent-terminal-status-dot {
+  background: var(--err);
+}
+
+.page.page-terminal .status-error {
+  margin: 0;
+  padding: 0.5rem 1.625rem;
+  background: var(--terminal-bg);
+}
+
+.page.page-terminal .agent-terminal {
+  flex: 1;
+  height: auto;
+  min-height: 320px;
+  padding: 1.25rem 1.625rem;
+  border: 0;
+  border-radius: 0;
+  background: var(--terminal-bg);
+}
+
+.agent-terminal-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+  padding: 0.6875rem 1.375rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11.5px;
+  background: var(--panel);
+}
+
+.agent-terminal-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--ok);
+}
+
+.agent-terminal-live span {
+  width: 6px;
+  height: 6px;
+}
+
+.agent-terminal-footer-note {
+  margin-left: auto;
 }
 
 /* Embedded in a detail page rather than filling a page of its own, so it
@@ -842,6 +1468,170 @@
 .container-shell {
   height: 45vh;
   min-height: 260px;
+}
+
+/* The reference keeps the active agent in a full-height right-side panel.
+   Only the collapsed control floats over the page. */
+.terminal-dock {
+  position: sticky;
+  top: 0;
+  width: min(500px, 40vw);
+  height: 100svh;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.terminal-dock-open {
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-dock-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.8rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.terminal-dock-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.terminal-dock-dot {
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 15%, transparent);
+}
+
+.terminal-dock-name,
+.terminal-dock-meta,
+.terminal-dock-footer {
+  font-family: var(--mono);
+}
+
+.terminal-dock-name {
+  overflow: hidden;
+  color: var(--text-h);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.terminal-dock-meta {
+  overflow: hidden;
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.67rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.terminal-dock-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.35rem;
+}
+
+.terminal-dock-actions button {
+  width: 1.7rem;
+  min-height: 1.7rem;
+  padding: 0;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.terminal-dock-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0.5rem;
+}
+
+.terminal-dock-body .agent-terminal {
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.terminal-dock-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.8rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.terminal-dock-footer > span:last-child {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.terminal-dock-collapsed {
+  display: grid !important;
+  width: 30px;
+  min-height: 30px !important;
+  padding: 0 !important;
+  place-items: center;
+  color: var(--accent) !important;
+  border-color: var(--border) !important;
+}
+
+.terminal-dock-collapsed-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 15%, transparent);
+}
+
+.terminal-dock-collapsed-label {
+  writing-mode: vertical-rl;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.terminal-dock:not(.terminal-dock-open) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  width: 46px;
+  padding: 0.75rem 0;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+}
+
+@media (max-width: 720px) {
+  .terminal-dock {
+    position: fixed;
+    width: 100vw;
+    height: 100svh;
+  }
+
+  .terminal-dock:not(.terminal-dock-open) {
+    position: sticky;
+    width: 46px;
+  }
 }
 
 /* A caption on the left, its controls pushed to the right edge. */
@@ -884,17 +1674,17 @@
 }
 
 .container-running {
-  color: #0ca30c;
+  color: var(--ok);
 }
 
 .container-restarting,
 .container-removing {
-  color: #2a78d6;
+  color: var(--info);
 }
 
 .container-created,
 .container-paused {
-  color: #fab219;
+  color: var(--warn);
 }
 
 .container-exited {
@@ -902,7 +1692,7 @@
 }
 
 .container-dead {
-  color: #d03b3b;
+  color: var(--err);
 }
 
 .container-unknown {
@@ -937,4 +1727,148 @@
   width: 18%;
   min-width: 150px;
   white-space: normal;
+}
+
+/* --- Container and storage pages --------------------------------------
+   These pages share the project screens' panel rhythm while keeping their
+   data-dense tables outside padded card bodies. */
+
+.operations-page > .card,
+.container-usage-card,
+.managed-volume-groups {
+  margin-top: 1.25rem;
+}
+
+.operations-page .metric-strip + .card,
+.container-usage-card + .container-list-card {
+  margin-top: 1.1rem;
+}
+
+.operations-page .card {
+  overflow: hidden;
+}
+
+.card-body.detail-grid {
+  margin: 0;
+}
+
+.container-list-summary,
+.container-list-note,
+.storage-card-note {
+  border-top: 1px solid var(--line);
+}
+
+.container-list-summary .status,
+.container-list-note .status,
+.storage-card-note .status {
+  margin: 0;
+}
+
+.managed-volume-groups {
+  display: grid;
+  gap: 1.1rem;
+}
+
+.managed-volume-groups > .status {
+  margin: 0;
+}
+
+.storage-metric-strip {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.storage-metric-card {
+  min-height: 6.4rem;
+}
+
+.storage-metric-value {
+  margin-top: 0.35rem;
+  font-family: var(--heading);
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--text-h);
+}
+
+.storage-card-legend {
+  padding-bottom: 0;
+}
+
+.storage-card-legend .legend {
+  margin-bottom: 1rem;
+}
+
+/* Reclaimable space uses the semantic warning token. Its label and swatch
+   remain visible together, so the color does not carry the meaning alone. */
+.operations-page .legend-swatch.reclaimable,
+.operations-page .storage-bar-segment.reclaimable {
+  background: var(--warn);
+}
+
+@media (max-width: 720px) {
+  .app-shell {
+    display: block;
+  }
+
+  .app-rail {
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .app-rail-brand {
+    padding: 0.75rem 1rem;
+  }
+
+  .app-rail-nav {
+    flex-direction: row;
+    gap: 0.25rem;
+    padding: 0.5rem 0.6rem;
+    overflow-x: auto;
+  }
+
+  .app-rail-nav a {
+    flex: 0 0 auto;
+  }
+
+  .rail-current {
+    display: none;
+  }
+
+  .app-main {
+    overflow: visible;
+  }
+
+  .page {
+    padding: 20px 16px 32px;
+  }
+
+  .page.page-terminal {
+    padding: 0;
+  }
+
+  .agent-terminal-header {
+    flex-wrap: wrap;
+    gap: 0.625rem;
+    padding: 0.75rem 1rem;
+  }
+
+  .agent-terminal-identity {
+    flex: 1;
+  }
+
+  .agent-terminal-controls {
+    width: 100%;
+    margin-left: 0;
+    overflow-x: auto;
+  }
+
+  .agent-terminal-footer-note {
+    display: none;
+  }
+
+  .storage-metric-strip {
+    grid-template-columns: 1fr;
+  }
 }
