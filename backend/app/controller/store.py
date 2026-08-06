@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS preview_runs (
     sandbox_id TEXT NOT NULL REFERENCES sandboxes(id),
     proposal_id TEXT NOT NULL,
     mode TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'live',
+    task_id TEXT,
+    commit_sha TEXT,
     status TEXT NOT NULL,
     selected_service TEXT,
     container_port INTEGER NOT NULL,
@@ -148,6 +151,25 @@ CREATE TABLE IF NOT EXISTS project_secrets (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (project_id, name)
 );
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    sandbox_id TEXT NOT NULL REFERENCES sandboxes(id),
+    agent_run_id TEXT,
+    branch TEXT NOT NULL,
+    base_branch TEXT,
+    base_commit TEXT NOT NULL,
+    head_commit TEXT,
+    status TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    settled_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_open_task_per_sandbox
+ON tasks(sandbox_id)
+WHERE status IN ('open', 'reported', 'previewing', 'review');
 """
 
 
@@ -168,6 +190,47 @@ class ControllerStore:
             )
             connection.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, ?)",
+                (_now(),),
+            )
+            try:
+                connection.execute(
+                    "ALTER TABLE sandboxes ADD COLUMN baseline_commit TEXT"
+                )
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)",
+                (_now(),),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, ?)",
+                (_now(),),
+            )
+            for statement in (
+                "ALTER TABLE preview_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'live'",
+                "ALTER TABLE preview_runs ADD COLUMN task_id TEXT",
+                "ALTER TABLE preview_runs ADD COLUMN commit_sha TEXT",
+            ):
+                try:
+                    connection.execute(statement)
+                except sqlite3.OperationalError as error:
+                    if "duplicate column name" not in str(error):
+                        raise
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (5, ?)",
+                (_now(),),
+            )
+            # base_branch records the branch a task was cut from, so accept and
+            # reject switch back to it instead of assuming 'main'. A sandbox
+            # imported from a host repository keeps that repository's branch.
+            try:
+                connection.execute("ALTER TABLE tasks ADD COLUMN base_branch TEXT")
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (6, ?)",
                 (_now(),),
             )
 
@@ -257,6 +320,246 @@ class ControllerStore:
                 "UPDATE sandboxes SET status = ?, updated_at = ? WHERE id = ?",
                 (status, _now(), sandbox_id),
             )
+
+    def set_sandbox_baseline_commit(
+        self,
+        *,
+        sandbox_id: str,
+        baseline_commit: str,
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                "UPDATE sandboxes SET baseline_commit = ?, updated_at = ? WHERE id = ?",
+                (baseline_commit, _now(), sandbox_id),
+            )
+
+    def sandbox_baseline_commit(self, sandbox_id: str) -> str | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT baseline_commit FROM sandboxes WHERE id = ?",
+                (sandbox_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return row["baseline_commit"]
+
+    def sandbox(self, sandbox_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM sandboxes WHERE id = ?",
+                (sandbox_id,),
+            ).fetchone()
+        return _row(row)
+
+    def delete_sandbox(self, sandbox_id: str) -> None:
+        """Deletes controller state after Docker resources leave the sandbox."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT project_id FROM sandboxes WHERE id = ?",
+                (sandbox_id,),
+            ).fetchone()
+            if row is None:
+                return
+            project_key = str(row["project_id"])
+            connection.execute(
+                "DELETE FROM assigned_ports WHERE preview_run_id IN "
+                "(SELECT id FROM preview_runs WHERE sandbox_id = ?)",
+                (sandbox_id,),
+            )
+            connection.execute(
+                "DELETE FROM protected_file_baselines WHERE sandbox_id = ?",
+                (sandbox_id,),
+            )
+            connection.execute("DELETE FROM approvals WHERE sandbox_id = ?", (sandbox_id,))
+            connection.execute(
+                "DELETE FROM review_rounds WHERE sandbox_id = ?",
+                (sandbox_id,),
+            )
+            connection.execute("DELETE FROM tasks WHERE sandbox_id = ?", (sandbox_id,))
+            connection.execute("DELETE FROM events WHERE sandbox_id = ?", (sandbox_id,))
+            connection.execute("DELETE FROM agent_runs WHERE sandbox_id = ?", (sandbox_id,))
+            connection.execute(
+                "DELETE FROM preview_runs WHERE sandbox_id = ?",
+                (sandbox_id,),
+            )
+            connection.execute(
+                "DELETE FROM shared_database_schemas WHERE sandbox_id = ?",
+                (sandbox_id,),
+            )
+            connection.execute("DELETE FROM sandboxes WHERE id = ?", (sandbox_id,))
+            remaining = connection.execute(
+                "SELECT 1 FROM sandboxes WHERE project_id = ? LIMIT 1",
+                (project_key,),
+            ).fetchone()
+            if remaining is None:
+                connection.execute(
+                    "DELETE FROM project_secrets WHERE project_id = ?",
+                    (project_key,),
+                )
+                connection.execute("DELETE FROM projects WHERE id = ?", (project_key,))
+
+    def create_task(
+        self,
+        *,
+        task_id: str,
+        sandbox_id: str,
+        agent_run_id: str | None,
+        branch: str,
+        base_branch: str,
+        base_commit: str,
+        title: str,
+        status: str,
+    ) -> None:
+        """Claims the sandbox's single open-task slot, or raises sqlite3.IntegrityError.
+
+        The one_open_task_per_sandbox partial index is the only thing that
+        decides the race, exactly as one_active_agent_per_sandbox does for
+        coding agents. Callers must insert before touching git, so a losing
+        caller has not yet changed the sandbox.
+        """
+        now = _now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO tasks(
+                    id, sandbox_id, agent_run_id, branch, base_branch, base_commit,
+                    status, title, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    sandbox_id,
+                    agent_run_id,
+                    branch,
+                    base_branch,
+                    base_commit,
+                    status,
+                    title,
+                    now,
+                    now,
+                ),
+            )
+            self._event(
+                connection,
+                sandbox_id=sandbox_id,
+                run_id=task_id,
+                kind="task.started",
+                payload={
+                    "branch": branch,
+                    "base_branch": base_branch,
+                    "base_commit": base_commit,
+                },
+            )
+
+    def set_task_base_branch(self, *, task_id: str, base_branch: str) -> None:
+        """Records the branch the task was cut from, read back from git.
+
+        The row has to exist before git runs, so the branch name can only be
+        written once the branch script has reported it.
+        """
+        with self._connection() as connection:
+            connection.execute(
+                "UPDATE tasks SET base_branch = ?, updated_at = ? WHERE id = ?",
+                (base_branch, _now(), task_id),
+            )
+
+    def delete_task(self, *, task_id: str) -> None:
+        """Removes a task whose branch never got created. The events it wrote stay."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT sandbox_id FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                return
+            connection.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            self._event(
+                connection,
+                sandbox_id=str(row["sandbox_id"]),
+                run_id=task_id,
+                kind="task.discarded",
+                payload={},
+            )
+
+    def advance_task_status(
+        self,
+        *,
+        task_id: str,
+        from_statuses: Iterable[str],
+        to_status: str,
+        head_commit: str | None = None,
+        settled: bool = False,
+    ) -> bool:
+        """Moves a task only from one of from_statuses, in a single guarded UPDATE.
+
+        The permitted source statuses travel in the WHERE clause, so a caller
+        naming the wrong ones changes no row instead of forcing an illegal
+        transition, and two concurrent callers cannot both win. Returns whether
+        the row moved.
+        """
+        statuses = tuple(from_statuses)
+        if not statuses:
+            return False
+        placeholders = ", ".join("?" for _ in statuses)
+        now = _now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE tasks
+                SET status = ?,
+                    head_commit = COALESCE(?, head_commit),
+                    updated_at = ?,
+                    settled_at = CASE WHEN ? = 1 THEN ? ELSE settled_at END
+                WHERE id = ? AND status IN ({placeholders})
+                """,
+                (
+                    to_status,
+                    head_commit,
+                    now,
+                    1 if settled else 0,
+                    now,
+                    task_id,
+                    *statuses,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return False
+            row = connection.execute(
+                "SELECT sandbox_id FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            self._event(
+                connection,
+                sandbox_id=str(row["sandbox_id"]) if row is not None else None,
+                run_id=task_id,
+                kind="task.status",
+                payload={"status": to_status, "head_commit": head_commit},
+            )
+        return True
+
+    def task(self, task_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        return _row(row)
+
+    def tasks_for_sandbox(self, sandbox_id: str) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM tasks WHERE sandbox_id = ? ORDER BY created_at",
+                (sandbox_id,),
+            ).fetchall()
+        return [_row(row) for row in rows if row is not None]
+
+    def open_task(
+        self,
+        sandbox_id: str,
+        *,
+        open_statuses: Iterable[str],
+    ) -> dict[str, Any] | None:
+        return self._active_run("tasks", sandbox_id, tuple(open_statuses))
 
     def record_initial_baseline(
         self,
@@ -520,16 +823,18 @@ class ControllerStore:
             connection.execute(
                 """
                 INSERT INTO preview_runs(
-                    id, sandbox_id, proposal_id, mode, status, selected_service,
+                    id, sandbox_id, proposal_id, mode, kind, task_id, commit_sha,
+                    status, selected_service,
                     container_port, host_port, config_json, config_digest,
                     network_name, created_at, started_at, expires_at, last_activity_at
                 ) VALUES (
-                    :id, :sandbox_id, :proposal_id, :mode, :status, :selected_service,
+                    :id, :sandbox_id, :proposal_id, :mode, :kind, :task_id, :commit_sha,
+                    :status, :selected_service,
                     :container_port, :host_port, :config_json, :config_digest,
                     :network_name, :created_at, :started_at, :expires_at, :last_activity_at
                 )
                 """,
-                dict(values),
+                {"kind": "live", "task_id": None, "commit_sha": None, **dict(values)},
             )
             if values.get("host_port"):
                 connection.execute(
@@ -544,7 +849,13 @@ class ControllerStore:
                 sandbox_id=str(values["sandbox_id"]),
                 run_id=str(values["id"]),
                 kind="preview.started",
-                payload={"mode": values["mode"], "host_port": values.get("host_port")},
+                payload={
+                    "mode": values["mode"],
+                    "kind": values.get("kind", "live"),
+                    "task_id": values.get("task_id"),
+                    "commit_sha": values.get("commit_sha"),
+                    "host_port": values.get("host_port"),
+                },
             )
 
     def update_preview_run(self, run_id: str, **changes: Any) -> None:

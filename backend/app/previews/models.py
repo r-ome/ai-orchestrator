@@ -37,6 +37,19 @@ class PreviewAction(StrEnum):
     REBUILD = "rebuild"
 
 
+class PreviewKind(StrEnum):
+    """What a preview stack serves, and therefore where its files come from.
+
+    LIVE mounts the sandbox volume itself, so a coding agent's edit reaches the
+    browser through hot module replacement with no restart. TASK exports one
+    commit into a run-scoped volume, so a human reviews exactly the code that
+    would merge and nothing the agent writes afterwards can change it.
+    """
+
+    LIVE = "live"
+    TASK = "task"
+
+
 class PreviewServiceType(StrEnum):
     MYSQL = "mysql"
 
@@ -252,6 +265,9 @@ class StartPreviewRequest(BaseModel):
     action: PreviewAction = PreviewAction.START
     actor: str = Field(default="human", min_length=1, max_length=100)
     save_default: bool = False
+    # Naming a task is what makes this a task preview; there is no separate
+    # kind field to contradict it.
+    task_id: str = Field(default="", pattern=r"^([0-9a-f]{32})?$")
 
 
 class PreviewContainer(BaseModel):
@@ -267,6 +283,9 @@ class PreviewRun(BaseModel):
     project_name: str
     proposal_id: str
     mode: PreviewMode
+    kind: PreviewKind = PreviewKind.LIVE
+    task_id: str | None = None
+    commit_sha: str | None = None
     runtime: PreviewRuntime
     status: str
     selected_service: str
@@ -311,6 +330,8 @@ class PreviewProgressEvent(BaseModel):
     step: str
     message: str
     created_at: str
+    started_at: str | None = None
+    duration_ms: int | None = None
 
 
 class PreviewLogs(BaseModel):

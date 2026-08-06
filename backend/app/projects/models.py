@@ -5,6 +5,17 @@ class CopyProjectRequest(BaseModel):
     path: str = Field(min_length=1)
 
 
+class RemoveProjectRequest(BaseModel):
+    confirm: bool = False
+
+
+class RemoveProjectResponse(BaseModel):
+    project_name: str
+    removed_containers: int
+    removed_networks: int
+    removed_volumes: int
+
+
 class ProjectRegistration(BaseModel):
     sandbox_id: str
     name: str

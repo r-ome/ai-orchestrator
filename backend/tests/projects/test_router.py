@@ -9,6 +9,7 @@ from app.docker_client import get_docker_client
 from app.main import app
 from app.projects.config import ProjectSettings, get_project_settings
 from app.projects.service import (
+    CONTROLLER_METADATA_MOUNT,
     COPY_CONTAINER_PREFIX,
     COPY_COMMAND,
     EXCLUDED_DIRECTORY_NAMES,
@@ -21,10 +22,12 @@ from app.projects.service import (
     LABEL_EXCLUDED_DIRECTORIES,
     LABEL_FILE_COUNT,
     LABEL_MANAGED,
+    LABEL_METADATA_MANAGED,
+    LABEL_METADATA_VOLUME,
     LABEL_NAME,
     LABEL_SOURCE,
     LABEL_STATUS_STORAGE,
-    STATUS_STORAGE_PROJECT_VOLUME,
+    STATUS_STORAGE_CONTROLLER_VOLUME,
 )
 
 client = TestClient(app)
@@ -137,11 +140,7 @@ class StubCopyHelper:
                 "FinishedAt": "2026-08-04T01:02:04Z",
             }
         )
-        volume_name = next(
-            source
-            for source in self.containers.create_calls[-1]["volumes"]
-            if not Path(source).is_absolute()
-        )
+        volume_name = self.attrs["Config"]["Labels"][LABEL_METADATA_VOLUME]
         self.containers.persisted[volume_name] = {
             "status": "completed" if exit_code == 0 else "failed",
             "started_at": "2026-08-04T01:02:03Z",
@@ -328,6 +327,7 @@ def test_register_and_observe_copy_lifecycle(tmp_path: Path) -> None:
     assert inspected.json() == project
 
     volume_labels = docker_client.volumes.create_calls[0]["labels"]
+    metadata_volume_name = volume_labels[LABEL_METADATA_VOLUME]
     assert volume_labels[LABEL_MANAGED] == "true"
     assert volume_labels[LABEL_NAME] == "sample-project-sandbox-1"
     assert volume_labels[LABEL_SOURCE] == str(source)
@@ -340,7 +340,15 @@ def test_register_and_observe_copy_lifecycle(tmp_path: Path) -> None:
     assert volume_labels[LABEL_CREATED_AT].endswith("Z")
     assert volume_labels[LABEL_COPY_JOB_ID] == job["job_id"]
     assert volume_labels[LABEL_COPY_IMAGE] == "alpine:latest"
-    assert volume_labels[LABEL_STATUS_STORAGE] == STATUS_STORAGE_PROJECT_VOLUME
+    assert volume_labels[LABEL_STATUS_STORAGE] == STATUS_STORAGE_CONTROLLER_VOLUME
+    assert metadata_volume_name != job["volume_name"]
+
+    metadata_volume_labels = docker_client.volumes.create_calls[1]["labels"]
+    assert docker_client.volumes.create_calls[1]["name"] == metadata_volume_name
+    assert metadata_volume_labels[LABEL_METADATA_MANAGED] == "true"
+    # The metadata volume never carries the project-managed label, so it is
+    # never listed as a registered project alongside the real one.
+    assert LABEL_MANAGED not in metadata_volume_labels
 
     helper_call = docker_client.containers.create_calls[0]
     assert helper_call["image"] == "alpine:latest"
@@ -357,14 +365,18 @@ def test_register_and_observe_copy_lifecycle(tmp_path: Path) -> None:
     assert helper_call["volumes"] == {
         str(source): {"bind": "/source", "mode": "ro"},
         job["volume_name"]: {"bind": "/project", "mode": "rw"},
+        metadata_volume_name: {"bind": CONTROLLER_METADATA_MOUNT, "mode": "rw"},
     }
     assert helper.auto_removed is True
     assert helper.removed_force is None
     assert docker_client.containers.run_calls
     reader_call = docker_client.containers.run_calls[0]
     assert reader_call["remove"] is True
+    # The reader mounts only the controller-owned metadata volume, never the
+    # agent-writable project volume: an agent has no path to influence what
+    # the controller reads back as copy status.
     assert reader_call["volumes"] == {
-        job["volume_name"]: {"bind": "/project", "mode": "ro"}
+        metadata_volume_name: {"bind": CONTROLLER_METADATA_MOUNT, "mode": "ro"}
     }
 
 
@@ -393,6 +405,146 @@ def test_failed_copy_is_reported(tmp_path: Path) -> None:
     assert detail.json()["error"] == "copy command failed"
     assert "permission denied" in detail.json()["log_tail"]
     assert project.json()["copy_status"] == "failed"
+
+
+class _FakeContainersForReading:
+    """Minimal docker-client stand-in for unit-testing the reader directly.
+
+    Only implements `.run()`, which is all `_read_persisted_copy_status`
+    calls. `raise_not_found` simulates a metadata volume that no longer
+    exists, e.g. removed out of band.
+    """
+
+    def __init__(
+        self,
+        persisted: dict[str, str] | None = None,
+        *,
+        raise_not_found: bool = False,
+    ) -> None:
+        self.persisted = persisted or {}
+        self.raise_not_found = raise_not_found
+        self.run_calls: list[dict[str, Any]] = []
+
+    def run(self, **kwargs: Any) -> bytes:
+        self.run_calls.append(kwargs)
+        if self.raise_not_found:
+            raise NotFound("volume not found")
+        fields = ("status", "started_at", "finished_at", "exit_code", "error")
+        output = "\n".join(self.persisted.get(field, "") for field in fields) + "\n"
+        if "copy.log" in kwargs["command"][2]:
+            output += self.persisted.get("log", "")
+        return output.encode()
+
+
+class _FakeDockerClientForReading:
+    def __init__(self, containers: _FakeContainersForReading) -> None:
+        self.containers = containers
+
+
+def test_legacy_job_metadata_is_read_from_the_project_volume() -> None:
+    """A copy job started before this change still reads back correctly.
+
+    Its metadata was written under `.orchestrator` inside the project
+    volume, and it never carries a metadata-volume label. The reader must
+    fall back to that legacy location rather than crash.
+    """
+    from app.projects.service import (
+        LABEL_COPY_IMAGE,
+        LABEL_STATUS_STORAGE,
+        STATUS_STORAGE_PROJECT_VOLUME,
+        _read_persisted_copy_status,
+    )
+
+    volume = StubVolume("orchestrator-project-legacy-sandbox-1", {})
+    labels = {
+        LABEL_STATUS_STORAGE: STATUS_STORAGE_PROJECT_VOLUME,
+        LABEL_COPY_IMAGE: "alpine:latest",
+    }
+    containers = _FakeContainersForReading(
+        {
+            "status": "completed",
+            "started_at": "2026-08-04T01:02:03Z",
+            "finished_at": "2026-08-04T01:02:04Z",
+            "exit_code": "0",
+            "error": "",
+            "log": "copy completed\n",
+        }
+    )
+    docker_client = _FakeDockerClientForReading(containers)
+
+    persisted = _read_persisted_copy_status(
+        docker_client,  # type: ignore[arg-type]
+        volume,  # type: ignore[arg-type]
+        labels,
+        include_logs=True,
+    )
+
+    assert persisted["status"] == "completed"
+    assert persisted["exit_code"] == "0"
+    assert containers.run_calls[0]["volumes"] == {
+        volume.name: {"bind": "/project", "mode": "ro"}
+    }
+
+
+def test_missing_metadata_label_does_not_crash_the_reader() -> None:
+    """A controller-volume job without the metadata label reads as unknown.
+
+    This should not happen for a job created by the current code, but the
+    reader must degrade gracefully rather than raise if it does.
+    """
+    from app.projects.service import (
+        LABEL_COPY_IMAGE,
+        LABEL_STATUS_STORAGE,
+        STATUS_STORAGE_CONTROLLER_VOLUME,
+        _read_persisted_copy_status,
+    )
+
+    volume = StubVolume("orchestrator-project-sample-sandbox-1", {})
+    labels = {
+        LABEL_STATUS_STORAGE: STATUS_STORAGE_CONTROLLER_VOLUME,
+        LABEL_COPY_IMAGE: "alpine:latest",
+    }
+    containers = _FakeContainersForReading()
+    docker_client = _FakeDockerClientForReading(containers)
+
+    persisted = _read_persisted_copy_status(
+        docker_client,  # type: ignore[arg-type]
+        volume,  # type: ignore[arg-type]
+        labels,
+        include_logs=True,
+    )
+
+    assert persisted == {}
+    assert containers.run_calls == []
+
+
+def test_missing_metadata_volume_does_not_crash_the_reader() -> None:
+    """The metadata volume label is present but the volume itself is gone."""
+    from app.projects.service import (
+        LABEL_COPY_IMAGE,
+        LABEL_METADATA_VOLUME,
+        LABEL_STATUS_STORAGE,
+        STATUS_STORAGE_CONTROLLER_VOLUME,
+        _read_persisted_copy_status,
+    )
+
+    volume = StubVolume("orchestrator-project-sample-sandbox-1", {})
+    labels = {
+        LABEL_STATUS_STORAGE: STATUS_STORAGE_CONTROLLER_VOLUME,
+        LABEL_METADATA_VOLUME: "orchestrator-project-sample-sandbox-1-controller-metadata",
+        LABEL_COPY_IMAGE: "alpine:latest",
+    }
+    containers = _FakeContainersForReading(raise_not_found=True)
+    docker_client = _FakeDockerClientForReading(containers)
+
+    persisted = _read_persisted_copy_status(
+        docker_client,  # type: ignore[arg-type]
+        volume,  # type: ignore[arg-type]
+        labels,
+        include_logs=True,
+    )
+
+    assert persisted == {}
 
 
 def test_copy_job_not_found(tmp_path: Path) -> None:
@@ -506,8 +658,10 @@ def test_copying_one_folder_creates_incrementing_sandboxes(tmp_path: Path) -> No
     assert first.json()["project_name"] == "sample-project-sandbox-1"
     assert second.json()["project_name"] == "sample-project-sandbox-2"
     assert third.json()["project_name"] == "sample-project-sandbox-3"
-    assert len(docker_client.volumes.create_calls) == 3
-    assert len({call["name"] for call in docker_client.volumes.create_calls}) == 3
+    # Each registration creates a project volume and its controller-owned
+    # metadata volume sibling.
+    assert len(docker_client.volumes.create_calls) == 6
+    assert len({call["name"] for call in docker_client.volumes.create_calls}) == 6
     assert all(
         call["labels"][LABEL_SOURCE] == str(source)
         for call in docker_client.volumes.create_calls
@@ -530,6 +684,7 @@ def test_missing_copy_image_rolls_back_volume(tmp_path: Path) -> None:
         "detail": "Project copy image 'alpine:latest' is not available"
     }
     assert docker_client.volumes.items[0].removed_force is True
+    assert docker_client.volumes.items[1].removed_force is True
 
 
 def test_folder_name_is_normalized_for_sandbox_name(tmp_path: Path) -> None:

@@ -15,6 +15,8 @@ from app.projects.models import (
     CopyProjectRequest,
     ProjectCopyJobsResponse,
     ProjectCopyJobStatus,
+    RemoveProjectRequest,
+    RemoveProjectResponse,
     ProjectRegistration,
     ProjectRegistrationsResponse,
 )
@@ -24,6 +26,7 @@ from app.projects.service import (
     inspect_project_copy_job,
     inspect_registered_project,
     list_project_copy_jobs,
+    remove_project,
     list_registered_projects,
     register_project,
     project_id,
@@ -137,6 +140,23 @@ def get_project_copy_job(
 ) -> ProjectCopyJobStatus:
     return _docker_response(
         lambda: inspect_project_copy_job(docker_client, job_id)
+    )
+
+
+@router.delete("/{project_name}", response_model=RemoveProjectResponse)
+def delete_project(
+    project_name: str,
+    request: RemoveProjectRequest,
+    docker_client: Annotated[DockerClient, Depends(get_docker_client)],
+    controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
+) -> RemoveProjectResponse:
+    if not request.confirm:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Set confirm=true to remove the project and its Docker resources",
+        )
+    return _docker_response(
+        lambda: remove_project(docker_client, controller_store, project_name)
     )
 
 

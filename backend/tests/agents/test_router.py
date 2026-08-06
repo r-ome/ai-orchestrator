@@ -86,12 +86,19 @@ class StubContainers:
     def __init__(self) -> None:
         self.items: list[StubContainer] = []
         self.create_calls: list[dict[str, Any]] = []
+        self.run_calls: list[dict[str, Any]] = []
 
     def create(self, **kwargs: Any) -> StubContainer:
         self.create_calls.append(kwargs)
         container = StubContainer(kwargs, len(self.items) + 1)
         self.items.append(container)
         return container
+
+    def run(self, **kwargs: Any) -> bytes:
+        # Used by _volume_runtime_files when resolving the agent's
+        # dependency volume; an empty sandbox has no lockfile to find.
+        self.run_calls.append(kwargs)
+        return b""
 
     def list(self, **kwargs: Any) -> list[StubContainer]:
         assert kwargs == {
@@ -209,6 +216,13 @@ def _configure(
         "app.agents.service.inspect_registered_project",
         lambda *_: project or _ready_project(),
     )
+    # The git baseline runs a throwaway container the StubDockerClient does
+    # not model; these router tests exercise agent creation, not the git
+    # baseline itself, so stub it out with a fixed commit.
+    monkeypatch.setattr(
+        "app.agents.service.ensure_git_baseline",
+        lambda *_: "a" * 40,
+    )
 
 
 def test_lists_selectable_agent_providers() -> None:
@@ -267,7 +281,7 @@ def test_rejects_a_second_active_agent_for_the_same_sandbox(
         "detail": "Sandbox already has an active coding agent; use replace explicitly"
     }
     assert listed.json()["count"] == 1
-    assert len(docker_client.volumes.create_calls) == 1
+    assert len(docker_client.volumes.create_calls) == 2
 
     credential_call = docker_client.volumes.create_calls[0]
     assert credential_call["labels"] == {
@@ -277,12 +291,20 @@ def test_rejects_a_second_active_agent_for_the_same_sandbox(
     }
     credential_volume = credential_call["name"]
 
+    dependency_call = docker_client.volumes.create_calls[1]
+    assert dependency_call["name"].startswith("orchestrator-deps-")
+    assert dependency_call["labels"]["orchestrator.preview.data-managed"] == "true"
+    assert dependency_call["labels"]["orchestrator.preview.persistent"] == "true"
+    dependency_volume = dependency_call["name"]
+
     create_call = docker_client.containers.create_calls[0]
     assert create_call["image"] == "test-claude:latest"
     assert create_call["auto_remove"] is True
     assert create_call["read_only"] is True
     assert create_call["cap_drop"] == ["ALL"]
     assert create_call["security_opt"] == ["no-new-privileges:true"]
+    assert create_call["pids_limit"] == 512
+    assert create_call["mem_limit"] == "2g"
     assert create_call["working_dir"] == "/workspace"
     assert create_call["environment"] == {
         "CLAUDE_CONFIG_DIR": "/auth",
@@ -292,6 +314,7 @@ def test_rejects_a_second_active_agent_for_the_same_sandbox(
     assert create_call["volumes"] == {
         "orchestrator-project-sample": {"bind": "/workspace", "mode": "rw"},
         credential_volume: {"bind": "/auth", "mode": "rw"},
+        dependency_volume: {"bind": "/workspace/node_modules", "mode": "ro"},
     }
     assert create_call["labels"][LABEL_PROJECT_VOLUME] == (
         "orchestrator-project-sample"
@@ -470,3 +493,33 @@ def test_websocket_bridges_terminal_and_keeps_container_running(
     ]
     assert container.stop_timeout is None
     assert container.status == "running"
+
+
+def test_agent_memory_setting_reads_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    get_agent_settings.cache_clear()
+    monkeypatch.setenv("AGENT_MEMORY", "3g")
+    monkeypatch.setenv("CLAUDE_AGENT_IMAGE", "test-claude:latest")
+    monkeypatch.setenv("CODEX_AGENT_IMAGE", "test-codex:latest")
+
+    try:
+        settings = get_agent_settings()
+    finally:
+        get_agent_settings.cache_clear()
+
+    assert settings.agent_memory == "3g"
+
+
+def test_agent_memory_setting_has_a_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    get_agent_settings.cache_clear()
+    monkeypatch.delenv("AGENT_MEMORY", raising=False)
+
+    try:
+        settings = get_agent_settings()
+    finally:
+        get_agent_settings.cache_clear()
+
+    assert settings.agent_memory == "2g"

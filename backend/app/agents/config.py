@@ -30,6 +30,10 @@ class AgentProviderConfig:
 class AgentSettings:
     claude_image: str
     codex_image: str
+    # A coding agent edits and runs project code, so it gets less headroom
+    # than a preview's dev server, but still enough for a language server
+    # and a build alongside the agent process itself.
+    agent_memory: str = "2g"
 
     def provider(self, provider: AgentProvider) -> AgentProviderConfig:
         if provider is AgentProvider.CLAUDE:
@@ -64,4 +68,5 @@ def get_agent_settings() -> AgentSettings:
             "CODEX_AGENT_IMAGE",
             "orchestrator-agent-codex:latest",
         ),
+        agent_memory=os.getenv("AGENT_MEMORY", "2g"),
     )

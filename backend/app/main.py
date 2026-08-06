@@ -12,6 +12,7 @@ from app.controller.store import get_controller_store
 from app.containers.router import router as containers_router
 from app.projects.router import router as projects_router
 from app.previews.router import router as previews_router
+from app.tasks.router import router as tasks_router
 from app.volumes.router import router as volumes_router
 
 
@@ -34,6 +35,7 @@ app.include_router(agents_router)
 app.include_router(containers_router)
 app.include_router(projects_router)
 app.include_router(previews_router)
+app.include_router(tasks_router)
 app.include_router(volumes_router)
 
 
