@@ -262,6 +262,36 @@ def inspect_registered_project(
     raise ProjectOperationError(404, f"Project '{project_name}' is not registered")
 
 
+def ensure_sandbox_registered(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    project_name: str,
+    *,
+    project: ProjectRegistration | None = None,
+) -> tuple[str, str, ProjectRegistration]:
+    """Returns (sandbox_id, project_id, project), registering the sandbox row."""
+    project = project or inspect_registered_project(docker_client, project_name)
+    if not project.ready:
+        raise ProjectOperationError(409, f"Project '{project_name}' is not ready")
+
+    sandbox_id = getattr(project, "sandbox_id", "") or hashlib.sha256(
+        f"sandbox:{project.volume_name}".encode()
+    ).hexdigest()[:32]
+    source_path = getattr(project, "source_path", "") or f"legacy:{project.name}"
+    created_at = getattr(project, "created_at", "")
+    project_key = project_id(source_path)
+    controller_store.register_sandbox(
+        sandbox_id=sandbox_id,
+        project_id=project_key,
+        project_name=project.name,
+        source_path=source_path,
+        volume_name=project.volume_name,
+        status="ready",
+        created_at=created_at,
+    )
+    return sandbox_id, project_key, project
+
+
 def remove_project(
     docker_client: DockerClient,
     controller_store: ControllerStore,

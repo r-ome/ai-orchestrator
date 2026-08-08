@@ -30,9 +30,9 @@ from app.previews.service import (
 )
 from app.projects.service import (
     ProjectOperationError,
+    ensure_sandbox_registered,
     ensure_git_baseline,
     inspect_registered_project,
-    project_id,
 )
 
 LABEL_MANAGED = "orchestrator.agent.managed"
@@ -76,28 +76,19 @@ def create_agent(
 ) -> CodingAgent:
     try:
         project = inspect_registered_project(docker_client, request.project_name)
+        if not project.ready:
+            raise ProjectOperationError(
+                409,
+                f"Project '{request.project_name}' is not ready",
+            )
+        sandbox_id, _, project = ensure_sandbox_registered(
+            docker_client,
+            controller_store,
+            request.project_name,
+            project=project,
+        )
     except ProjectOperationError as error:
         raise AgentOperationError(error.status_code, error.detail) from error
-    if not project.ready:
-        raise AgentOperationError(
-            409,
-            f"Project '{request.project_name}' is not ready",
-        )
-
-    sandbox_id = getattr(project, "sandbox_id", "") or hashlib.sha256(
-        f"sandbox:{project.volume_name}".encode()
-    ).hexdigest()[:32]
-    source_path = getattr(project, "source_path", "") or f"legacy:{project.name}"
-    created_at = getattr(project, "created_at", "")
-    controller_store.register_sandbox(
-        sandbox_id=sandbox_id,
-        project_id=project_id(source_path),
-        project_name=project.name,
-        source_path=source_path,
-        volume_name=project.volume_name,
-        status="ready",
-        created_at=created_at,
-    )
     _ensure_sandbox_git_baseline(
         docker_client,
         controller_store,
@@ -474,6 +465,9 @@ def _credential_volume(
             f"Docker volume '{volume_name}' is not the requested credential profile",
         )
     return volume
+
+
+credential_volume = _credential_volume
 
 
 def _credential_volume_name(provider: AgentProvider, profile: str) -> str:

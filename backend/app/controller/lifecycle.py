@@ -30,9 +30,20 @@ def reconcile_controller_state(store: ControllerStore) -> dict[str, int]:
         "sandboxes": 0,
         "agents": 0,
         "previews": 0,
+        "planning": 0,
         "missing": 0,
         "unexpected": 0,
     }
+    for session in store.running_planning_sessions():
+        if store.advance_planning_status(
+            session_id=str(session["id"]),
+            from_statuses=(str(session["status"]),),
+            to_status="failed",
+            settled=True,
+            failure_reason="The backend restarted while this turn was running",
+        ):
+            counts["planning"] += 1
+        store.release_planning_turn(str(session["id"]))
     try:
         client = docker.from_env()
         containers = client.containers.list(

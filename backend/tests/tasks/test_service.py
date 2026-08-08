@@ -473,7 +473,7 @@ def test_migration_adds_tasks_to_an_existing_database(tmp_path: Path) -> None:
     finally:
         connection.close()
 
-    assert versions == {1, 2, 3, 4, 5, 6}
+    assert versions == {1, 2, 3, 4, 5, 6, 7, 8}
     assert sandbox_rows[0] == 1
 
 

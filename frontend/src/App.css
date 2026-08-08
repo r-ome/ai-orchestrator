@@ -10,10 +10,13 @@
    prototype's two-pane layout. The next stage restyles individual pages
    inside `.app-main .page` — this block only owns the chrome around them. */
 
+/* A fixed (not min-) height locks the shell to the viewport, so the rail
+   can never be pushed taller than the window by page content below it —
+   `.app-main` scrolls internally instead. */
 .app-shell {
   display: flex;
   align-items: stretch;
-  min-height: 100svh;
+  height: 100svh;
 }
 
 .app-rail {
@@ -21,6 +24,7 @@
   flex-direction: column;
   width: 236px;
   flex-shrink: 0;
+  overflow-y: auto;
   background: var(--panel);
   border-right: 1px solid var(--border);
 }
@@ -43,12 +47,12 @@
   background: linear-gradient(135deg, var(--accent), oklch(0.6 0.2 320));
   color: var(--mark-text);
   font-weight: 700;
-  font-size: 15px;
+  font-size: 16.5px;
 }
 
 .app-rail-wordmark {
   font-weight: 600;
-  font-size: 15px;
+  font-size: 16.5px;
   letter-spacing: -0.01em;
   color: var(--text-h);
 }
@@ -58,7 +62,7 @@
   flex-direction: column;
   gap: 0.15rem;
   padding: 0.75rem 0.6rem;
-  font-size: 13.5px;
+  font-size: 14.9px;
 }
 
 .app-rail-nav a {
@@ -113,15 +117,69 @@
   border-radius: 50%;
 }
 
-.rail-current {
+.app-rail-foot {
   margin-top: auto;
+}
+
+.rail-current {
+  padding: 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+
+/* --- Appearance control ----------------------------------------------- */
+
+.rail-theme {
   padding: 0.9rem;
   border-top: 1px solid var(--line);
 }
 
+.rail-theme-label {
+  margin-bottom: 0.5rem;
+  font-size: 12.1px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+
+.rail-theme-options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel2);
+}
+
+.rail-theme-options button {
+  padding: 5px 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.7px;
+  cursor: pointer;
+}
+
+.rail-theme-options button:hover {
+  color: var(--text-h);
+}
+
+.rail-theme-options button.is-active {
+  background: var(--accent-bg);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+  color: var(--text-h);
+}
+
+.rail-theme-options button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .rail-current-label {
   margin-bottom: 0.5rem;
-  font-size: 11px;
+  font-size: 12.1px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--muted);
@@ -130,7 +188,7 @@
 .rail-current-name {
   overflow: hidden;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13.2px;
   color: var(--text-h);
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -142,7 +200,7 @@
   gap: 6px;
   margin-top: 9px;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12.7px;
 }
 
 .rail-current-stats div {
@@ -193,7 +251,7 @@
 
 .section-heading {
   margin: 0 0 0.5rem;
-  font-size: 11px;
+  font-size: 12.1px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -209,7 +267,7 @@
   background: var(--soft);
   color: var(--accent);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12.7px;
   white-space: nowrap;
 }
 
@@ -252,7 +310,7 @@
 
 .card-header h2 {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: 1.045rem;
 }
 
 .card-header-title {
@@ -302,7 +360,7 @@
 .metric-value {
   overflow: hidden;
   font-family: var(--mono);
-  font-size: 0.95rem;
+  font-size: 1.045rem;
   color: var(--text-h);
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -326,13 +384,13 @@
 .chrome-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
 }
 
 .chrome-table th {
   padding: 0.6rem 1rem;
   text-align: left;
-  font-size: 11px;
+  font-size: 12.1px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -363,11 +421,14 @@
 }
 
 .page-header h1 {
-  font-size: 30px;
+  font-size: 33px;
   margin: 0;
 }
 
-.project-detail-header .breadcrumb {
+/* The breadcrumb and the title are two different things, so they need more
+   than the line gap between them. Every page header shares the offset rather
+   than each page choosing its own. */
+.page-header .breadcrumb {
   padding-bottom: 10px;
 }
 
@@ -389,7 +450,7 @@
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
   line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
@@ -416,7 +477,7 @@
 .page button.small {
   min-height: 1.7rem;
   padding: 0.2rem 0.6rem;
-  font-size: 0.8rem;
+  font-size: 0.88rem;
 }
 
 .page button.ghost {
@@ -446,7 +507,7 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   color: inherit;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
   line-height: 1.2;
   text-decoration: none;
 }
@@ -486,7 +547,7 @@
   margin: 0 0 0.25rem;
   color: var(--muted);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13.2px;
 }
 
 .breadcrumb a {
@@ -537,7 +598,7 @@
   flex-direction: column;
   gap: 0.25rem;
   min-width: 0;
-  font-size: 0.85rem;
+  font-size: 0.935rem;
 }
 
 .preview-form-grid input,
@@ -551,7 +612,7 @@
   background: var(--bg);
   color: inherit;
   font: inherit;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
 }
 
 .dependency-settings {
@@ -606,7 +667,7 @@
   grid-template-columns: minmax(8rem, auto) 1fr auto;
   gap: 0.75rem;
   align-items: baseline;
-  font-size: 0.85rem;
+  font-size: 0.935rem;
 }
 
 .preview-progress-events time {
@@ -622,7 +683,7 @@
   margin: 0.5rem 0 1rem;
   padding: 0;
   list-style: none;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
 }
 
 .checkbox-label {
@@ -630,7 +691,7 @@
   align-items: center;
   gap: 0.5rem;
   margin: 0.5rem 0;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
 }
 
 .approval-check {
@@ -666,7 +727,7 @@
   grid-template-columns: max-content 1fr;
   gap: 0.4rem 1.25rem;
   margin: 0 0 1.5rem;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
 }
 
 .detail-grid dt {
@@ -690,13 +751,13 @@
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  font-size: 0.85rem;
+  font-size: 0.935rem;
 }
 
 .file-form input,
 .file-form select {
   font: inherit;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
   padding: 0.35rem 0.5rem;
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -715,7 +776,7 @@
   border-radius: 8px;
   background: var(--code-bg);
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: 0.88rem;
   line-height: 1.5;
   white-space: pre;
 }
@@ -728,7 +789,7 @@
   display: grid;
   place-items: center;
   padding: 1rem;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--scrim);
   z-index: 10;
 }
 
@@ -745,7 +806,7 @@
 
 .dialog h2 {
   margin: 0 0 0.75rem;
-  font-size: 1.15rem;
+  font-size: 1.265rem;
 }
 
 .dialog-header {
@@ -764,13 +825,13 @@
   min-height: 2rem;
   padding: 0;
   color: var(--muted);
-  font-size: 1.25rem;
+  font-size: 1.375rem;
   line-height: 1;
 }
 
 .dialog-body p {
   margin: 0 0 0.75rem;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
 }
 
 .dialog-field {
@@ -778,12 +839,12 @@
   flex-direction: column;
   gap: 0.35rem;
   margin: 1rem 0;
-  font-size: 0.85rem;
+  font-size: 0.935rem;
 }
 
 .dialog-field input {
   font: inherit;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
   padding: 0.4rem 0.6rem;
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -793,7 +854,7 @@
 
 .dialog-field select {
   font: inherit;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
   padding: 0.4rem 0.6rem;
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -851,7 +912,7 @@
   box-sizing: border-box;
   margin: 0;
   padding: 1rem;
-  background: rgba(0, 0, 0, 0.62);
+  background: var(--scrim-strong);
 }
 
 .preview-build-surface {
@@ -878,7 +939,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  font-size: 0.85rem;
+  font-size: 0.935rem;
   white-space: nowrap;
 }
 
@@ -924,7 +985,7 @@
 
 .log-modal-id {
   margin: 0.15rem 0 0;
-  font-size: 0.75rem;
+  font-size: 0.825rem;
   opacity: 0.65;
   overflow-wrap: anywhere;
 }
@@ -937,7 +998,7 @@
 }
 
 .log-modal-meta dt {
-  font-size: 0.75rem;
+  font-size: 0.825rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   opacity: 0.65;
@@ -945,12 +1006,12 @@
 
 .log-modal-meta dd {
   margin: 0.1rem 0 0;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
 }
 
 .log-modal-excluded {
   margin: 0 0 0.75rem;
-  font-size: 0.85rem;
+  font-size: 0.935rem;
 }
 
 .log-modal-excluded summary {
@@ -960,7 +1021,7 @@
 
 .log-modal-excluded p {
   margin: 0.4rem 0 0;
-  font-size: 0.8rem;
+  font-size: 0.88rem;
   overflow-wrap: anywhere;
   opacity: 0.8;
 }
@@ -981,7 +1042,7 @@
 
 .log-modal-note {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 0.88rem;
 }
 
 /* --- Folder picker ---------------------------------------------------- */
@@ -995,7 +1056,7 @@
   padding: 0.4rem 0.6rem;
   border-radius: 8px;
   background: var(--code-bg);
-  font-size: 0.8rem;
+  font-size: 0.88rem;
   overflow-wrap: anywhere;
 }
 
@@ -1023,7 +1084,7 @@
 
 .picker-empty {
   padding: 0.6rem;
-  font-size: 0.85rem;
+  font-size: 0.935rem;
   opacity: 0.7;
 }
 
@@ -1059,7 +1120,7 @@
 }
 
 .picker-field span {
-  font-size: 0.85rem;
+  font-size: 0.935rem;
   overflow-wrap: anywhere;
 }
 
@@ -1075,7 +1136,7 @@
 .volumes-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
   white-space: nowrap;
 }
 
@@ -1110,15 +1171,6 @@
 .page {
   --surface: var(--panel);
   --series-in-use: var(--info);
-  --series-reclaimable: #eb6834;
-}
-
-@media (prefers-color-scheme: dark) {
-  .page {
-    --surface: var(--panel);
-    --series-in-use: var(--info);
-    --series-reclaimable: #d95926;
-  }
 }
 
 .total-figure {
@@ -1127,13 +1179,13 @@
 
 .total-label {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
   opacity: 0.8;
 }
 
 .total-value {
   margin: 0.1rem 0;
-  font-size: 3rem;
+  font-size: 3.3rem;
   line-height: 1.1;
   font-weight: 600;
   color: var(--text-h);
@@ -1141,7 +1193,7 @@
 
 .total-sub {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: 0.99rem;
   opacity: 0.8;
 }
 
@@ -1151,7 +1203,7 @@
   list-style: none;
   margin: 0 0 0.75rem;
   padding: 0;
-  font-size: 0.85rem;
+  font-size: 0.935rem;
 }
 
 .legend li {
@@ -1245,12 +1297,6 @@
   opacity: 1;
 }
 
-@media (prefers-color-scheme: dark) {
-  .status-warn {
-    color: var(--warn);
-  }
-}
-
 .page-header-actions {
   display: flex;
   align-items: center;
@@ -1258,7 +1304,7 @@
 }
 
 .agent-phase {
-  font-size: 0.85rem;
+  font-size: 0.935rem;
   opacity: 0.8;
 }
 
@@ -1321,7 +1367,7 @@
 .agent-terminal-back {
   flex-shrink: 0;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 13.8px;
   text-decoration: none;
 }
 
@@ -1358,7 +1404,7 @@
 .agent-terminal-name {
   overflow: hidden;
   color: var(--text-h);
-  font-size: 14px;
+  font-size: 15.4px;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -1367,7 +1413,7 @@
   overflow: hidden;
   margin-top: 0.15rem;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12.7px;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -1385,7 +1431,7 @@
   min-height: 0;
   padding: 0.4375rem 0.8125rem;
   border-radius: 8px;
-  font-size: 12.5px;
+  font-size: 13.8px;
 }
 
 .agent-terminal-status {
@@ -1443,7 +1489,7 @@
   padding: 0.6875rem 1.375rem;
   border-top: 1px solid var(--border);
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12.7px;
   background: var(--panel);
 }
 
@@ -1523,7 +1569,7 @@
 .terminal-dock-name {
   overflow: hidden;
   color: var(--text-h);
-  font-size: 0.8rem;
+  font-size: 0.88rem;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -1532,7 +1578,7 @@
   overflow: hidden;
   margin-top: 0.15rem;
   color: var(--muted);
-  font-size: 0.67rem;
+  font-size: 0.737rem;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -1572,7 +1618,7 @@
   padding: 0.55rem 0.8rem;
   border-top: 1px solid var(--line);
   color: var(--muted);
-  font-size: 0.65rem;
+  font-size: 0.715rem;
 }
 
 .terminal-dock-footer > span:last-child {
@@ -1605,7 +1651,7 @@
   writing-mode: vertical-rl;
   color: var(--muted);
   font-family: var(--mono);
-  font-size: 0.68rem;
+  font-size: 0.748rem;
   letter-spacing: 0.05em;
   white-space: nowrap;
 }
@@ -1668,7 +1714,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.85rem;
+  font-size: 0.935rem;
   white-space: nowrap;
   text-transform: capitalize;
 }
@@ -1709,7 +1755,7 @@
 }
 
 .filter-chip {
-  font-size: 0.85rem;
+  font-size: 0.935rem;
   padding: 0.25rem 0.7rem;
   border-radius: 999px;
   opacity: 0.7;
@@ -1784,7 +1830,7 @@
 .storage-metric-value {
   margin-top: 0.35rem;
   font-family: var(--heading);
-  font-size: 2rem;
+  font-size: 2.2rem;
   font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1.1;
@@ -1871,4 +1917,532 @@
   .storage-metric-strip {
     grid-template-columns: 1fr;
   }
+}
+
+/* --- Model-authored Markdown ------------------------------------------ */
+/* Planner and reviewer output is prose with structure. These rules keep that
+   structure readable inside a card without letting a long plan's headings
+   compete with the page's own h1/h2. */
+
+.markdown > *:first-child {
+  margin-top: 0;
+}
+
+.markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown p {
+  margin: 0 0 0.75rem;
+  line-height: 1.6;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: 1.25rem 0 0.5rem;
+  color: var(--text-h);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.markdown h1 {
+  font-size: 1.265rem;
+}
+
+.markdown h2 {
+  font-size: 1.155rem;
+}
+
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  font-size: 1.045rem;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0 0 0.75rem;
+  padding-left: 1.4rem;
+}
+
+.markdown li {
+  margin-bottom: 0.35rem;
+  line-height: 1.6;
+}
+
+.markdown code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  padding: 0.1em 0.35em;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--code-bg);
+  word-break: break-word;
+}
+
+/* Wide code must scroll inside its own block rather than widening the card. */
+.markdown-code {
+  margin: 0 0 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+  overflow-x: auto;
+}
+
+.markdown-code code {
+  padding: 0;
+  border: 0;
+  background: none;
+  white-space: pre;
+}
+
+/* Wide tables scroll inside their own block, same as wide code. */
+.markdown-table {
+  margin: 0 0 0.75rem;
+  overflow-x: auto;
+}
+
+.markdown-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.markdown-table th,
+.markdown-table td {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-table th {
+  background: var(--code-bg);
+  font-weight: 600;
+}
+
+.markdown hr {
+  margin: 1rem 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+/* --- Tablist -------------------------------------------------------------
+   Tabs are pills, not underlines: `.page button` gives every button in a page
+   a border and a radius, and these selectors are scoped past it rather than
+   fighting it. The row carries no rule under it — the selected pill already
+   says which panel is open. */
+
+/* Pinned to the top of `.app-main`, the scroll container, so a long panel
+   scrolls under the tabs instead of carrying them off-screen. The background
+   is opaque for the same reason: content passes behind this row. Tabs wrap
+   rather than scroll — a hidden tab is a tab nobody finds. */
+.tablist {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 1rem;
+  padding: 0.6rem 0 0.75rem;
+  background: var(--bg);
+}
+
+.tablist .tab {
+  gap: 0.5rem;
+  border-color: transparent;
+  color: var(--muted);
+  font-size: 0.99rem;
+}
+
+.tablist .tab:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--panel2);
+  color: var(--text-h);
+}
+
+.tablist .tab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* The selected tab carries three independent marks — a leading dot, a tinted
+   ground and bolder weight — so it survives both themes and readers who cannot
+   separate the accent hue from the muted one. */
+.tablist .tab-active,
+.tablist .tab-active:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tablist .tab-active::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.tab-badge {
+  padding: 0.1rem 0.45rem;
+  font-size: 11.6px;
+}
+
+/* --- Planning threads and turns ----------------------------------------- */
+
+.planning-thread {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.planning-thread > li + li {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+/* The clarifier's questions, kept numbered: it asks at most three per turn
+   and the human answers them by number. */
+.planning-questions {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.turn-card {
+  margin-bottom: 1rem;
+}
+
+.turn-card .card-header h3 {
+  margin: 0;
+  font-size: 1.045rem;
+}
+
+.turn-findings {
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.turn-findings > li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.4rem 0;
+  flex-wrap: wrap;
+}
+
+.turn-findings > li + li {
+  border-top: 1px solid var(--line);
+}
+
+.turn-finding-id {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.turn-findings > li > span:last-child {
+  flex: 1 1 16rem;
+}
+
+/* --- Plan revision diff --------------------------------------------------
+   Sits above the plan it belongs to, closed by default: the plan is the thing
+   being read, and the diff only answers "what moved since last round". */
+
+.plan-diff {
+  margin: 0 0 1rem;
+}
+
+.plan-diff > summary {
+  color: var(--muted);
+  font-size: 0.935rem;
+  cursor: pointer;
+}
+
+.plan-diff[open] > summary {
+  margin-bottom: 0.6rem;
+}
+
+.plan-diff-body {
+  margin: 0;
+  padding: 0.75rem;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--code-bg);
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre;
+  tab-size: 2;
+}
+
+/* Colour is not the only signal: every line already carries a +, - or space
+   marker, so the diff still reads without it. */
+.plan-diff-added {
+  display: block;
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.plan-diff-removed {
+  display: block;
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+}
+
+.plan-diff-context {
+  display: block;
+  color: var(--muted);
+}
+
+.plan-diff-skip {
+  display: block;
+  padding: 0.15rem 0;
+  color: var(--muted);
+  font-style: italic;
+  opacity: 0.75;
+}
+
+/* A turn rendered inside a round card, which already supplies the box. The
+   hairline between turns replaces the border the card chrome would have. */
+.turn-block + .turn-block,
+.turn-block + .status {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.turn-block-header h3 {
+  margin: 0 0 0.75rem;
+  font-size: 0.99rem;
+}
+
+.plan-spec-meta {
+  margin: 0.75rem 0 0;
+}
+
+/* --- Collapsible card ----------------------------------------------------
+   A `.card` whose header row is the disclosure control, so a closed card is
+   exactly its header and an open one matches a plain card. */
+
+.collapsible-card > .collapsible-summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+/* Safari draws its own triangle from this pseudo-element; the caret below
+   replaces it in every browser. */
+.collapsible-card > .collapsible-summary::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible-card:not([open]) > .collapsible-summary {
+  border-bottom: 0;
+}
+
+.collapsible-summary:hover {
+  background: var(--panel2);
+  border-radius: 12px 12px 0 0;
+}
+
+.collapsible-card:not([open]) > .collapsible-summary:hover {
+  border-radius: 12px;
+}
+
+.collapsible-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.collapsible-aside {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* One glyph, rotated, so the open and closed states cannot drift apart. */
+.collapsible-caret {
+  width: 0;
+  height: 0;
+  flex-shrink: 0;
+  border-top: 4.5px solid transparent;
+  border-bottom: 4.5px solid transparent;
+  border-left: 6px solid var(--muted);
+  transition: transform 120ms ease;
+}
+
+details[open] > summary > .collapsible-caret,
+details[open] > summary > * > .collapsible-caret {
+  transform: rotate(90deg);
+}
+
+/* --- Aligned key/value rows ---------------------------------------------
+   A fixed left column of short labels against a prose column, so the prose
+   starts on one line down the whole list instead of wherever its label
+   happened to end. */
+
+.kv-rows {
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.kv-rows > li {
+  display: grid;
+  grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+  gap: 0.3rem 1.5rem;
+  align-items: baseline;
+  padding: 0.55rem 0;
+}
+
+.kv-rows > li + li {
+  border-top: 1px solid var(--line);
+}
+
+.kv-key {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.kv-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Below this width the two columns leave no room for either, so the label
+   sits on its own line above the prose. */
+@media (max-width: 720px) {
+  .kv-rows > li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* --- Raw output terminal -------------------------------------------------
+   The raw log is container output, so it is shown as a terminal: a title bar
+   that doubles as the disclosure control, over a dark well. The well keeps
+   its dark ground in both themes, matching `.agent-terminal`. */
+
+.turn-raw {
+  margin-top: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.terminal-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--panel2);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.858rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.terminal-summary::-webkit-details-marker {
+  display: none;
+}
+
+.terminal-summary:hover {
+  color: var(--text-h);
+}
+
+.turn-raw[open] > .terminal-summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.terminal-lights {
+  display: flex;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.terminal-lights > i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.terminal-lights > i:first-child {
+  background: color-mix(in srgb, var(--err) 65%, transparent);
+}
+
+.terminal-lights > i:nth-child(2) {
+  background: color-mix(in srgb, var(--warn) 65%, transparent);
+}
+
+.terminal-lights > i:last-child {
+  background: color-mix(in srgb, var(--ok) 65%, transparent);
+}
+
+.terminal-summary-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.terminal-summary-meta {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+/* The model sits beside the provider, and reads as the more specific of the
+   two: "claude" is which CLI ran, "opus" is what actually answered. */
+.terminal-summary-model {
+  opacity: 0.85;
+}
+
+.terminal-well {
+  max-height: 420px;
+  overflow: auto;
+  padding: 0.7rem 0.85rem;
+  background: var(--terminal-bg);
+  color: #c9c9d2;
+}
+
+.terminal-note {
+  margin: 0 0 0.6rem;
+  color: #7d7d8a;
+  font-family: var(--mono);
+  font-size: 0.825rem;
+  line-height: 1.5;
+}
+
+.terminal-note-error {
+  color: #f0616d;
+}
+
+.terminal-stream {
+  margin: 0;
+  color: inherit;
+  font-family: var(--mono);
+  font-size: 0.858rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

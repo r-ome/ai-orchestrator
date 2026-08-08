@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { fetchCopyJob, fetchProject } from '../api/projects'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { fetchCopyJob, fetchProject, removeProject } from '../api/projects'
 import CopyLogModal from '../components/CopyLogModal'
 import CopyStatusBadge from '../components/CopyStatusBadge'
+import ConfirmDialog from '../components/ConfirmDialog'
 import ProjectAgentsSection from '../components/ProjectAgentsSection'
 import ProjectDatabaseSharingSection from '../components/ProjectDatabaseSharingSection'
+import ProjectPlanningSection from '../components/ProjectPlanningSection'
 import ProjectPreviewSection from '../components/ProjectPreviewSection'
 import ProjectSecretsSection from '../components/ProjectSecretsSection'
 import { useApiResource } from '../hooks/useApiResource'
@@ -21,6 +23,7 @@ function ProjectDetailPage() {
     [projectName],
   )
   const { data, loading, error, reload } = useApiResource(fetcher, [projectName])
+  const navigate = useNavigate()
 
   const jobId = data?.copy_job_id ?? ''
   const jobFetcher = useCallback(
@@ -32,9 +35,24 @@ function ProjectDetailPage() {
   const reloadJob = job.reload
   const [showLog, setShowLog] = useState(false)
   const [summonOpen, setSummonOpen] = useState(false)
+  const [removeOpen, setRemoveOpen] = useState(false)
+  const [removeBusy, setRemoveBusy] = useState(false)
+  const [removeError, setRemoveError] = useState<string | null>(null)
 
   const copyIsActive =
     data?.copy_status === 'queued' || data?.copy_status === 'copying'
+
+  const confirmRemove = async () => {
+    setRemoveBusy(true)
+    setRemoveError(null)
+    try {
+      await removeProject(data?.name ?? projectName)
+      navigate('/projects', { replace: true })
+    } catch (err) {
+      setRemoveError(err instanceof Error ? err.message : 'Unknown error')
+      setRemoveBusy(false)
+    }
+  }
 
   // Poll while the copy is still running so status and logs stay current.
   useEffect(() => {
@@ -49,7 +67,7 @@ function ProjectDetailPage() {
 
   return (
     <section>
-      <header className="page-header project-detail-header">
+      <header className="page-header">
         <div>
           <p className="breadcrumb">
             <Link to="/projects">Projects</Link>
@@ -72,6 +90,17 @@ function ProjectDetailPage() {
             disabled={loading}
           >
             {loading ? 'Loading…' : 'Refresh'}
+          </button>
+          <button
+            type="button"
+            className="danger"
+            onClick={() => {
+              setRemoveError(null)
+              setRemoveOpen(true)
+            }}
+            disabled={removeBusy}
+          >
+            Remove project
           </button>
         </div>
       </header>
@@ -127,6 +156,11 @@ function ProjectDetailPage() {
             summonOpen={summonOpen}
             onSummonOpen={() => setSummonOpen(true)}
             onSummonClose={() => setSummonOpen(false)}
+          />
+
+          <ProjectPlanningSection
+            projectName={data.name}
+            projectReady={data.ready}
           />
 
           <ProjectPreviewSection
@@ -240,8 +274,9 @@ function ProjectDetailPage() {
               <p className="status">
                 This sandbox is a one-time snapshot of the original host
                 folder. Later edits to the source folder do not sync. To
-                remove a sandbox, delete its volume from the managed volumes
-                page.
+                remove this sandbox, use Remove project above. This closes its
+                containers and deletes its Docker volumes. The original host
+                folder remains unchanged.
               </p>
             </div>
           </div>
@@ -250,6 +285,27 @@ function ProjectDetailPage() {
 
       {showLog && jobId && (
         <CopyLogModal jobId={jobId} onClose={() => setShowLog(false)} />
+      )}
+
+      {removeOpen && (
+        <ConfirmDialog
+          title={`Remove ${data?.name ?? projectName}?`}
+          confirmPhrase={`REMOVE ${data?.name ?? projectName}`}
+          confirmLabel="Remove project"
+          busy={removeBusy}
+          error={removeError}
+          onCancel={() => setRemoveOpen(false)}
+          onConfirm={confirmRemove}
+        >
+          <p>
+            This permanently closes all containers for this sandbox and
+            removes its Docker volumes and networks.
+          </p>
+          <p>
+            The original host folder is not deleted. This action cannot be
+            undone.
+          </p>
+        </ConfirmDialog>
       )}
     </section>
   )

@@ -8,6 +8,7 @@ import {
   useParams,
 } from 'react-router-dom'
 const AgentTerminalPage = lazy(() => import('./pages/AgentTerminalPage'))
+const PlanningSessionPage = lazy(() => import('./pages/PlanningSessionPage'))
 const ContainersPage = lazy(() => import('./pages/ContainersPage'))
 const ContainerDetailPage = lazy(() => import('./pages/ContainerDetailPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
@@ -20,7 +21,52 @@ const ProjectTerminalDock = lazy(() => import('./components/ProjectTerminalDock'
 import { fetchAgents } from './api/agents'
 import { fetchProject } from './api/projects'
 import { useApiResource } from './hooks/useApiResource'
+import { useTheme } from './hooks/useTheme'
+import type { ThemeChoice } from './theme'
 import './App.css'
+
+const THEME_OPTIONS: { value: ThemeChoice; label: string; title: string }[] = [
+  { value: 'light', label: 'Light', title: 'Always use the light theme' },
+  { value: 'dark', label: 'Dark', title: 'Always use the dark theme' },
+  { value: 'system', label: 'Auto', title: 'Follow the system appearance' },
+]
+
+// Sits at the foot of the rail. A segmented control rather than a single
+// toggle, so "follow the system" stays reachable as its own state instead of
+// being the hidden default you can never get back to.
+function ThemeControl() {
+  const { choice, resolved, setChoice } = useTheme()
+  return (
+    <div className="rail-theme">
+      <div className="rail-theme-label" id="rail-theme-label">
+        Appearance
+      </div>
+      <div
+        className="rail-theme-options"
+        role="radiogroup"
+        aria-labelledby="rail-theme-label"
+      >
+        {THEME_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={choice === option.value}
+            className={choice === option.value ? 'is-active' : undefined}
+            title={
+              option.value === 'system'
+                ? `${option.title} (currently ${resolved})`
+                : option.title
+            }
+            onClick={() => setChoice(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 function LegacyContainerRedirect() {
   const { containerId } = useParams()
@@ -128,6 +174,8 @@ function App() {
           <div className="app-rail-wordmark">Orchestrator</div>
         </div>
 
+        <CurrentProjectSummary />
+
         <div className="app-rail-nav">
           <NavLink to="/projects" end>
             <RailIcon variant="square" />
@@ -154,7 +202,11 @@ function App() {
           </NavLink>
         </div>
 
-        <CurrentProjectSummary />
+        {/* This wrapper's `margin-top: auto` pins the Appearance control to
+            the bottom of the rail, flush with the window edge. */}
+        <div className="app-rail-foot">
+          <ThemeControl />
+        </div>
       </nav>
 
       <main className="app-main">
@@ -170,6 +222,10 @@ function App() {
             <Route
               path="/projects/:projectName/agents/:agentId"
               element={<AgentTerminalPage />}
+            />
+            <Route
+              path="/projects/:projectName/plans/:sessionId"
+              element={<PlanningSessionPage />}
             />
             <Route path="/containers" element={<ContainersPage />} />
             {/* Old split-tab URLs, kept so bookmarks still land somewhere. */}
