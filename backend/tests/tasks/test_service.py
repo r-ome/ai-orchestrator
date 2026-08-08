@@ -473,7 +473,10 @@ def test_migration_adds_tasks_to_an_existing_database(tmp_path: Path) -> None:
     finally:
         connection.close()
 
-    assert versions == {1, 2, 3, 4, 5, 6, 7, 8}
+    # Every migration this database grew through is recorded. Asserted as a
+    # subset rather than an exact set: later work adds versions, and this test
+    # is about the ones that created the task tables, not about the total.
+    assert {1, 2, 3, 4, 5, 6, 7, 8} <= versions
     assert sandbox_rows[0] == 1
 
 
@@ -891,3 +894,311 @@ def test_a_branch_name_that_would_break_out_of_the_script_is_refused(
     assert "unusable base branch" in error.value.detail
     # The refused task frees its slot again.
     assert controller_store.tasks_for_sandbox("sandbox-1") == []
+
+
+def test_every_open_status_can_reach_a_terminal_one() -> None:
+    """A status whose exits are all unavailable holds the sandbox's single
+    task slot forever. Walk the graph rather than trusting the table by eye."""
+    from app.tasks.models import (
+        OPEN_TASK_STATUSES,
+        TASK_TRANSITIONS,
+        TERMINAL_TASK_STATUSES,
+    )
+
+    for start in OPEN_TASK_STATUSES:
+        seen: set[TaskStatus] = set()
+        frontier = [start]
+        while frontier:
+            current = frontier.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            frontier.extend(TASK_TRANSITIONS[current])
+        assert seen & TERMINAL_TASK_STATUSES, f"'{start.value}' cannot settle"
+
+
+def test_a_reported_task_can_reach_review_without_a_preview() -> None:
+    """The non-preview path a delegated run takes. A unit with nothing to
+    preview must still be acceptable once its branch verifies."""
+    from app.tasks.models import TASK_TRANSITIONS, TaskStatus
+
+    assert TaskStatus.REVIEW in TASK_TRANSITIONS[TaskStatus.REPORTED]
+    assert TaskStatus.PREVIEWING in TASK_TRANSITIONS[TaskStatus.REPORTED]
+
+
+def test_a_reported_task_can_be_rejected() -> None:
+    from app.tasks.models import TASK_TRANSITIONS, TaskStatus
+
+    assert TaskStatus.REJECTED in TASK_TRANSITIONS[TaskStatus.REPORTED]
+
+
+def test_open_task_statuses_match_the_partial_index(tmp_path: Path) -> None:
+    """The index is what enforces one open task; this set is what the API
+    reads back. If they drift, two tasks can be open at once."""
+    import re
+    import sqlite3 as sql
+
+    from app.controller.store import ControllerStore
+    from app.tasks.models import OPEN_TASK_STATUSES
+
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+    store.initialize()
+    with sql.connect(store.database_path) as connection:
+        sql_text = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'one_open_task_per_sandbox'"
+        ).fetchone()[0]
+
+    assert set(re.findall(r"'([a-z]+)'", sql_text)) == {
+        status.value for status in OPEN_TASK_STATUSES
+    }
+
+
+# --- Headless coding turns -------------------------------------------------
+
+
+def _turn(status: str = "succeeded", **overrides: Any):
+    from app.agents.models import AgentProvider
+    from app.tasks.runner import CodingTurnResult, ToolCall, TurnUsage
+
+    fields: dict[str, Any] = {
+        "provider": AgentProvider.CLAUDE,
+        "model": "claude-sonnet-5",
+        "status": status,
+        "text": '{"changed": ["src/app.py"]}',
+        "payload": {"changed": ["src/app.py"]},
+        "usage": TurnUsage(input_tokens=11, output_tokens=22, cost_usd=0.05),
+        "tool_calls": (ToolCall(name="Edit", failed=False),),
+        "duration_ms": 1234,
+        "exit_code": 0,
+    }
+    fields.update(overrides)
+    return CodingTurnResult(**fields)
+
+
+def _set_turn(monkeypatch: pytest.MonkeyPatch, result: Any) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+
+    def _run(*_args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return result
+
+    monkeypatch.setattr("app.tasks.runner.run_coding_turn", _run)
+    return calls
+
+
+def _settings() -> Any:
+    from app.tasks.config import get_coding_turn_settings
+
+    return get_coding_turn_settings()
+
+
+def _open(docker_client: _StubDockerClient, controller_store: ControllerStore) -> Any:
+    return start_task(
+        docker_client,
+        controller_store,
+        StartTaskRequest(project_name="Sample Project", title="Add a thing"),
+    )
+
+
+def test_a_headless_turn_that_commits_reaches_reported(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.tasks.models import RunTaskRequest
+    from app.tasks.service import run_task
+
+    task = _open(docker_client, controller_store)
+    docker_client.containers.report_output = _report_output(NEXT_COMMIT, task.branch)
+    calls = _set_turn(monkeypatch, _turn())
+
+    response = run_task(
+        docker_client,
+        controller_store,
+        _settings(),
+        task.id,
+        RunTaskRequest(prompt="do the thing"),
+    )
+
+    assert response.committed is True
+    assert response.task.status is TaskStatus.REPORTED
+    assert response.task.head_commit == NEXT_COMMIT
+    # The turn runs on the branch start_task already switched to.
+    assert calls[0]["volume_name"] == VOLUME_NAME
+    assert calls[0]["prompt"] == "do the thing"
+
+
+def test_the_run_records_cost_model_and_tool_outcomes(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.tasks.models import RunTaskRequest
+    from app.tasks.service import run_task
+
+    task = _open(docker_client, controller_store)
+    docker_client.containers.report_output = _report_output(NEXT_COMMIT, task.branch)
+    _set_turn(monkeypatch, _turn())
+
+    response = run_task(
+        docker_client, controller_store, _settings(), task.id,
+        RunTaskRequest(prompt="p"),
+    )
+
+    assert response.usage.cost_usd == 0.05
+    assert response.usage.input_tokens == 11
+    assert response.duration_ms == 1234
+    assert response.model == "claude-sonnet-5"
+    assert response.tool_calls == 1
+    assert response.failed_tool_calls == 0
+    assert response.result == {"changed": ["src/app.py"]}
+
+
+def test_a_turn_that_claims_success_without_committing_leaves_the_task_open(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The turn reports success; the branch carries nothing. The branch wins,
+    and the task stays open so a retry is possible."""
+    from app.tasks.models import RunTaskRequest
+    from app.tasks.service import run_task
+
+    task = _open(docker_client, controller_store)
+    docker_client.containers.report_output = _report_output(BASE_COMMIT, task.branch)
+    _set_turn(monkeypatch, _turn())
+
+    response = run_task(
+        docker_client, controller_store, _settings(), task.id,
+        RunTaskRequest(prompt="p"),
+    )
+
+    assert response.turn_status == "succeeded"
+    assert response.committed is False
+    assert response.task.status is TaskStatus.OPEN
+    assert "no commit beyond" in response.detail
+
+
+def test_a_failed_turn_leaves_the_task_open_and_reports_why(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.tasks.models import RunTaskRequest
+    from app.tasks.service import run_task
+
+    task = _open(docker_client, controller_store)
+    _set_turn(
+        monkeypatch,
+        _turn("tool_failure", error="All 2 tool calls failed", payload=None),
+    )
+
+    response = run_task(
+        docker_client, controller_store, _settings(), task.id,
+        RunTaskRequest(prompt="p"),
+    )
+
+    assert response.turn_status == "tool_failure"
+    assert response.committed is False
+    assert response.task.status is TaskStatus.OPEN
+    assert response.turn_error == "All 2 tool calls failed"
+    # Cost is recorded even for an attempt that produced nothing.
+    assert response.usage.cost_usd == 0.05
+
+
+def test_a_task_that_is_not_open_refuses_to_run(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.tasks.models import RunTaskRequest
+    from app.tasks.service import run_task
+
+    task = _open(docker_client, controller_store)
+    docker_client.containers.report_output = _report_output(NEXT_COMMIT, task.branch)
+    _set_turn(monkeypatch, _turn())
+    run_task(docker_client, controller_store, _settings(), task.id, RunTaskRequest(prompt="p"))
+
+    with pytest.raises(TaskOperationError) as error:
+        run_task(
+            docker_client, controller_store, _settings(), task.id,
+            RunTaskRequest(prompt="p"),
+        )
+
+    assert error.value.status_code == 409
+
+
+def test_verify_moves_a_reported_task_to_review_without_a_preview(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The non-preview path: a unit with nothing to preview still becomes
+    acceptable once its branch verifies."""
+    from app.tasks.models import RunTaskRequest
+    from app.tasks.service import run_task, verify_task
+
+    task = _open(docker_client, controller_store)
+    docker_client.containers.report_output = _report_output(NEXT_COMMIT, task.branch)
+    _set_turn(monkeypatch, _turn())
+    run_task(docker_client, controller_store, _settings(), task.id, RunTaskRequest(prompt="p"))
+
+    verified = verify_task(controller_store, task.id)
+
+    assert verified.status is TaskStatus.REVIEW
+
+
+def test_a_verified_task_can_then_be_accepted(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.tasks.models import RunTaskRequest
+    from app.tasks.service import run_task, verify_task
+
+    task = _open(docker_client, controller_store)
+    docker_client.containers.report_output = _report_output(NEXT_COMMIT, task.branch)
+    _set_turn(monkeypatch, _turn())
+    run_task(docker_client, controller_store, _settings(), task.id, RunTaskRequest(prompt="p"))
+    verify_task(controller_store, task.id)
+
+    accepted = accept_task(docker_client, controller_store, task.id)
+
+    assert accepted.status is TaskStatus.ACCEPTED
+
+
+def test_verify_refuses_a_task_that_has_not_reported(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+) -> None:
+    from app.tasks.service import verify_task
+
+    task = _open(docker_client, controller_store)
+
+    with pytest.raises(TaskOperationError) as error:
+        verify_task(controller_store, task.id)
+
+    assert error.value.status_code == 409
+
+
+def test_verify_refuses_when_verification_did_not_pass(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.tasks.models import RunTaskRequest
+    from app.tasks.service import run_task, verify_task
+
+    task = _open(docker_client, controller_store)
+    docker_client.containers.report_output = _report_output(NEXT_COMMIT, task.branch)
+    _set_turn(monkeypatch, _turn())
+    run_task(docker_client, controller_store, _settings(), task.id, RunTaskRequest(prompt="p"))
+
+    with pytest.raises(TaskOperationError) as error:
+        verify_task(
+            controller_store, task.id, verification_passed=False, detail="build failed"
+        )
+
+    assert error.value.status_code == 409
+    assert "build failed" in error.value.detail
+    assert get_task(controller_store, task.id).status is TaskStatus.REPORTED

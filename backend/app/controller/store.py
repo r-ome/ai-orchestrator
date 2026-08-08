@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -237,7 +237,181 @@ CREATE TABLE IF NOT EXISTS planning_plan_revisions (
     reviewed_at TEXT,
     PRIMARY KEY (session_id, revision)
 );
+
+-- Code-level knowledge a delegated run needs so it does not have to
+-- rediscover the architecture. Points at code; never contains it. Regenerating
+-- adds a revision, because a run that used an earlier one must stay explicable.
+CREATE TABLE IF NOT EXISTS implementation_contexts (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES planning_sessions(id),
+    sandbox_id TEXT NOT NULL REFERENCES sandboxes(id),
+    revision INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    manifest_json TEXT,
+    commands_json TEXT,
+    inventory_json TEXT,
+    provider TEXT,
+    model TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    settled_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_context_revision_per_session
+ON implementation_contexts(session_id, revision);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_generating_context_per_session
+ON implementation_contexts(session_id)
+WHERE status = 'generating';
+
+-- One decomposition of a ready plan into work items, at a revision.
+-- Revisions are added, never mutated: a completed run must keep pointing at
+-- the definition it actually executed.
+CREATE TABLE IF NOT EXISTS delegations (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES planning_sessions(id),
+    sandbox_id TEXT NOT NULL REFERENCES sandboxes(id),
+    context_id TEXT REFERENCES implementation_contexts(id),
+    revision INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    settled_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_delegation_revision_per_session
+ON delegations(session_id, revision);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_active_delegation_per_sandbox
+ON delegations(sandbox_id)
+WHERE status IN ('ready', 'running', 'halted');
+
+-- Immutable once its delegation revision exists. There is no update path on
+-- purpose: changing a definition means a new revision. Carries no provider or
+-- model, because what the work is and how it is run are different questions.
+CREATE TABLE IF NOT EXISTS work_items (
+    id TEXT PRIMARY KEY,
+    delegation_id TEXT NOT NULL REFERENCES delegations(id),
+    key TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    out_of_scope TEXT NOT NULL DEFAULT '',
+    dependencies_json TEXT NOT NULL,
+    files_json TEXT NOT NULL,
+    symbols_json TEXT NOT NULL,
+    write_scope_json TEXT NOT NULL,
+    acceptance_criteria_json TEXT NOT NULL,
+    verification_json TEXT NOT NULL,
+    complexity TEXT NOT NULL,
+    architecture_json TEXT NOT NULL,
+    risks_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_work_item_key_per_delegation
+ON work_items(delegation_id, key);
+
+-- One attempt at a work item. Appended, never overwritten, so a retry does
+-- not erase what the first attempt cost.
+CREATE TABLE IF NOT EXISTS work_item_runs (
+    id TEXT PRIMARY KEY,
+    work_item_id TEXT NOT NULL REFERENCES work_items(id),
+    delegation_id TEXT NOT NULL REFERENCES delegations(id),
+    attempt INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    provider TEXT,
+    model TEXT,
+    routing_source TEXT,
+    task_id TEXT REFERENCES tasks(id),
+    result_json TEXT,
+    failure_kind TEXT,
+    error TEXT,
+    verification_json TEXT,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    cache_read_tokens INTEGER,
+    cache_creation_tokens INTEGER,
+    cost_usd REAL,
+    duration_ms INTEGER,
+    exit_code INTEGER,
+    repair_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    settled_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_attempt_number_per_work_item
+ON work_item_runs(work_item_id, attempt);
+
+-- Execution stays sequential. Eligibility is computed and shown in full; this
+-- is what stops it being acted on concurrently.
+CREATE UNIQUE INDEX IF NOT EXISTS one_running_run_per_delegation
+ON work_item_runs(delegation_id)
+WHERE status = 'running';
+
+-- A person's routing choice for one work item. Separate from work_items
+-- because a definition is immutable and an override is revisable.
+CREATE TABLE IF NOT EXISTS work_item_routing (
+    work_item_id TEXT PRIMARY KEY REFERENCES work_items(id),
+    provider TEXT,
+    model TEXT,
+    actor TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
+
+
+# Versions 1 to 8 are applied inline in `initialize` above, in the order this
+# database grew. Anything added from here on goes through this table instead,
+# so a new step is declared in one place rather than as another inline block.
+#
+# Each step must be safe to run against a database that SCHEMA already brought
+# up to date, because SCHEMA describes the current shape and runs first. The
+# helpers below check before they change anything.
+FIRST_RUNNER_MIGRATION = 9
+
+
+def _add_column(
+    connection: sqlite3.Connection,
+    table: str,
+    column: str,
+    declaration: str,
+) -> None:
+    columns = {
+        str(row["name"])
+        for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in columns:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+
+def _migration_9(connection: sqlite3.Connection) -> None:
+    """Record which precedence rule chose a delegated run's model."""
+    _add_column(connection, "work_item_runs", "routing_source", "TEXT")
+
+
+MIGRATIONS: Mapping[int, Callable[[sqlite3.Connection], None]] = {
+    9: _migration_9,
+}
+
+
+def _apply_migrations(connection: sqlite3.Connection) -> None:
+    applied = {
+        int(row["version"])
+        for row in connection.execute("SELECT version FROM schema_migrations").fetchall()
+    }
+    for version in sorted(MIGRATIONS):
+        if version in applied:
+            continue
+        MIGRATIONS[version](connection)
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (version, _now()),
+        )
 
 
 class ControllerStore:
@@ -318,6 +492,7 @@ class ControllerStore:
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (8, ?)",
                 (_now(),),
             )
+            _apply_migrations(connection)
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:

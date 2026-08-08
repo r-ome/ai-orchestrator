@@ -1,6 +1,7 @@
 import hashlib
 import re
 import sqlite3
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from docker.client import DockerClient
@@ -15,15 +16,22 @@ from app.projects.service import (
     inspect_registered_project,
     project_id,
 )
+from app.tasks.config import CodingTurnSettings
+
+if TYPE_CHECKING:  # pragma: no cover - types only
+    from app.tasks.runner import CodingTurnResult
 from app.tasks.models import (
     DEFAULT_BASE_BRANCH,
     OPEN_TASK_STATUSES,
-    TERMINAL_TASK_STATUSES,
     ReportTaskRequest,
+    RunTaskRequest,
     StartTaskRequest,
+    TERMINAL_TASK_STATUSES,
     Task,
+    TaskRunResponse,
     TaskStatus,
     TasksResponse,
+    TurnUsageView,
     source_statuses,
 )
 
@@ -127,6 +135,166 @@ def start_task(
         raise
 
     return _task(controller_store, task_id)
+
+
+def run_task(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    settings: CodingTurnSettings,
+    task_id: str,
+    request: RunTaskRequest,
+) -> TaskRunResponse:
+    """Run one headless coding turn on an open task's branch.
+
+    The turn works on the branch start_task already switched the sandbox to.
+    What it says about itself is recorded; whether the task advances is decided
+    by report_task_complete reading the branch, exactly as it is for a turn a
+    human drove.
+
+    A turn that fails leaves the task open. Nothing was committed, so a retry
+    is legitimate and the caller decides between another attempt and rejecting.
+    """
+    task = _task(controller_store, _validated_task_id(task_id))
+    if task.status is not TaskStatus.OPEN:
+        raise TaskOperationError(
+            409,
+            f"Task '{task.id}' is not open (status '{task.status.value}')",
+        )
+    sandbox = controller_store.sandbox(task.sandbox_id)
+    if sandbox is None:
+        raise TaskOperationError(404, f"Sandbox '{task.sandbox_id}' is unknown")
+
+    controller_store.event(
+        sandbox_id=task.sandbox_id,
+        run_id=task.id,
+        kind="task.turn_started",
+        payload={"provider": request.provider.value, "model": request.model or ""},
+    )
+    # Imported here rather than at module scope: the runner reaches
+    # app.agents.service for the credential volume, and that module imports
+    # app.previews.service, which imports this one. A module-level import would
+    # close that ring at load time.
+    from app.tasks.runner import run_coding_turn
+
+    result = run_coding_turn(
+        docker_client,
+        settings,
+        task_id=task.id,
+        volume_name=str(sandbox["volume_name"]),
+        provider=request.provider,
+        prompt=request.prompt,
+        model=request.model,
+    )
+    controller_store.event(
+        sandbox_id=task.sandbox_id,
+        run_id=task.id,
+        kind="task.turn_finished",
+        payload={
+            "status": result.status,
+            "model": result.model,
+            "cost_usd": result.usage.cost_usd,
+            "duration_ms": result.duration_ms,
+        },
+    )
+
+    if not result.succeeded:
+        return _run_response(
+            controller_store, task.id, result, committed=False, detail=result.error or ""
+        )
+
+    # The turn says it is done. The branch decides whether it is.
+    try:
+        report_task_complete(
+            docker_client,
+            controller_store,
+            task.id,
+            ReportTaskRequest(summary=result.text[:2000]),
+        )
+    except TaskOperationError as error:
+        # A turn that ran cleanly but left nothing on the branch is an ordinary
+        # outcome for an unattended run, not an exception the caller must catch.
+        return _run_response(
+            controller_store, task.id, result, committed=False, detail=error.detail
+        )
+
+    return _run_response(
+        controller_store,
+        task.id,
+        result,
+        committed=True,
+        detail="branch verified",
+    )
+
+
+def verify_task(
+    controller_store: ControllerStore,
+    task_id: str,
+    *,
+    verification_passed: bool = True,
+    detail: str = "",
+) -> Task:
+    """Move a reported task to review without a preview.
+
+    The non-preview path. A delegated unit — a shared helper, a migration, a
+    refactor — often has nothing to preview, and a mid-graph unit can leave the
+    application temporarily unbuildable, so requiring a preview stack would
+    make such work unacceptable rather than unverified. The git check already
+    ran in report_task_complete; `verification_passed` carries the outcome of
+    the item's configured commands once those run.
+    """
+    task = _task(controller_store, _validated_task_id(task_id))
+    if task.status is not TaskStatus.REPORTED:
+        raise TaskOperationError(
+            409,
+            f"Task '{task.id}' is not reported (status '{task.status.value}')",
+        )
+    if not verification_passed:
+        raise TaskOperationError(
+            409,
+            f"Verification did not pass for task '{task.id}': {detail or 'no detail'}",
+        )
+    controller_store.event(
+        sandbox_id=task.sandbox_id,
+        run_id=task.id,
+        kind="task.verified",
+        payload={"detail": detail},
+    )
+    transition_task(
+        controller_store,
+        task_id=task.id,
+        to_status=TaskStatus.REVIEW,
+    )
+    return _task(controller_store, task.id)
+
+
+def _run_response(
+    controller_store: ControllerStore,
+    task_id: str,
+    result: "CodingTurnResult",
+    *,
+    committed: bool,
+    detail: str,
+) -> TaskRunResponse:
+    failed = sum(1 for call in result.tool_calls if call.failed)
+    return TaskRunResponse(
+        task=_task(controller_store, task_id),
+        turn_status=result.status,
+        turn_error=result.error,
+        committed=committed,
+        detail=detail,
+        model=result.model,
+        usage=TurnUsageView(
+            input_tokens=result.usage.input_tokens,
+            output_tokens=result.usage.output_tokens,
+            cache_read_tokens=result.usage.cache_read_tokens,
+            cache_creation_tokens=result.usage.cache_creation_tokens,
+            cost_usd=result.usage.cost_usd,
+        ),
+        duration_ms=result.duration_ms,
+        tool_calls=len(result.tool_calls),
+        failed_tool_calls=failed,
+        result=result.payload,
+    )
 
 
 def list_tasks(
