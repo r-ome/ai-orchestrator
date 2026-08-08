@@ -145,3 +145,47 @@ for units that leave the application unbuildable mid-graph.
 8. Routing.
 9. Verification and bounded recovery.
 10. Delegation UI, following the planning UI's conventions, and the integration review.
+
+---
+
+## Where this stopped
+
+Committed on `feat/delegator`: `5f48dfc`, steps 1 to 4 of the order above.
+282 backend tests pass, 30 skipped, up from the base's 251.
+
+**Step 5 is next: implementation context.** Port from
+`wip/delegator-on-old-main` at `752f27a`:
+
+| Take | To | Change |
+|---|---|---|
+| `backend/app/implementation_context/inventory.py` | same path | none |
+| `backend/app/implementation_context/validators.py` | same path | none |
+| `backend/app/implementation_context/{models,service,prompts,config}.py` | same path | session lookups use this base's `planning_sessions` (`project_id`, `title`, `plan_spec_json`, statuses `plan_ready` / `review_limit_reached`); the turn calls `run_planning_turn` from `app/planning/runner.py`, not the old `app/turns` |
+| `backend/tests/implementation_context/*` | same path | fixtures rebuilt on this base's session shape |
+
+Retrieve any file with `git show wip/delegator-on-old-main:<path>`. Do not
+check that branch out; it is built on the pre-merge tree.
+
+The store already carries `implementation_contexts`, so step 5 needs service
+and router work only, plus its store accessors.
+
+After that: delegation persistence and graph, the Delegator, packets and
+execution wiring, routing, verification and recovery, then the delegation UI.
+
+### Still open
+
+- **Circular import.** `tasks.service` imports the runner at call time,
+  because `tasks.runner` reaches `agents.service`, which imports
+  `previews.service`, which imports `tasks.service`. The deferred import
+  works and is commented. Moving `LABEL_CONTROLLER_MANAGED` and `LABEL_KIND`
+  to a neutral module would remove the ring properly, and touches three
+  existing files.
+- **Verification commands are not run yet.** `verify_task` takes
+  `verification_passed` and defaults it to true. Step 9 is what makes that
+  argument mean something; until then review is gated on the git check alone.
+- **Codex has no headless coding turn.** `run_coding_turn` returns 501 for it.
+  Its own sandbox cannot start under `cap_drop ALL` and `no-new-privileges`.
+  The fix is likely `--dangerously-bypass-approvals-and-sandbox`, relying on
+  the container as the boundary, but that was never verified.
+- **ADR numbering.** The earlier ADRs 0002 and 0003 on the wip branch clash
+  with this base's 0002 to 0004. Renumber to 0005 and 0006 when ported.
