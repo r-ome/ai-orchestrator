@@ -5,6 +5,25 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>frontend</title>
+    <script>
+      // Runs before first paint so a light-mode reload never flashes the dark
+      // ground. Mirrors src/theme.ts — keep the storage key in sync.
+      (function () {
+        try {
+          var stored = localStorage.getItem('orchestrator.theme')
+          var choice =
+            stored === 'light' || stored === 'dark' ? stored : 'system'
+          document.documentElement.dataset.theme =
+            choice === 'system'
+              ? window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+              : choice
+        } catch (error) {
+          document.documentElement.dataset.theme = 'dark'
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

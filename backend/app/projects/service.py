@@ -13,6 +13,7 @@ from docker.errors import DockerException, ImageNotFound, NotFound
 from docker.models.containers import Container
 from docker.models.volumes import Volume
 
+from app.controller.store import ControllerStore
 from app.projects.config import DEFAULT_COPY_IMAGE, ProjectSettings
 from app.projects.models import (
     BrowseEntry,
@@ -38,10 +39,22 @@ LABEL_COPY_JOB = "orchestrator.project.copy-job"
 LABEL_COPY_JOB_ID = "orchestrator.project.copy-job-id"
 LABEL_PROJECT_ID = "orchestrator.project.id"
 LABEL_SANDBOX_ID = "orchestrator.sandbox.id"
+LABEL_METADATA_MANAGED = "orchestrator.project.copy-metadata-managed"
+LABEL_METADATA_VOLUME = "orchestrator.project.copy-metadata-volume"
 COPY_CONTAINER_PREFIX = "orchestrator-project-copy-"
 COPY_READER_LABEL = "orchestrator.project.copy-reader"
+# Superseded storage kind: metadata lived under `.orchestrator` inside the
+# agent-writable project volume, so an agent could rewrite its own copy
+# status. Jobs created before the controller-volume move still carry this
+# label and are read from their legacy location for continuity.
 STATUS_STORAGE_PROJECT_VOLUME = "project-volume-v1"
-COPY_METADATA_DIRECTORY = "/project/.orchestrator/copy-job"
+# Current storage kind: metadata lives in a dedicated volume that is never
+# mounted into an agent or preview container, so only the controller ever
+# writes it.
+STATUS_STORAGE_CONTROLLER_VOLUME = "controller-volume-v1"
+LEGACY_COPY_METADATA_DIRECTORY = "/project/.orchestrator/copy-job"
+CONTROLLER_METADATA_MOUNT = "/controller"
+COPY_METADATA_DIRECTORY = CONTROLLER_METADATA_MOUNT
 MAX_PROJECT_NAME_LENGTH = 100
 SANDBOX_NUMBER_PATTERN = re.compile(r"-sandbox-(\d+)$", re.IGNORECASE)
 _sandbox_creation_lock = Lock()
@@ -113,6 +126,20 @@ COPY_COMMAND = [
         "exit \"$copy_exit\"\n"
     ),
 ]
+GIT_BASELINE_SCRIPT = (
+    "set -eu\n"
+    "cd /project\n"
+    "if [ ! -d .git ]; then\n"
+    "  git init -q -b main\n"
+    "fi\n"
+    'git config user.name "orchestrator"\n'
+    'git config user.email "orchestrator@localhost"\n'
+    "if ! git rev-parse HEAD >/dev/null 2>&1; then\n"
+    "  git add -A\n"
+    '  git commit -q -m "sandbox baseline" --allow-empty\n'
+    "fi\n"
+    "git rev-parse HEAD\n"
+)
 
 
 class ProjectOperationError(Exception):
@@ -135,12 +162,14 @@ def register_project(
     sandbox_id = uuid4().hex
 
     volume: Volume | None = None
+    metadata_volume: Volume | None = None
     helper: Container | None = None
     try:
         with _sandbox_creation_lock:
             registered_volumes = _registered_volumes(docker_client)
             project_name = _next_sandbox_name(registered_volumes, source_path)
             volume_name = _volume_name(project_name, source_path)
+            metadata_volume_name = _metadata_volume_name(volume_name)
             try:
                 docker_client.volumes.get(volume_name)
             except NotFound:
@@ -160,15 +189,25 @@ def register_project(
                 LABEL_COPIED_BYTES: str(copied_bytes),
                 LABEL_EXCLUDED_DIRECTORIES: ",".join(EXCLUDED_DIRECTORY_NAMES),
                 LABEL_COPY_IMAGE: settings.copy_image,
-                LABEL_STATUS_STORAGE: STATUS_STORAGE_PROJECT_VOLUME,
+                LABEL_STATUS_STORAGE: STATUS_STORAGE_CONTROLLER_VOLUME,
                 LABEL_COPY_JOB_ID: job_id,
                 LABEL_PROJECT_ID: project_id,
                 LABEL_SANDBOX_ID: sandbox_id,
+                LABEL_METADATA_VOLUME: metadata_volume_name,
             }
             volume = docker_client.volumes.create(
                 name=volume_name,
                 driver="local",
                 labels={LABEL_MANAGED: "true", **shared_labels},
+            )
+            # Controller-owned: mounted read-write only into the copy job
+            # below and read-only into status readers. Never mounted into an
+            # agent or preview container, so an agent cannot rewrite its own
+            # copy status.
+            metadata_volume = docker_client.volumes.create(
+                name=metadata_volume_name,
+                driver="local",
+                labels={LABEL_METADATA_MANAGED: "true", **shared_labels},
             )
 
         helper = docker_client.containers.create(
@@ -184,17 +223,18 @@ def register_project(
             volumes={
                 str(source_path): {"bind": "/source", "mode": "ro"},
                 volume_name: {"bind": "/project", "mode": "rw"},
+                metadata_volume_name: {"bind": CONTROLLER_METADATA_MOUNT, "mode": "rw"},
             },
         )
         helper.start()
     except ImageNotFound as error:
-        _rollback_registration(volume, helper)
+        _rollback_registration(volume, metadata_volume, helper)
         raise ProjectOperationError(
             424,
             f"Project copy image '{settings.copy_image}' is not available",
         ) from error
     except DockerException:
-        _rollback_registration(volume, helper)
+        _rollback_registration(volume, metadata_volume, helper)
         raise
 
     return _copy_job_from_container(helper, include_logs=False)
@@ -220,6 +260,151 @@ def inspect_registered_project(
         if labels.get(LABEL_NAME, "").casefold() == project_name.casefold():
             return _project_from_volume(docker_client, volume)
     raise ProjectOperationError(404, f"Project '{project_name}' is not registered")
+
+
+def ensure_sandbox_registered(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    project_name: str,
+    *,
+    project: ProjectRegistration | None = None,
+) -> tuple[str, str, ProjectRegistration]:
+    """Returns (sandbox_id, project_id, project), registering the sandbox row."""
+    project = project or inspect_registered_project(docker_client, project_name)
+    if not project.ready:
+        raise ProjectOperationError(409, f"Project '{project_name}' is not ready")
+
+    sandbox_id = getattr(project, "sandbox_id", "") or hashlib.sha256(
+        f"sandbox:{project.volume_name}".encode()
+    ).hexdigest()[:32]
+    source_path = getattr(project, "source_path", "") or f"legacy:{project.name}"
+    created_at = getattr(project, "created_at", "")
+    project_key = project_id(source_path)
+    controller_store.register_sandbox(
+        sandbox_id=sandbox_id,
+        project_id=project_key,
+        project_name=project.name,
+        source_path=source_path,
+        volume_name=project.volume_name,
+        status="ready",
+        created_at=created_at,
+    )
+    return sandbox_id, project_key, project
+
+
+def remove_project(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    project_name: str,
+) -> dict[str, int | str]:
+    """Stops and removes every Docker resource owned by one sandbox."""
+    project = inspect_registered_project(docker_client, project_name)
+    sandbox_id = project.sandbox_id
+    project_key = project_id(project.source_path)
+    siblings = [
+        row
+        for row in controller_store.sandboxes()
+        if str(row.get("project_id")) == project_key
+        and str(row.get("id")) != sandbox_id
+    ]
+
+    # Release a shared database schema before deleting its controller record.
+    # The shared server itself is removed below when this is the last sandbox.
+    try:
+        from app.previews.service import _release_shared_database
+
+        _release_shared_database(
+            docker_client,
+            controller_store,
+            sandbox_id=sandbox_id,
+        )
+    except DockerException:
+        pass
+
+    volumes = docker_client.volumes.list(
+        filters={"label": f"{LABEL_SANDBOX_ID}={sandbox_id}"},
+    )
+    try:
+        project_volume = docker_client.volumes.get(project.volume_name)
+    except NotFound:
+        project_volume = None
+    if project_volume is not None and all(
+        volume.name != project_volume.name for volume in volumes
+    ):
+        volumes.append(project_volume)
+    volume_names = {project.volume_name, *(volume.name for volume in volumes)}
+    if not siblings:
+        volumes.extend(
+            docker_client.volumes.list(
+                filters={"label": f"{LABEL_PROJECT_ID}={project_key}"},
+            )
+        )
+        volume_names.update(volume.name for volume in volumes)
+
+    containers = docker_client.containers.list(all=True)
+    selected_containers = []
+    for container in containers:
+        labels = (container.attrs.get("Config") or {}).get("Labels") or {}
+        mounts = container.attrs.get("Mounts") or []
+        mounted_volumes = {
+            str(mount.get("Name"))
+            for mount in mounts
+            if mount.get("Type") == "volume" and mount.get("Name")
+        }
+        owned = labels.get(LABEL_SANDBOX_ID) == sandbox_id
+        if not siblings:
+            owned = owned or labels.get(LABEL_PROJECT_ID) == project_key
+        if owned or mounted_volumes & volume_names:
+            selected_containers.append(container)
+
+    removed_containers = 0
+    for container in selected_containers:
+        try:
+            container.remove(force=True)
+            removed_containers += 1
+        except NotFound:
+            continue
+
+    networks = docker_client.networks.list(
+        filters={"label": f"{LABEL_SANDBOX_ID}={sandbox_id}"},
+    )
+    if not siblings:
+        networks.extend(
+            docker_client.networks.list(
+                filters={"label": f"{LABEL_PROJECT_ID}={project_key}"},
+            )
+        )
+    removed_networks = 0
+    seen_networks: set[str] = set()
+    for network in networks:
+        if network.id in seen_networks:
+            continue
+        seen_networks.add(network.id)
+        try:
+            network.remove()
+            removed_networks += 1
+        except NotFound:
+            continue
+
+    removed_volumes = 0
+    seen_volumes: set[str] = set()
+    for volume in volumes:
+        if volume.name in seen_volumes:
+            continue
+        seen_volumes.add(volume.name)
+        try:
+            volume.remove(force=True)
+            removed_volumes += 1
+        except NotFound:
+            continue
+
+    controller_store.delete_sandbox(sandbox_id)
+    return {
+        "project_name": project.name,
+        "removed_containers": removed_containers,
+        "removed_networks": removed_networks,
+        "removed_volumes": removed_volumes,
+    }
 
 
 def browse_project_folders(
@@ -385,6 +570,15 @@ def _volume_name(project_name: str, source_path: Path) -> str:
     return f"orchestrator-project-{slug}-{identity_digest}"
 
 
+def _metadata_volume_name(volume_name: str) -> str:
+    """Deterministic controller-owned sibling of a project volume.
+
+    Named from the project volume so it never collides with another job's
+    metadata and needs no separate uniqueness check.
+    """
+    return f"{volume_name}-controller-metadata"
+
+
 def _project_inventory(source_path: Path) -> tuple[int, int]:
     file_count = 0
     copied_bytes = 0
@@ -469,34 +663,57 @@ def _read_persisted_copy_status(
     *,
     include_logs: bool,
 ) -> dict[str, str]:
-    if labels.get(LABEL_STATUS_STORAGE) != STATUS_STORAGE_PROJECT_VOLUME:
+    storage = labels.get(LABEL_STATUS_STORAGE)
+    if storage == STATUS_STORAGE_CONTROLLER_VOLUME:
+        metadata_volume_name = labels.get(LABEL_METADATA_VOLUME, "")
+        if not metadata_volume_name:
+            # A job registered under this storage kind always carries the
+            # metadata volume label; a missing one means the volume was
+            # removed out of band. Report unknown rather than crash.
+            return {}
+        source_volume_name = metadata_volume_name
+        source_mount = CONTROLLER_METADATA_MOUNT
+        metadata_directory = CONTROLLER_METADATA_MOUNT
+    elif storage == STATUS_STORAGE_PROJECT_VOLUME:
+        # Pre-upgrade job: metadata was written into the project volume
+        # itself, under the path an agent could also reach. Read it from
+        # there for continuity; new jobs never take this branch.
+        source_volume_name = volume.name
+        source_mount = "/project"
+        metadata_directory = LEGACY_COPY_METADATA_DIRECTORY
+    else:
         return {}
 
     fields = ("status", "started_at", "finished_at", "exit_code", "error")
     commands = [
         (
-            f"if [ -f {COPY_METADATA_DIRECTORY}/{field} ]; then "
-            f"cat {COPY_METADATA_DIRECTORY}/{field}; fi; printf '\\n';"
+            f"if [ -f {metadata_directory}/{field} ]; then "
+            f"cat {metadata_directory}/{field}; fi; printf '\\n';"
         )
         for field in fields
     ]
     if include_logs:
         commands.append(
-            f"if [ -f {COPY_METADATA_DIRECTORY}/copy.log ]; then "
-            f"tail -c 8192 {COPY_METADATA_DIRECTORY}/copy.log; fi"
+            f"if [ -f {metadata_directory}/copy.log ]; then "
+            f"tail -c 8192 {metadata_directory}/copy.log; fi"
         )
 
-    output = docker_client.containers.run(
-        image=labels.get(LABEL_COPY_IMAGE, DEFAULT_COPY_IMAGE),
-        command=["sh", "-c", "".join(commands)],
-        remove=True,
-        network_disabled=True,
-        read_only=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
-        labels={COPY_READER_LABEL: "true"},
-        volumes={volume.name: {"bind": "/project", "mode": "ro"}},
-    )
+    try:
+        output = docker_client.containers.run(
+            image=labels.get(LABEL_COPY_IMAGE, DEFAULT_COPY_IMAGE),
+            command=["sh", "-c", "".join(commands)],
+            remove=True,
+            network_disabled=True,
+            read_only=True,
+            cap_drop=["ALL"],
+            security_opt=["no-new-privileges:true"],
+            labels={COPY_READER_LABEL: "true"},
+            volumes={source_volume_name: {"bind": source_mount, "mode": "ro"}},
+        )
+    except NotFound:
+        # The metadata volume (or, on the legacy path, the project volume)
+        # is gone. Report unknown rather than crash the reader.
+        return {}
     if isinstance(output, str):
         output_bytes = output.encode()
     else:
@@ -517,7 +734,10 @@ def _copy_job_from_persisted(
     error = persisted.get("error", "")
     if status not in {"completed", "failed"}:
         status = "unknown"
-        if labels.get(LABEL_STATUS_STORAGE) == STATUS_STORAGE_PROJECT_VOLUME:
+        if labels.get(LABEL_STATUS_STORAGE) in {
+            STATUS_STORAGE_PROJECT_VOLUME,
+            STATUS_STORAGE_CONTROLLER_VOLUME,
+        }:
             error = "Copy container ended before it persisted a final status"
         else:
             error = "This legacy copy job has no persisted final status"
@@ -643,7 +863,11 @@ def _meaningful_time(value: Any) -> str:
     return text
 
 
-def _rollback_registration(volume: Volume | None, helper: Container | None) -> None:
+def _rollback_registration(
+    volume: Volume | None,
+    metadata_volume: Volume | None,
+    helper: Container | None,
+) -> None:
     if helper is not None:
         try:
             helper.remove(force=True)
@@ -654,6 +878,46 @@ def _rollback_registration(volume: Volume | None, helper: Container | None) -> N
             volume.remove(force=True)
         except DockerException:
             pass
+    if metadata_volume is not None:
+        try:
+            metadata_volume.remove(force=True)
+        except DockerException:
+            pass
+
+
+def ensure_git_baseline(
+    docker_client: DockerClient,
+    git_image: str,
+    volume_name: str,
+) -> str:
+    """Ensures the sandbox volume is a git repository with a baseline commit.
+
+    Runs in a throwaway, hardened container using git_image, never the
+    inspection or copy image: alpine:latest has no git, and git containers
+    keep network_disabled=True, so git cannot be installed at runtime.
+    A sandbox that already has commits keeps them; only the branch pointer
+    and git identity are ensured. Returns the resulting HEAD commit hash.
+    """
+    _ensure_git_image(docker_client, git_image)
+    output = docker_client.containers.run(
+        image=git_image,
+        entrypoint=["sh", "-c"],
+        command=[GIT_BASELINE_SCRIPT],
+        remove=True,
+        network_disabled=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        volumes={volume_name: {"bind": "/project", "mode": "rw"}},
+        tmpfs={"/tmp": "rw,nosuid,size=32m"},
+    )
+    return output.decode().strip().splitlines()[-1]
+
+
+def _ensure_git_image(docker_client: DockerClient, image: str) -> None:
+    try:
+        docker_client.images.get(image)
+    except ImageNotFound:
+        docker_client.images.pull(image)
 
 
 def _integer(value: Any) -> int:

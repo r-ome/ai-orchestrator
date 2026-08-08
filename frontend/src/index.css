@@ -1,6 +1,13 @@
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
-:root {
+/* Ground colours live in the two theme blocks below. `data-theme` is stamped
+   on <html> before first paint by the inline script in index.html, so the
+   selectors here are the single source of truth for both modes. The bare
+   :root block keeps the dark set as the fallback for when that script cannot
+   run. Never express a theme difference with @media (prefers-color-scheme):
+   a media query cannot see the manual override. */
+:root,
+:root[data-theme='dark'] {
   --bg: #0d0d10;
   --panel: #16161c;
   --panel2: #1c1c23;
@@ -16,13 +23,50 @@
   --info: #4c8dff;
   --code-bg: #16161c;
   --social-bg: #1c1c23;
+  /* Categorical slot 2 of the storage palette. Slot 1 is --info. */
+  --series-reclaimable: #d95926;
+  /* Modal backdrops. Both modes darken rather than lighten, but a light page
+     needs far less of it to separate the surface from its ground. */
+  --scrim: rgba(0, 0, 0, 0.5);
+  --scrim-strong: rgba(0, 0, 0, 0.62);
+  --shadow: rgba(0,0,0,0.5) 0 10px 24px -6px, rgba(0,0,0,0.3) 0 3px 8px -2px;
+  color-scheme: dark;
+}
+
+/* Every foreground here clears WCAG AA (4.5:1) against --bg, --panel and
+   --panel2. The accent, ok, warn, err and info hues are darkened well past
+   their dark-mode values because those are tuned for a dark ground and drop
+   to roughly 2:1 on white. */
+:root[data-theme='light'] {
+  --bg: #f6f6f9;
+  --panel: #ffffff;
+  --panel2: #f0f0f4;
+  --border: #d8d8e2;
+  --line: #e7e7ee;
+  --text: #43434e;
+  --text-h: #15151b;
+  --muted: #66666f;
+  --accent: #7c22ce;
+  --ok: #0f7a4d;
+  --warn: #8a5300;
+  --err: #c11e2c;
+  --info: #1d4ed8;
+  --code-bg: #f0f0f4;
+  --social-bg: #f0f0f4;
+  --series-reclaimable: #c2410c;
+  --scrim: rgba(24, 24, 32, 0.38);
+  --scrim-strong: rgba(24, 24, 32, 0.45);
+  --shadow: rgba(24, 24, 40, 0.14) 0 10px 24px -6px, rgba(24, 24, 40, 0.10) 0 3px 8px -2px;
+  color-scheme: light;
+}
+
+:root {
   /* Text sitting on the accent gradient itself, not on a page ground, so it
      stays light in both themes rather than following --text-h. */
   --mark-text: #ffffff;
-  /* The terminal well sits a step below --bg, so the xterm surface reads as
-     recessed rather than as another panel. */
+  /* The terminal stays dark in both themes. Agent TUIs emit ANSI colours
+     tuned for a dark ground, and inverting the well would wash them out. */
   --terminal-bg: #0a0a0d;
-  --shadow: rgba(0,0,0,0.5) 0 10px 24px -6px, rgba(0,0,0,0.3) 0 3px 8px -2px;
   --accent-bg: color-mix(in srgb, var(--accent) 12%, transparent);
   --accent-border: color-mix(in srgb, var(--accent) 30%, transparent);
   --soft: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -31,8 +75,10 @@
   --heading: 'Space Grotesk', system-ui, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
 
+  /* This is the `rem` basis, not the reading size. Leaving it at 14 keeps
+     every rem-based padding, gap and radius in the app exactly where it was;
+     `body` below sets what text actually renders at. */
   font: 14px/145% var(--sans);
-  color-scheme: dark;
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
@@ -60,8 +106,11 @@
   box-sizing: border-box;
 }
 
+/* The reading size: 1.1rem against the 14px basis above, so body text renders
+   at 15.4px and follows the basis down to 14.3px on narrow viewports. */
 body {
   margin: 0;
+  font-size: 1.1rem;
 }
 
 h1,
@@ -72,21 +121,21 @@ h2 {
 }
 
 h1 {
-  font-size: 30px;
+  font-size: 33px;
   letter-spacing: -0.5px;
   margin: 32px 0;
   @media (max-width: 1024px) {
-    font-size: 24px;
+    font-size: 26.4px;
     margin: 20px 0;
   }
 }
 h2 {
-  font-size: 15.5px;
+  font-size: 17.1px;
   line-height: 118%;
   letter-spacing: -0.2px;
   margin: 0 0 8px;
   @media (max-width: 1024px) {
-    font-size: 14px;
+    font-size: 15.4px;
   }
 }
 p {
@@ -102,7 +151,7 @@ code,
 }
 
 code {
-  font-size: 12.5px;
+  font-size: 13.8px;
   line-height: 135%;
   padding: 4px 8px;
   background: var(--code-bg);

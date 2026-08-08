@@ -1,0 +1,3 @@
+# Keep dependencies in controller-owned volumes keyed by lockfile
+
+Dependencies install into a volume scoped to one preview run and mounted only into preview containers, so a coding agent cannot resolve imports, typecheck, or build, and every rebuild reinstalls from nothing. A dependency volume is instead named from the sandbox and the lockfile digest, which makes reuse automatic when the lockfile is unchanged and isolation automatic when it changes. The controller keeps sole write authority by mounting the volume read-write only into the install job and read-only into every agent and preview container, so an agent gains the ability to read dependencies without gaining the ability to install them.

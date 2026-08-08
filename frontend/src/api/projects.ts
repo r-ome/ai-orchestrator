@@ -1,4 +1,4 @@
-import { getJson, postJson } from './client'
+import { deleteJsonBody, getJson, postJson } from './client'
 
 export interface ProjectRegistration {
   sandbox_id: string
@@ -61,6 +61,13 @@ export interface ProjectCopyJobsResponse {
   jobs: ProjectCopyJobStatus[]
 }
 
+export interface RemoveProjectResponse {
+  project_name: string
+  removed_containers: number
+  removed_networks: number
+  removed_volumes: number
+}
+
 /** Lists subfolders of `path`, or of the project root when path is omitted. */
 export function browseFolders(
   path?: string,
@@ -105,4 +112,13 @@ export function fetchCopyJob(
 /** Copies the host folder into the next numbered project sandbox. */
 export function createProjectSandbox(path: string): Promise<ProjectCopyJobStatus> {
   return postJson<ProjectCopyJobStatus>('/projects', { path })
+}
+
+export function removeProject(
+  projectName: string,
+): Promise<RemoveProjectResponse> {
+  return deleteJsonBody<RemoveProjectResponse>(
+    `/projects/${encodeURIComponent(projectName)}`,
+    { confirm: true },
+  )
 }

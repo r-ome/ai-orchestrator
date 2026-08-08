@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import io
 import json
 import logging
@@ -8,7 +9,8 @@ import shlex
 import socket
 import tarfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from threading import Lock
@@ -27,8 +29,10 @@ from docker.errors import (
     NotFound,
 )
 from docker.models.containers import Container
+from docker.types import Mount
 from requests.exceptions import ReadTimeout
 
+from app.controller.config import get_controller_settings
 from app.controller.store import ControllerStore
 from app.previews.config import PreviewSettings
 from app.previews.detection import (
@@ -51,6 +55,7 @@ from app.previews.models import (
     PreviewContainer,
     PreviewDependencyService,
     PreviewEnvironmentSource,
+    PreviewKind,
     PreviewLogs,
     PreviewMode,
     PreviewNetworkAccess,
@@ -73,6 +78,8 @@ from app.projects.service import (
     inspect_registered_project,
     project_id,
 )
+from app.tasks.models import TaskStatus
+from app.tasks.service import transition_task
 
 
 LABEL_MANAGED = "orchestrator.preview.managed"
@@ -92,11 +99,40 @@ PREVIEW_CONTAINER_PREFIX = "orchestrator-preview-"
 SHARED_DATABASE_PREFIX = "orchestrator-shared-db-"
 MAX_CONTEXT_BYTES = 512 * 1024 * 1024
 MYSQL_PORT = 3306
+# Priority order for the lockfile that keys a sandbox's dependency volume.
+_LOCKFILE_NAMES = (
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "uv.lock",
+    "poetry.lock",
+    "requirements.txt",
+)
+# The env files a preview must never read. Same pair the copy-time exclusion
+# used, so a live preview loses nothing the copied workspace already hid.
+_MASKED_ENVIRONMENT_NAMES = (".env", ".env.local")
+# Docker bind-mounts a character device onto the env paths, but Vite treats the
+# device-backed paths as changing files and restarts forever. Use one stable,
+# empty regular file instead. Docker creates the target file when it is absent,
+# and the regular source keeps its inode metadata stable for file watchers.
+_MASK_SOURCE_NAME = "preview-env-mask"
+# Refuse to start rather than leave one env file unmasked.
+_MAXIMUM_ENVIRONMENT_MASKS = 100
+# Controller metadata a preview has no business reading. A directory, so tmpfs
+# masks it.
+_MASKED_DIRECTORIES = (".orchestrator",)
+# Build output a live preview must write somewhere other than the sandbox
+# worktree, or every completion report fails the dirty-tree check on artifacts
+# the project happens not to gitignore.
+_BUILD_OUTPUT_PATHS = ("dist", ".astro", ".next")
+_NODE_RUNTIMES = {"astro", "vite", "nextjs"}
+_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{7,64}$")
 _preview_lock = Lock()
 # Serializes get-or-create of a project's shared server across concurrent starts.
 _shared_database_lock = Lock()
 logger = logging.getLogger("uvicorn.error")
-ProgressReporter = Callable[[str, str], None]
+# Accepts an optional duration_ms kwarg so a step can report zero-duration reuse.
+ProgressReporter = Callable[..., None]
 
 
 class PreviewOperationError(Exception):
@@ -221,6 +257,51 @@ def _environment_status(
     return configured, missing
 
 
+def _preview_target(
+    controller_store: ControllerStore,
+    *,
+    sandbox_id: str,
+    task_id: str,
+) -> tuple[PreviewKind, str, str]:
+    """Decides which preview kind is being started, and from which commit.
+
+    The commit comes from the task row the controller wrote after reading the
+    task branch itself, never from the request and never from a file in the
+    sandbox.
+    """
+    if not task_id:
+        return PreviewKind.LIVE, "", ""
+    row = controller_store.task(task_id)
+    if row is None or str(row.get("sandbox_id")) != sandbox_id:
+        raise PreviewOperationError(404, f"Task '{task_id}' is unknown")
+    status = str(row.get("status") or "")
+    if status not in {
+        TaskStatus.REPORTED.value,
+        TaskStatus.PREVIEWING.value,
+        TaskStatus.REVIEW.value,
+    }:
+        raise PreviewOperationError(
+            409,
+            f"Task '{task_id}' has no reviewable commit (status '{status}')",
+        )
+    commit_sha = str(row.get("head_commit") or "")
+    if not _COMMIT_PATTERN.match(commit_sha):
+        raise PreviewOperationError(409, f"Task '{task_id}' has no head commit")
+    _move_task(controller_store, task_id, TaskStatus.PREVIEWING)
+    return PreviewKind.TASK, task_id, commit_sha
+
+
+def _move_task(
+    controller_store: ControllerStore,
+    task_id: str,
+    to_status: TaskStatus,
+) -> None:
+    """Best-effort status move. A refused transition never fails a preview."""
+    if not task_id:
+        return
+    transition_task(controller_store, task_id=task_id, to_status=to_status)
+
+
 def start_preview(
     docker_client: DockerClient,
     controller_store: ControllerStore,
@@ -294,7 +375,24 @@ def start_preview(
                 settings,
             )
             current_hashes = hashes(files)
-        approved_digest = proposal_digest(request.config, current_hashes)
+        kind, task_id, commit_sha = _preview_target(
+            controller_store,
+            sandbox_id=project.sandbox_id,
+            task_id=request.task_id,
+        )
+        if kind is PreviewKind.TASK and request.config.mode is not PreviewMode.NATIVE:
+            raise PreviewOperationError(
+                422,
+                "Task previews run only in native mode",
+            )
+        # A task preview's approval points at a commit, not at a hash map: the
+        # exported tree cannot drift, so the files it was approved against are
+        # the files it serves.
+        approved_digest = (
+            proposal_digest(request.config, {"commit": commit_sha})
+            if kind is PreviewKind.TASK
+            else proposal_digest(request.config, current_hashes)
+        )
         _validate_sharing(
             controller_store,
             project_key=project_id(project.source_path),
@@ -316,14 +414,18 @@ def start_preview(
         created_at = _now()
         expires_at = _expiry(request.config.expiry_minutes)
         labels = _labels(project.sandbox_id, run_id, expires_at)
-        progress = lambda step, message: _record_preview_progress(
-            controller_store,
-            sandbox_id=project.sandbox_id,
-            proposal_id=request.proposal_id,
-            preview_id=run_id,
-            status="preparing",
-            step=step,
-            message=message,
+        progress = (
+            lambda step, message, duration_ms=None, started_at=None: _record_preview_progress(
+                controller_store,
+                sandbox_id=project.sandbox_id,
+                proposal_id=request.proposal_id,
+                preview_id=run_id,
+                status="preparing",
+                step=step,
+                message=message,
+                duration_ms=duration_ms,
+                started_at=started_at,
+            )
         )
         resources: dict[str, Any] = {
             "containers": [],
@@ -353,6 +455,8 @@ def start_preview(
                     secrets=controller_store.project_secrets(
                         project_id(project.source_path)
                     ),
+                    kind=kind,
+                    commit_sha=commit_sha,
                 )
             elif request.config.mode is PreviewMode.DOCKERFILE:
                 resources = _start_dockerfile(
@@ -394,6 +498,8 @@ def start_preview(
             except DockerException:
                 pass
             _remove_resources(resources, remove_data_volumes=True)
+            if kind is PreviewKind.TASK:
+                _move_task(controller_store, task_id, TaskStatus.FAILED)
             _record_preview_progress(
                 controller_store,
                 sandbox_id=project.sandbox_id,
@@ -414,6 +520,9 @@ def start_preview(
             "sandbox_id": project.sandbox_id,
             "proposal_id": request.proposal_id,
             "mode": request.config.mode.value,
+            "kind": kind.value,
+            "task_id": task_id or None,
+            "commit_sha": commit_sha or None,
             "status": "running",
             "selected_service": request.config.selected_service,
             "container_port": request.config.container_port,
@@ -434,6 +543,8 @@ def start_preview(
             controller_store.create_preview_run(values)
         except Exception as error:
             _remove_resources(resources, remove_data_volumes=True)
+            if kind is PreviewKind.TASK:
+                _move_task(controller_store, task_id, TaskStatus.FAILED)
             _record_preview_progress(
                 controller_store,
                 sandbox_id=project.sandbox_id,
@@ -454,6 +565,8 @@ def start_preview(
             step="ready",
             message=f"Preview is running at http://127.0.0.1:{host_port}",
         )
+        if kind is PreviewKind.TASK:
+            _move_task(controller_store, task_id, TaskStatus.REVIEW)
         record = controller_store.preview_run(run_id)
         if record is None:
             raise PreviewOperationError(500, "Preview state was not recorded")
@@ -510,18 +623,39 @@ def restart_preview(
     if record is None:
         raise PreviewOperationError(404, "Sandbox has no active preview")
     config = PreviewConfiguration.model_validate_json(str(record["config_json"]))
-    files = _volume_runtime_files(docker_client, project.volume_name, settings)
-    if proposal_digest(config, hashes(files)) != record.get("config_digest"):
-        raise PreviewOperationError(
-            409,
-            "Protected runtime files changed; inspect and approve a rebuild",
-        )
+    kind = PreviewKind(str(record.get("kind") or PreviewKind.LIVE.value))
+    commit_sha = str(record.get("commit_sha") or "")
+    if kind is PreviewKind.TASK:
+        if proposal_digest(config, {"commit": commit_sha}) != record.get("config_digest"):
+            raise PreviewOperationError(
+                409,
+                "Task preview approval does not match its commit; rebuild it",
+            )
+    else:
+        files = _volume_runtime_files(docker_client, project.volume_name, settings)
+        if proposal_digest(config, hashes(files)) != record.get("config_digest"):
+            raise PreviewOperationError(
+                409,
+                "Protected runtime files changed; inspect and approve a rebuild",
+            )
     containers = _preview_containers(docker_client, str(record["id"]), all=True)
     if not containers:
         controller_store.update_preview_run(str(record["id"]), status="missing")
         raise PreviewOperationError(409, "Preview containers are missing; rebuild it")
     controller_store.update_preview_run(str(record["id"]), status="restarting")
     try:
+        if kind is PreviewKind.TASK:
+            # Containers restart against the same workspace volume, so the
+            # commit has to be re-exported first. Without this a restart serves
+            # whatever the first export left behind, which is the bug this
+            # phase fixes.
+            _export_commit(
+                docker_client,
+                settings.git_image,
+                project.volume_name,
+                _run_volume_name(str(record["id"]), "runtime-workspace"),
+                commit_sha,
+            )
         database = config.services.get("database")
         shared = (
             database is not None
@@ -662,17 +796,49 @@ def preview_logs(
     )
 
 
+def require_preview_proposal(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    project_name: str,
+    proposal_id: str,
+) -> dict[str, Any]:
+    """Confirms `proposal_id` belongs to `project_name`'s sandbox.
+
+    Shared by the polling logs endpoint and the events websocket, so both
+    reject a proposal from a different sandbox the same way.
+    """
+    project = _ready_project(docker_client, project_name)
+    _register_sandbox(controller_store, project)
+    review = controller_store.review(proposal_id)
+    if review is None or review.get("sandbox_id") != project.sandbox_id:
+        raise PreviewOperationError(404, "Preview proposal was not found")
+    return review
+
+
+def preview_running_containers(docker_client: DockerClient, preview_id: str) -> list[Container]:
+    return _preview_containers(docker_client, preview_id, all=False)
+
+
+def open_preview_log_stream(docker_client: DockerClient, container: Container) -> Any:
+    """Opens a raw, following attach stream for one preview container.
+
+    Docker multiplexes stdout and stderr into this stream, the same as any
+    other non-interactive attach; `read_stream` in `docker_terminal` pulls
+    bytes off it exactly as it does for an exec socket.
+    """
+    return docker_client.api.attach_socket(
+        container.id,
+        params={"logs": "1", "stream": "1", "stdout": "1", "stderr": "1"},
+    )
+
+
 def preview_creation_logs(
     docker_client: DockerClient,
     controller_store: ControllerStore,
     project_name: str,
     proposal_id: str,
 ) -> PreviewLogs:
-    project = _ready_project(docker_client, project_name)
-    _register_sandbox(controller_store, project)
-    review = controller_store.review(proposal_id)
-    if review is None or review.get("sandbox_id") != project.sandbox_id:
-        raise PreviewOperationError(404, "Preview proposal was not found")
+    require_preview_proposal(docker_client, controller_store, project_name, proposal_id)
     events = controller_store.events_for_run(
         proposal_id,
         kind="preview.progress",
@@ -737,6 +903,8 @@ def _preview_log_response(
                 step=str(payload.get("step") or "preview"),
                 message=str(payload.get("message") or ""),
                 created_at=str(stored["created_at"]),
+                started_at=payload.get("started_at"),
+                duration_ms=payload.get("duration_ms"),
             )
         )
     return PreviewLogs(
@@ -758,6 +926,8 @@ def _record_preview_progress(
     step: str,
     message: str,
     level: str = "info",
+    duration_ms: int | None = None,
+    started_at: str | None = None,
 ) -> None:
     limited_message = message[-16_384:]
     log_method = logger.error if level == "error" else logger.info
@@ -768,22 +938,61 @@ def _record_preview_progress(
         step,
         limited_message,
     )
+    payload: dict[str, Any] = {
+        "preview_id": preview_id,
+        "status": status,
+        "level": level,
+        "step": step,
+        "message": limited_message,
+    }
+    if duration_ms is not None:
+        payload["duration_ms"] = duration_ms
+    if started_at is not None:
+        payload["started_at"] = started_at
     controller_store.event(
         sandbox_id=sandbox_id,
         run_id=proposal_id,
         kind="preview.progress",
-        payload={
-            "preview_id": preview_id,
-            "status": status,
-            "level": level,
-            "step": step,
-            "message": limited_message,
-        },
+        payload=payload,
     )
 
 
-def _ignore_progress(step: str, message: str) -> None:
-    del step, message
+def _ignore_progress(
+    step: str,
+    message: str,
+    duration_ms: int | None = None,
+    started_at: str | None = None,
+) -> None:
+    del step, message, duration_ms, started_at
+
+
+@contextmanager
+def _timed_step(
+    report: ProgressReporter,
+    step: str,
+    message: str,
+) -> Iterator[Callable[[str], None]]:
+    """Times one preview-preparation step.
+
+    Emits a start event carrying `started_at`, then a completion event
+    carrying `duration_ms`. Yields a callable the caller can use to give the
+    completion event a result-specific message; called with an empty string,
+    the completion event reuses `message`. Emits nothing on failure — the
+    caller's own error handling already records a `failed` step.
+    """
+    started_at = _now()
+    started = time.monotonic()
+    report(step, message, started_at=started_at)
+    completion_message = message
+
+    def finish(text: str) -> None:
+        nonlocal completion_message
+        if text:
+            completion_message = text
+
+    yield finish
+    duration_ms = int((time.monotonic() - started) * 1000)
+    report(step, completion_message, duration_ms=duration_ms, started_at=started_at)
 
 
 def expire_previews(
@@ -830,34 +1039,83 @@ def _start_native(
     project_key: str = "",
     source_path: str = "",
     secrets: dict[str, str] | None = None,
+    kind: PreviewKind = PreviewKind.LIVE,
+    commit_sha: str = "",
 ) -> dict[str, Any]:
     report = progress or _ignore_progress
     report("image", f"Checking runtime image {config.image}")
     _ensure_image(docker_client, config.image)
     database = config.services.get("database")
     data_volumes: list[Any] = []
-    report("workspace", "Creating a runtime workspace without project environment files")
-    workspace = _data_volume(
-        docker_client,
-        run_id,
-        "runtime-workspace",
-        labels,
-        False,
-    )
-    data_volumes.append(workspace)
-    _copy_native_workspace(
-        docker_client,
-        settings.inspection_image,
-        project_volume,
-        workspace.name,
-    )
-    workspace_volume = workspace.name
-    report("workspace", "Runtime workspace is ready")
+    if kind is PreviewKind.TASK:
+        with _timed_step(
+            report, "workspace", f"Exporting sandbox commit {commit_sha[:12]}"
+        ) as finish:
+            _ensure_image(docker_client, settings.git_image)
+            workspace = _data_volume(
+                docker_client,
+                run_id,
+                "runtime-workspace",
+                labels,
+                False,
+            )
+            data_volumes.append(workspace)
+            _export_commit(
+                docker_client,
+                settings.git_image,
+                project_volume,
+                workspace.name,
+                commit_sha,
+            )
+            workspace_volume = workspace.name
+            finish("Runtime workspace holds the task commit")
+    else:
+        # The sandbox volume itself, so an agent's edit reaches the development
+        # server without a copy and without a restart.
+        report("workspace", "Mounting the sandbox for a live preview")
+        _exclude_preview_masks(
+            docker_client,
+            settings.inspection_image,
+            project_volume,
+        )
+        workspace_volume = project_volume
+        report("workspace", "Sandbox workspace is ready")
+    mounts = _environment_masks(docker_client, settings, workspace_volume)
+    tmpfs = {
+        "/tmp": "rw,nosuid,size=256m",
+        **{
+            f"/workspace/{path}": "rw,nosuid,size=1m"
+            for path in _MASKED_DIRECTORIES
+        },
+    }
     volumes: dict[str, dict[str, str]] = {
         workspace_volume: {"bind": "/workspace", "mode": "rw"},
     }
-    if config.runtime.value in {"astro", "vite", "nextjs"}:
-        dependency = _data_volume(docker_client, run_id, "node-modules", labels, False)
+    if kind is PreviewKind.LIVE and config.runtime.value in _NODE_RUNTIMES:
+        # Build output belongs to the run, not to the sandbox worktree, or a
+        # completion report fails on artifacts the project does not gitignore.
+        for path in _BUILD_OUTPUT_PATHS:
+            output = _data_volume(
+                docker_client,
+                run_id,
+                f"build-{_slug(path)}",
+                labels,
+                False,
+            )
+            volumes[output.name] = {"bind": f"/workspace/{path}", "mode": "rw"}
+            data_volumes.append(output)
+    dependency_reused = False
+    if config.runtime.value in _NODE_RUNTIMES:
+        lockfile_digest = _lockfile_digest(
+            _volume_runtime_files(docker_client, workspace_volume, settings)
+        )
+        dependency = _dependency_volume(
+            docker_client,
+            labels[LABEL_SANDBOX_ID],
+            lockfile_digest,
+            labels,
+        )
+        dependency_reused = _volume_has_entries(docker_client, settings, dependency.name)
         volumes[dependency.name] = {"bind": "/workspace/node_modules", "mode": "rw"}
         data_volumes.append(dependency)
     elif config.runtime.value == "fastapi":
@@ -869,37 +1127,72 @@ def _start_native(
     application_environment.update(_secret_environment(config, secrets or {}))
 
     if config.install_command:
-        report("dependencies", "Running the approved dependency installation command")
-        install = config.install_command
-        if config.runtime.value == "fastapi":
-            install = f"python -m venv /opt/venv\n. /opt/venv/bin/activate\n{install}"
-        _run_prepare(
-            docker_client,
-            settings,
-            image=config.image,
-            command=f"set -eu\n{install}",
-            volumes=volumes,
-            labels=labels,
-            environment=application_environment,
-            size_path=(
-                "/workspace/node_modules"
-                if config.runtime.value in {"astro", "vite", "nextjs"}
-                else "/opt/venv" if config.runtime.value == "fastapi" else None
-            ),
-        )
-        report("dependencies", "Dependency installation completed")
-        if expected_protected_hashes is not None:
-            report("protected-files", "Checking protected runtime files after installation")
-            prepared_files = _volume_runtime_files(
+        if config.runtime.value in _NODE_RUNTIMES:
+            npm_cache = _data_volume(
                 docker_client,
-                project_volume,
-                settings,
+                run_id,
+                "npm-cache",
+                {**labels, LABEL_SERVICE: "npm-cache"},
+                True,
             )
-            if hashes(prepared_files) != expected_protected_hashes:
-                raise PreviewOperationError(
-                    409,
-                    "Dependency installation changed protected runtime files; inspect again",
+            volumes[npm_cache.name] = {"bind": "/root/.npm", "mode": "rw"}
+            data_volumes.append(npm_cache)
+        if dependency_reused:
+            report(
+                "dependencies",
+                "Dependency volume already installed for this lockfile; skipping install",
+                duration_ms=0,
+            )
+        else:
+            with _timed_step(
+                report,
+                "dependencies",
+                "Running the approved dependency installation command",
+            ) as finish:
+                install = config.install_command
+                if config.runtime.value == "fastapi":
+                    install = (
+                        f"python -m venv /opt/venv\n. /opt/venv/bin/activate\n{install}"
+                    )
+                _run_prepare(
+                    docker_client,
+                    settings,
+                    image=config.image,
+                    command=f"set -eu\n{install}",
+                    volumes=volumes,
+                    mounts=mounts,
+                    labels=labels,
+                    environment=application_environment,
+                    size_path=(
+                        "/workspace/node_modules"
+                        if config.runtime.value in _NODE_RUNTIMES
+                        else "/opt/venv" if config.runtime.value == "fastapi" else None
+                    ),
                 )
+                finish("Dependency installation completed")
+            if expected_protected_hashes is not None:
+                report(
+                    "protected-files",
+                    "Checking protected runtime files after installation",
+                )
+                prepared_files = _volume_runtime_files(
+                    docker_client,
+                    project_volume,
+                    settings,
+                )
+                if hashes(prepared_files) != expected_protected_hashes:
+                    raise PreviewOperationError(
+                        409,
+                        "Dependency installation changed protected runtime files; "
+                        "inspect again",
+                    )
+
+    if config.runtime.value in _NODE_RUNTIMES:
+        # Vite's dependency optimizer creates node_modules/.vite on first run,
+        # so a read-only mount fails with ENOENT and leaves the preview serving
+        # unoptimized dependencies. The coding agent still mounts this volume
+        # read-only; the install authority boundary that matters is the agent's.
+        volumes[dependency.name] = {"bind": "/workspace/node_modules", "mode": "rw"}
 
     report("network", f"Creating {config.network_access.value} preview network")
     network = _network(docker_client, run_id, labels, config.network_access)
@@ -948,6 +1241,8 @@ def _start_native(
                         runtime=config.runtime.value,
                         environment=application_environment,
                         volumes=volumes,
+                        mounts=mounts,
+                        tmpfs=tmpfs,
                         labels=labels,
                         network=network,
                         run_id=run_id,
@@ -1044,6 +1339,8 @@ def _start_native(
                 runtime=config.runtime.value,
                 environment=application_environment,
                 volumes=volumes,
+                mounts=mounts,
+                tmpfs=tmpfs,
                 labels=labels,
                 network=network,
                 run_id=run_id,
@@ -1056,31 +1353,36 @@ def _start_native(
         start = f". /opt/venv/bin/activate\nexec {start}"
     else:
         start = f"exec {start}"
-    report("container", "Creating application container")
-    container = docker_client.containers.create(
-        image=config.image,
-        command=["sh", "-lc", f"set -eu\n{start}"],
-        name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-app",
-        init=True,
-        read_only=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
-        working_dir="/workspace",
-        environment=application_environment,
-        labels={**labels, LABEL_SERVICE: "app"},
-        volumes=volumes,
-        tmpfs={"/tmp": "rw,nosuid,size=256m"},
-        network=network.name,
-        ports=_direct_ports(config, host_port),
-        restart_policy={"Name": "no"},
-        mem_limit=settings.preview_memory,
-        nano_cpus=1_000_000_000,
-        pids_limit=256,
-    )
-    network.disconnect(container)
-    network.connect(container, aliases=["app"])
-    container.start()
-    report("container", "Application container started")
+    with _timed_step(report, "container", "Creating application container") as finish:
+        container = docker_client.containers.create(
+            image=config.image,
+            command=["sh", "-lc", f"set -eu\n{start}"],
+            name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-app",
+            init=True,
+            read_only=True,
+            cap_drop=["ALL"],
+            security_opt=["no-new-privileges:true"],
+            working_dir="/workspace",
+            environment=application_environment,
+            labels={**labels, LABEL_SERVICE: "app"},
+            volumes=volumes,
+            mounts=mounts or None,
+            tmpfs=tmpfs,
+            network=network.name,
+            ports=_direct_ports(config, host_port),
+            restart_policy={"Name": "no"},
+            mem_limit=settings.preview_memory,
+            nano_cpus=1_000_000_000,
+            pids_limit=256,
+        )
+        network.disconnect(container)
+        network.connect(container, aliases=["app"])
+        container.start()
+        _wait_for_container_health(
+            container,
+            timeout_seconds=settings.prepare_timeout_seconds,
+        )
+        finish("Application container started")
     containers.append(container)
     networks = [network]
     if config.network_access is PreviewNetworkAccess.ISOLATED:
@@ -1107,25 +1409,35 @@ def _start_native(
     }
 
 
-def _copy_native_workspace(
+def _export_commit(
     docker_client: DockerClient,
-    image: str,
+    git_image: str,
     project_volume: str,
     workspace_volume: str,
+    commit_sha: str,
 ) -> None:
+    """Replaces the run workspace with the tree of one sandbox commit.
+
+    `git archive` is reproducible, leaves `.git` behind, and skips everything
+    the repository ignores. The workspace is emptied first so a re-export after
+    a restart cannot leave a file the commit no longer contains. Env files are
+    deleted at every depth: a commit may carry one, and no preview reads them.
+    """
+    if not _COMMIT_PATTERN.match(commit_sha):
+        raise PreviewOperationError(422, "Task commit is not a commit hash")
+    name_clauses = " -o ".join(
+        f"-name {shlex.quote(name)}" for name in _MASKED_ENVIRONMENT_NAMES
+    )
+    script = (
+        "set -eu\n"
+        "find /workspace -mindepth 1 -maxdepth 1 -exec rm -rf {} +\n"
+        f"git -C /source archive --format=tar {commit_sha} | tar -C /workspace -xf -\n"
+        f"find /workspace -type f \\( {name_clauses} \\) -delete\n"
+    )
     docker_client.containers.run(
-        image=image,
-        command=[
-            "sh",
-            "-c",
-            (
-                "set -eu; "
-                "tar -C /source --exclude='./.env' --exclude='./.env.local' "
-                "--exclude='*/.env' --exclude='*/.env.local' "
-                "--exclude='./.orchestrator' -cf - . | "
-                "tar -C /workspace -xf -"
-            ),
-        ],
+        image=git_image,
+        entrypoint=["sh", "-c"],
+        command=[script],
         remove=True,
         network_disabled=True,
         read_only=True,
@@ -1135,6 +1447,136 @@ def _copy_native_workspace(
             project_volume: {"bind": "/source", "mode": "ro"},
             workspace_volume: {"bind": "/workspace", "mode": "rw"},
         },
+        tmpfs={"/tmp": "rw,nosuid,size=32m"},
+    )
+
+
+def _environment_file_paths(
+    docker_client: DockerClient,
+    settings: PreviewSettings,
+    volume_name: str,
+) -> list[str]:
+    """Lists every env file in the sandbox, relative to the volume root."""
+    name_clauses = " -o ".join(
+        f"-name {shlex.quote(name)}" for name in _MASKED_ENVIRONMENT_NAMES
+    )
+    command = (
+        "set -eu\n"
+        "cd /workspace\n"
+        f"find . -type f \\( {name_clauses} \\) "
+        "-not -path './.git/*' -not -path './node_modules/*' -print0\n"
+    )
+    output = docker_client.containers.run(
+        image=settings.inspection_image,
+        command=["sh", "-c", command],
+        remove=True,
+        network_disabled=True,
+        read_only=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
+        tmpfs={"/tmp": "rw,nosuid,size=32m"},
+    )
+    if not isinstance(output, bytes):
+        output = bytes(output)
+    paths = []
+    for entry in output.split(b"\0"):
+        # -print0 keeps a newline in a filename from forging a second path.
+        text = entry.decode("utf-8", errors="replace").removeprefix("./")
+        if not text or ".." in PurePosixPath(text).parts:
+            continue
+        paths.append(text)
+    return sorted(set(paths))
+
+
+def _environment_masks(
+    docker_client: DockerClient,
+    settings: PreviewSettings,
+    volume_name: str,
+) -> list[Mount]:
+    """Builds the mounts that make a preview's env files unreadable.
+
+    A mount, not a copy-time exclusion: the container sees the mask for as long
+    as it runs, so a coding agent writing `.env` after the preview started
+    changes the sandbox and not what the preview reads. The two root paths are
+    masked whether or not they exist yet, which is what closes that hole;
+    deeper paths can only be masked where a file already sits, because Docker
+    materialises a missing bind target inside the sandbox volume itself.
+    """
+    mask_source = _ensure_mask_source()
+    paths = list(_MASKED_ENVIRONMENT_NAMES)
+    for path in _environment_file_paths(docker_client, settings, volume_name):
+        if path not in paths:
+            paths.append(path)
+    if len(paths) > _MAXIMUM_ENVIRONMENT_MASKS:
+        raise PreviewOperationError(
+            422,
+            f"Sandbox holds more than {_MAXIMUM_ENVIRONMENT_MASKS} environment "
+            "files; a preview cannot mask them all",
+        )
+    return [
+        Mount(
+            target=f"/workspace/{path}",
+            source=mask_source,
+            type="bind",
+            read_only=True,
+        )
+        for path in paths
+    ]
+
+
+def _ensure_mask_source() -> str:
+    """Returns a stable, empty regular file that Docker can bind over env files."""
+    path = get_controller_settings().data_directory / _MASK_SOURCE_NAME
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise OSError("mask source is not a regular file")
+        if not path.exists():
+            path.touch(mode=0o600)
+        elif path.stat().st_size:
+            path.write_bytes(b"")
+        path.chmod(0o600)
+    except OSError as error:
+        raise PreviewOperationError(
+            503,
+            "Preview environment masking is unavailable",
+        ) from error
+    return str(path)
+
+
+def _exclude_preview_masks(
+    docker_client: DockerClient,
+    image: str,
+    project_volume: str,
+) -> None:
+    """Keeps the root env masks out of `git status` in the sandbox.
+
+    Docker creates an absent bind target as an empty file, so masking a `.env`
+    that does not exist yet writes one into the sandbox volume. Untracked, it
+    would fail every task completion report on the dirty-tree rule. The entries
+    go in `.git/info/exclude`, which is local to the sandbox and not history.
+    """
+    marker = "# orchestrator preview masks"
+    lines = "\\n".join((marker, *_MASKED_ENVIRONMENT_NAMES))
+    script = (
+        "set -eu\n"
+        'exclude=/project/.git/info/exclude\n'
+        '[ -d /project/.git ] || exit 0\n'
+        'mkdir -p /project/.git/info\n'
+        '[ -f "$exclude" ] || : > "$exclude"\n'
+        f'if grep -qxF {shlex.quote(marker)} "$exclude"; then exit 0; fi\n'
+        f'printf "{lines}\\n" >> "$exclude"\n'
+    )
+    docker_client.containers.run(
+        image=image,
+        command=["sh", "-c", script],
+        remove=True,
+        network_disabled=True,
+        read_only=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        volumes={project_volume: {"bind": "/project", "mode": "rw"}},
         tmpfs={"/tmp": "rw,nosuid,size=32m"},
     )
 
@@ -2116,6 +2558,49 @@ def _wait_for_mysql_health(
     )
 
 
+def _wait_for_container_health(
+    container: Container,
+    *,
+    timeout_seconds: int,
+) -> None:
+    """Waits for the application container's first successful health probe.
+
+    Unlike the database container, the application image runs with no
+    `healthcheck` argument of our own — whether Docker reports a `Health`
+    status at all depends on a `HEALTHCHECK` baked into the image. When the
+    image carries none, `running` is the only signal Docker will ever offer,
+    so that alone counts as the first successful probe.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        container.reload()
+        state = container.attrs.get("State") or {}
+        status = str(state.get("Status") or container.status)
+        health_state = state.get("Health")
+        if status in {"dead", "exited"} or (
+            health_state is not None and str(health_state.get("Status")) == "unhealthy"
+        ):
+            logs = container.logs(stdout=True, stderr=True, tail=100)
+            detail = (
+                logs.decode("utf-8", errors="replace")
+                if isinstance(logs, bytes)
+                else str(logs)
+            )[-8_192:]
+            raise PreviewOperationError(
+                422,
+                f"Application container failed its health check: {detail}",
+            )
+        if status == "running" and (
+            health_state is None or str(health_state.get("Status")) == "healthy"
+        ):
+            return
+        time.sleep(0.5)
+    raise PreviewOperationError(
+        408,
+        f"Application container health check exceeded {timeout_seconds} seconds",
+    )
+
+
 def _run_initialization(
     docker_client: DockerClient,
     settings: PreviewSettings,
@@ -2128,6 +2613,8 @@ def _run_initialization(
     labels: dict[str, str],
     network: Any,
     run_id: str,
+    mounts: list[Mount] | None = None,
+    tmpfs: dict[str, str] | None = None,
 ) -> Container:
     command = "set -eu\n"
     if runtime == "fastapi":
@@ -2145,7 +2632,8 @@ def _run_initialization(
         environment=environment,
         labels={**labels, LABEL_SERVICE: "initialize"},
         volumes=volumes,
-        tmpfs={"/tmp": "rw,nosuid,size=256m"},
+        mounts=mounts or None,
+        tmpfs=tmpfs or {"/tmp": "rw,nosuid,size=256m"},
         network=network.name,
         ports=None,
         restart_policy={"Name": "no"},
@@ -2189,6 +2677,7 @@ def _run_prepare(
     labels: dict[str, str],
     size_path: str | None,
     environment: dict[str, str] | None = None,
+    mounts: list[Mount] | None = None,
 ) -> None:
     container: Container | None = None
     try:
@@ -2209,6 +2698,7 @@ def _run_prepare(
             environment=environment,
             labels={**labels, LABEL_SERVICE: "prepare"},
             volumes=volumes,
+            mounts=mounts or None,
             cap_drop=["ALL"],
             security_opt=["no-new-privileges:true"],
             mem_limit=settings.preview_memory,
@@ -2501,7 +2991,8 @@ def _volume_runtime_files(
         "-o -name 'vite.config.*' -o -name 'next.config.*' "
         "-o -path './.agent/preview.yaml' -o -name 'index.html' \\) "
         f"-size -{settings.maximum_file_bytes + 1}c -print > /tmp/files\n"
-        "tar -cf - -T /tmp/files\n"
+        # tar exits non-zero on an empty file list, so skip it when nothing matched.
+        "if [ -s /tmp/files ]; then tar -cf - -T /tmp/files; fi\n"
     )
     output = docker_client.containers.run(
         image=settings.inspection_image,
@@ -2516,6 +3007,8 @@ def _volume_runtime_files(
     )
     if not isinstance(output, bytes):
         output = bytes(output)
+    if not output:
+        return {}
     files: dict[str, bytes] = {}
     total = 0
     try:
@@ -2542,6 +3035,41 @@ def _volume_runtime_files(
     return files
 
 
+def _lockfile_digest(files: dict[str, bytes]) -> str:
+    """Digests the first root lockfile found, in `_LOCKFILE_NAMES` order.
+
+    `files` comes from `_volume_runtime_files`, which already reads every
+    name in `_LOCKFILE_NAMES` from the sandbox volume root, so no new
+    volume-read path is needed here.
+    """
+    for name in _LOCKFILE_NAMES:
+        content = files.get(name)
+        if content is not None:
+            return hashlib.sha256(content).hexdigest()
+    return hashlib.sha256(b"none").hexdigest()
+
+
+def _volume_has_entries(
+    docker_client: DockerClient,
+    settings: PreviewSettings,
+    volume_name: str,
+) -> bool:
+    output = docker_client.containers.run(
+        image=settings.inspection_image,
+        command=["sh", "-c", "find /workspace -mindepth 1 -maxdepth 1 -print -quit"],
+        remove=True,
+        network_disabled=True,
+        read_only=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
+        tmpfs={"/tmp": "rw,nosuid,size=32m"},
+    )
+    if not isinstance(output, bytes):
+        output = bytes(output)
+    return bool(output.strip())
+
+
 def _volume_environment_files(
     docker_client: DockerClient,
     volume_name: str,
@@ -2556,7 +3084,8 @@ def _volume_environment_files(
         "cd /workspace\n"
         f"find . -maxdepth 1 -type f \\( {name_clauses} \\) "
         f"-size -{settings.maximum_file_bytes + 1}c -print > /tmp/files\n"
-        "tar -cf - -T /tmp/files\n"
+        # tar exits non-zero on an empty file list, so skip it when nothing matched.
+        "if [ -s /tmp/files ]; then tar -cf - -T /tmp/files; fi\n"
     )
     output = docker_client.containers.run(
         image=settings.inspection_image,
@@ -2571,6 +3100,8 @@ def _volume_environment_files(
     )
     if not isinstance(output, bytes):
         output = bytes(output)
+    if not output:
+        return {}
     files: dict[str, bytes] = {}
     total = 0
     try:
@@ -2996,6 +3527,55 @@ def _gateway_proxy(
     return gateway, gateway_network, gateway_volume
 
 
+def _dependency_volume_name(sandbox_id: str, lockfile_digest: str) -> str:
+    return f"orchestrator-deps-{sandbox_id[:12]}-{lockfile_digest[:12]}"
+
+
+def _dependency_volume(
+    docker_client: DockerClient,
+    sandbox_id: str,
+    lockfile_digest: str,
+    labels: dict[str, str],
+) -> Any:
+    """Gets or creates the dependency volume keyed by sandbox and lockfile digest.
+
+    Labeled like a persistent `_data_volume` so cleanup never removes it: the
+    volume is reused across runs and across rebuilds as long as the lockfile
+    is unchanged, and a lockfile change earns a fresh volume automatically.
+    """
+    name = _dependency_volume_name(sandbox_id, lockfile_digest)
+    try:
+        volume = docker_client.volumes.get(name)
+    except NotFound:
+        volume = None
+    if volume is not None:
+        existing_labels = volume.attrs.get("Labels") or {}
+        if (
+            existing_labels.get(LABEL_DATA_MANAGED) != "true"
+            or existing_labels.get(LABEL_PERSISTENT) != "true"
+            or existing_labels.get(LABEL_SANDBOX_ID) != sandbox_id
+        ):
+            raise PreviewOperationError(
+                409,
+                f"Docker volume '{name}' is not trusted dependency data",
+            )
+        return volume
+    return docker_client.volumes.create(
+        name=name,
+        driver="local",
+        labels={
+            **labels,
+            LABEL_SANDBOX_ID: sandbox_id,
+            LABEL_DATA_MANAGED: "true",
+            LABEL_PERSISTENT: "true",
+        },
+    )
+
+
+def _run_volume_name(run_id: str, logical_name: str) -> str:
+    return f"orchestrator-preview-{run_id[:12]}-{_slug(logical_name)[:24]}"
+
+
 def _data_volume(
     docker_client: DockerClient,
     run_id: str,
@@ -3026,7 +3606,7 @@ def _data_volume(
                 )
             return volume
     else:
-        name = f"orchestrator-preview-{run_id[:12]}-{_slug(logical_name)[:24]}"
+        name = _run_volume_name(run_id, logical_name)
     return docker_client.volumes.create(
         name=name,
         driver="local",
@@ -3195,6 +3775,9 @@ def _run_from_record(
         project_name=project_name,
         proposal_id=str(record["proposal_id"]),
         mode=PreviewMode(str(record["mode"])),
+        kind=PreviewKind(str(record.get("kind") or PreviewKind.LIVE.value)),
+        task_id=str(record["task_id"]) if record.get("task_id") else None,
+        commit_sha=str(record["commit_sha"]) if record.get("commit_sha") else None,
         runtime=config.runtime,
         status=str(record["status"]),
         selected_service=str(record.get("selected_service") or "app"),

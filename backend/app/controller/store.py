@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS preview_runs (
     sandbox_id TEXT NOT NULL REFERENCES sandboxes(id),
     proposal_id TEXT NOT NULL,
     mode TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'live',
+    task_id TEXT,
+    commit_sha TEXT,
     status TEXT NOT NULL,
     selected_service TEXT,
     container_port INTEGER NOT NULL,
@@ -148,6 +151,92 @@ CREATE TABLE IF NOT EXISTS project_secrets (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (project_id, name)
 );
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    sandbox_id TEXT NOT NULL REFERENCES sandboxes(id),
+    agent_run_id TEXT,
+    branch TEXT NOT NULL,
+    base_branch TEXT,
+    base_commit TEXT NOT NULL,
+    head_commit TEXT,
+    status TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    settled_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_open_task_per_sandbox
+ON tasks(sandbox_id)
+WHERE status IN ('open', 'reported', 'previewing', 'review');
+
+CREATE TABLE IF NOT EXISTS planning_sessions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    sandbox_id TEXT NOT NULL REFERENCES sandboxes(id),
+    project_name TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    turn_state TEXT NOT NULL DEFAULT 'idle',
+    clarifier_provider TEXT NOT NULL,
+    planner_provider TEXT NOT NULL,
+    reviewer_provider TEXT NOT NULL,
+    credential_profile TEXT NOT NULL DEFAULT 'default',
+    max_review_turns INTEGER NOT NULL,
+    review_turn INTEGER NOT NULL DEFAULT 0,
+    plan_revision INTEGER NOT NULL DEFAULT 0,
+    confirmed INTEGER NOT NULL DEFAULT 0,
+    understanding_summary TEXT NOT NULL DEFAULT '',
+    feature_brief TEXT NOT NULL DEFAULT '',
+    plan_spec_json TEXT,
+    failure_reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    settled_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS planning_sessions_by_project
+ON planning_sessions(project_id, created_at);
+
+CREATE TABLE IF NOT EXISTS planning_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES planning_sessions(id),
+    sequence INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    text TEXT NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    raw_output TEXT NOT NULL DEFAULT '',
+    revision INTEGER,
+    model TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    UNIQUE (session_id, sequence)
+);
+
+CREATE TABLE IF NOT EXISTS planning_findings (
+    session_id TEXT NOT NULL REFERENCES planning_sessions(id),
+    finding_id TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    text TEXT NOT NULL,
+    status TEXT NOT NULL,
+    planner_response TEXT NOT NULL DEFAULT '',
+    raised_in_round INTEGER NOT NULL,
+    last_seen_round INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, finding_id)
+);
+
+CREATE TABLE IF NOT EXISTS planning_plan_revisions (
+    session_id TEXT NOT NULL REFERENCES planning_sessions(id),
+    revision INTEGER NOT NULL,
+    plan_json TEXT NOT NULL,
+    plan_markdown TEXT NOT NULL,
+    reviewer_approved INTEGER,
+    reviewer_summary TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    reviewed_at TEXT,
+    PRIMARY KEY (session_id, revision)
+);
 """
 
 
@@ -168,6 +257,65 @@ class ControllerStore:
             )
             connection.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, ?)",
+                (_now(),),
+            )
+            try:
+                connection.execute(
+                    "ALTER TABLE sandboxes ADD COLUMN baseline_commit TEXT"
+                )
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)",
+                (_now(),),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, ?)",
+                (_now(),),
+            )
+            for statement in (
+                "ALTER TABLE preview_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'live'",
+                "ALTER TABLE preview_runs ADD COLUMN task_id TEXT",
+                "ALTER TABLE preview_runs ADD COLUMN commit_sha TEXT",
+            ):
+                try:
+                    connection.execute(statement)
+                except sqlite3.OperationalError as error:
+                    if "duplicate column name" not in str(error):
+                        raise
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (5, ?)",
+                (_now(),),
+            )
+            # base_branch records the branch a task was cut from, so accept and
+            # reject switch back to it instead of assuming 'main'. A sandbox
+            # imported from a host repository keeps that repository's branch.
+            try:
+                connection.execute("ALTER TABLE tasks ADD COLUMN base_branch TEXT")
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (6, ?)",
+                (_now(),),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (7, ?)",
+                (_now(),),
+            )
+            # model records which model produced a turn, at the time it ran.
+            # The planning settings can change between a turn and the reading
+            # of it, so the setting is not a record of what happened.
+            try:
+                connection.execute(
+                    "ALTER TABLE planning_messages ADD COLUMN model TEXT NOT NULL DEFAULT ''"
+                )
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (8, ?)",
                 (_now(),),
             )
 
@@ -256,6 +404,650 @@ class ControllerStore:
             connection.execute(
                 "UPDATE sandboxes SET status = ?, updated_at = ? WHERE id = ?",
                 (status, _now(), sandbox_id),
+            )
+
+    def set_sandbox_baseline_commit(
+        self,
+        *,
+        sandbox_id: str,
+        baseline_commit: str,
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                "UPDATE sandboxes SET baseline_commit = ?, updated_at = ? WHERE id = ?",
+                (baseline_commit, _now(), sandbox_id),
+            )
+
+    def sandbox_baseline_commit(self, sandbox_id: str) -> str | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT baseline_commit FROM sandboxes WHERE id = ?",
+                (sandbox_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return row["baseline_commit"]
+
+    def sandbox(self, sandbox_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM sandboxes WHERE id = ?",
+                (sandbox_id,),
+            ).fetchone()
+        return _row(row)
+
+    def delete_sandbox(self, sandbox_id: str) -> None:
+        """Deletes controller state after Docker resources leave the sandbox."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT project_id FROM sandboxes WHERE id = ?",
+                (sandbox_id,),
+            ).fetchone()
+            if row is None:
+                return
+            project_key = str(row["project_id"])
+            connection.execute(
+                "DELETE FROM assigned_ports WHERE preview_run_id IN "
+                "(SELECT id FROM preview_runs WHERE sandbox_id = ?)",
+                (sandbox_id,),
+            )
+            connection.execute(
+                "DELETE FROM protected_file_baselines WHERE sandbox_id = ?",
+                (sandbox_id,),
+            )
+            connection.execute("DELETE FROM approvals WHERE sandbox_id = ?", (sandbox_id,))
+            connection.execute(
+                "DELETE FROM review_rounds WHERE sandbox_id = ?",
+                (sandbox_id,),
+            )
+            connection.execute("DELETE FROM tasks WHERE sandbox_id = ?", (sandbox_id,))
+            connection.execute("DELETE FROM events WHERE sandbox_id = ?", (sandbox_id,))
+            connection.execute("DELETE FROM agent_runs WHERE sandbox_id = ?", (sandbox_id,))
+            connection.execute(
+                "DELETE FROM preview_runs WHERE sandbox_id = ?",
+                (sandbox_id,),
+            )
+            connection.execute(
+                "DELETE FROM shared_database_schemas WHERE sandbox_id = ?",
+                (sandbox_id,),
+            )
+            connection.execute("DELETE FROM sandboxes WHERE id = ?", (sandbox_id,))
+            remaining = connection.execute(
+                "SELECT 1 FROM sandboxes WHERE project_id = ? LIMIT 1",
+                (project_key,),
+            ).fetchone()
+            if remaining is None:
+                connection.execute(
+                    "DELETE FROM project_secrets WHERE project_id = ?",
+                    (project_key,),
+                )
+                connection.execute("DELETE FROM projects WHERE id = ?", (project_key,))
+
+    def create_task(
+        self,
+        *,
+        task_id: str,
+        sandbox_id: str,
+        agent_run_id: str | None,
+        branch: str,
+        base_branch: str,
+        base_commit: str,
+        title: str,
+        status: str,
+    ) -> None:
+        """Claims the sandbox's single open-task slot, or raises sqlite3.IntegrityError.
+
+        The one_open_task_per_sandbox partial index is the only thing that
+        decides the race, exactly as one_active_agent_per_sandbox does for
+        coding agents. Callers must insert before touching git, so a losing
+        caller has not yet changed the sandbox.
+        """
+        now = _now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO tasks(
+                    id, sandbox_id, agent_run_id, branch, base_branch, base_commit,
+                    status, title, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    sandbox_id,
+                    agent_run_id,
+                    branch,
+                    base_branch,
+                    base_commit,
+                    status,
+                    title,
+                    now,
+                    now,
+                ),
+            )
+            self._event(
+                connection,
+                sandbox_id=sandbox_id,
+                run_id=task_id,
+                kind="task.started",
+                payload={
+                    "branch": branch,
+                    "base_branch": base_branch,
+                    "base_commit": base_commit,
+                },
+            )
+
+    def set_task_base_branch(self, *, task_id: str, base_branch: str) -> None:
+        """Records the branch the task was cut from, read back from git.
+
+        The row has to exist before git runs, so the branch name can only be
+        written once the branch script has reported it.
+        """
+        with self._connection() as connection:
+            connection.execute(
+                "UPDATE tasks SET base_branch = ?, updated_at = ? WHERE id = ?",
+                (base_branch, _now(), task_id),
+            )
+
+    def delete_task(self, *, task_id: str) -> None:
+        """Removes a task whose branch never got created. The events it wrote stay."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT sandbox_id FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                return
+            connection.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            self._event(
+                connection,
+                sandbox_id=str(row["sandbox_id"]),
+                run_id=task_id,
+                kind="task.discarded",
+                payload={},
+            )
+
+    def advance_task_status(
+        self,
+        *,
+        task_id: str,
+        from_statuses: Iterable[str],
+        to_status: str,
+        head_commit: str | None = None,
+        settled: bool = False,
+    ) -> bool:
+        """Moves a task only from one of from_statuses, in a single guarded UPDATE.
+
+        The permitted source statuses travel in the WHERE clause, so a caller
+        naming the wrong ones changes no row instead of forcing an illegal
+        transition, and two concurrent callers cannot both win. Returns whether
+        the row moved.
+        """
+        statuses = tuple(from_statuses)
+        if not statuses:
+            return False
+        placeholders = ", ".join("?" for _ in statuses)
+        now = _now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE tasks
+                SET status = ?,
+                    head_commit = COALESCE(?, head_commit),
+                    updated_at = ?,
+                    settled_at = CASE WHEN ? = 1 THEN ? ELSE settled_at END
+                WHERE id = ? AND status IN ({placeholders})
+                """,
+                (
+                    to_status,
+                    head_commit,
+                    now,
+                    1 if settled else 0,
+                    now,
+                    task_id,
+                    *statuses,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return False
+            row = connection.execute(
+                "SELECT sandbox_id FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            self._event(
+                connection,
+                sandbox_id=str(row["sandbox_id"]) if row is not None else None,
+                run_id=task_id,
+                kind="task.status",
+                payload={"status": to_status, "head_commit": head_commit},
+            )
+        return True
+
+    def task(self, task_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        return _row(row)
+
+    def tasks_for_sandbox(self, sandbox_id: str) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM tasks WHERE sandbox_id = ? ORDER BY created_at",
+                (sandbox_id,),
+            ).fetchall()
+        return [_row(row) for row in rows if row is not None]
+
+    def open_task(
+        self,
+        sandbox_id: str,
+        *,
+        open_statuses: Iterable[str],
+    ) -> dict[str, Any] | None:
+        return self._active_run("tasks", sandbox_id, tuple(open_statuses))
+
+    def create_planning_session(
+        self,
+        *,
+        session_id: str,
+        project_id: str,
+        sandbox_id: str,
+        project_name: str,
+        title: str,
+        status: str,
+        clarifier_provider: str,
+        planner_provider: str,
+        reviewer_provider: str,
+        credential_profile: str,
+        max_review_turns: int,
+    ) -> None:
+        now = _now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO planning_sessions(
+                    id, project_id, sandbox_id, project_name, title, status,
+                    clarifier_provider, planner_provider, reviewer_provider,
+                    credential_profile, max_review_turns, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    project_id,
+                    sandbox_id,
+                    project_name,
+                    title,
+                    status,
+                    clarifier_provider,
+                    planner_provider,
+                    reviewer_provider,
+                    credential_profile,
+                    max_review_turns,
+                    now,
+                    now,
+                ),
+            )
+            self._event(
+                connection,
+                sandbox_id=sandbox_id,
+                run_id=session_id,
+                kind="planning.started",
+                payload={"status": status, "title": title},
+            )
+
+    def planning_session(self, session_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM planning_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+        return _row(row)
+
+    def planning_sessions_for_project(self, project_id: str) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM planning_sessions
+                WHERE project_id = ?
+                ORDER BY created_at DESC
+                """,
+                (project_id,),
+            ).fetchall()
+        return [_row(row) for row in rows if row is not None]
+
+    def advance_planning_status(
+        self,
+        *,
+        session_id: str,
+        from_statuses: Iterable[str],
+        to_status: str,
+        settled: bool = False,
+        failure_reason: str | None = None,
+    ) -> bool:
+        """Moves a session only from one of from_statuses, in a guarded UPDATE."""
+        statuses = tuple(from_statuses)
+        if not statuses:
+            return False
+        placeholders = ", ".join("?" for _ in statuses)
+        now = _now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE planning_sessions
+                SET status = ?,
+                    updated_at = ?,
+                    settled_at = CASE WHEN ? = 1 THEN ? ELSE settled_at END,
+                    failure_reason = COALESCE(?, failure_reason)
+                WHERE id = ? AND status IN ({placeholders})
+                """,
+                (
+                    to_status,
+                    now,
+                    1 if settled else 0,
+                    now,
+                    failure_reason,
+                    session_id,
+                    *statuses,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return False
+            row = connection.execute(
+                "SELECT sandbox_id FROM planning_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            self._event(
+                connection,
+                sandbox_id=str(row["sandbox_id"]) if row is not None else None,
+                run_id=session_id,
+                kind="planning.status",
+                payload={"status": to_status},
+            )
+        return True
+
+    def claim_planning_turn(self, session_id: str) -> bool:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE planning_sessions
+                SET turn_state = 'running', updated_at = ?
+                WHERE id = ? AND turn_state = 'idle'
+                """,
+                (_now(), session_id),
+            )
+            return cursor.rowcount == 1
+
+    def release_planning_turn(self, session_id: str) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE planning_sessions
+                SET turn_state = 'idle', updated_at = ?
+                WHERE id = ?
+                """,
+                (_now(), session_id),
+            )
+
+    def running_planning_sessions(self) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM planning_sessions
+                WHERE turn_state = 'running'
+                ORDER BY created_at
+                """
+            ).fetchall()
+        return [_row(row) for row in rows if row is not None]
+
+    def append_planning_message(
+        self,
+        *,
+        session_id: str,
+        role: str,
+        text: str,
+        payload: Mapping[str, Any] | None = None,
+        raw_output: str = "",
+        revision: int | None = None,
+        model: str = "",
+    ) -> int:
+        with self._connection() as connection:
+            sequence = int(
+                connection.execute(
+                    """
+                    SELECT COALESCE(MAX(sequence), 0) + 1
+                    FROM planning_messages
+                    WHERE session_id = ?
+                    """,
+                    (session_id,),
+                ).fetchone()[0]
+            )
+            connection.execute(
+                """
+                INSERT INTO planning_messages(
+                    session_id, sequence, role, text, payload_json, raw_output,
+                    revision, model, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    sequence,
+                    role,
+                    text,
+                    _json(payload or {}),
+                    raw_output,
+                    revision,
+                    model,
+                    _now(),
+                ),
+            )
+        return sequence
+
+    def planning_messages(self, session_id: str) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM planning_messages
+                WHERE session_id = ?
+                ORDER BY sequence
+                """,
+                (session_id,),
+            ).fetchall()
+        return [_row(row) for row in rows if row is not None]
+
+    def planning_message(self, session_id: str, sequence: int) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM planning_messages
+                WHERE session_id = ? AND sequence = ?
+                """,
+                (session_id, sequence),
+            ).fetchone()
+        return _row(row) if row is not None else None
+
+    def set_planning_understanding(self, *, session_id: str, summary: str) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE planning_sessions
+                SET understanding_summary = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (summary, _now(), session_id),
+            )
+
+    def freeze_planning_brief(
+        self,
+        *,
+        session_id: str,
+        brief: str,
+        confirmed: bool,
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE planning_sessions
+                SET feature_brief = ?, confirmed = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (brief, 1 if confirmed else 0, _now(), session_id),
+            )
+
+    def record_plan_revision(
+        self,
+        *,
+        session_id: str,
+        revision: int,
+        plan_json: Mapping[str, Any],
+        plan_markdown: str,
+    ) -> None:
+        now = _now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO planning_plan_revisions(
+                    session_id, revision, plan_json, plan_markdown, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (session_id, revision, _json(plan_json), plan_markdown, now),
+            )
+            connection.execute(
+                """
+                UPDATE planning_sessions
+                SET plan_revision = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (revision, now, session_id),
+            )
+
+    def record_review_result(
+        self,
+        *,
+        session_id: str,
+        revision: int,
+        approved: bool,
+        summary: str,
+    ) -> None:
+        now = _now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE planning_plan_revisions
+                SET reviewer_approved = ?, reviewer_summary = ?, reviewed_at = ?
+                WHERE session_id = ? AND revision = ?
+                """,
+                (1 if approved else 0, summary, now, session_id, revision),
+            )
+            connection.execute(
+                """
+                UPDATE planning_sessions
+                SET review_turn = review_turn + 1, updated_at = ?
+                WHERE id = ?
+                """,
+                (now, session_id),
+            )
+
+    def plan_revisions(self, session_id: str) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM planning_plan_revisions
+                WHERE session_id = ?
+                ORDER BY revision
+                """,
+                (session_id,),
+            ).fetchall()
+        return [_row(row) for row in rows if row is not None]
+
+    def upsert_planning_finding(
+        self,
+        *,
+        session_id: str,
+        finding_id: str,
+        severity: str,
+        text: str,
+        status: str,
+        round_number: int,
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO planning_findings(
+                    session_id, finding_id, severity, text, status,
+                    raised_in_round, last_seen_round, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id, finding_id) DO UPDATE SET
+                    severity = excluded.severity,
+                    text = excluded.text,
+                    status = excluded.status,
+                    last_seen_round = excluded.last_seen_round,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    session_id,
+                    finding_id,
+                    severity,
+                    text,
+                    status,
+                    round_number,
+                    round_number,
+                    _now(),
+                ),
+            )
+
+    def set_finding_response(
+        self,
+        *,
+        session_id: str,
+        finding_id: str,
+        status: str,
+        planner_response: str,
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE planning_findings
+                SET status = ?, planner_response = ?, updated_at = ?
+                WHERE session_id = ? AND finding_id = ?
+                """,
+                (status, planner_response, _now(), session_id, finding_id),
+            )
+
+    def resolve_unseen_findings(self, *, session_id: str, round_number: int) -> int:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE planning_findings
+                SET status = 'resolved', updated_at = ?
+                WHERE session_id = ?
+                    AND status != 'resolved'
+                    AND last_seen_round < ?
+                """,
+                (_now(), session_id, round_number),
+            )
+            return cursor.rowcount
+
+    def planning_findings(self, session_id: str) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM planning_findings
+                WHERE session_id = ?
+                ORDER BY raised_in_round, finding_id
+                """,
+                (session_id,),
+            ).fetchall()
+        return [_row(row) for row in rows if row is not None]
+
+    def set_plan_spec(self, *, session_id: str, plan_spec: Mapping[str, Any]) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE planning_sessions
+                SET plan_spec_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (_json(plan_spec), _now(), session_id),
             )
 
     def record_initial_baseline(
@@ -520,16 +1312,18 @@ class ControllerStore:
             connection.execute(
                 """
                 INSERT INTO preview_runs(
-                    id, sandbox_id, proposal_id, mode, status, selected_service,
+                    id, sandbox_id, proposal_id, mode, kind, task_id, commit_sha,
+                    status, selected_service,
                     container_port, host_port, config_json, config_digest,
                     network_name, created_at, started_at, expires_at, last_activity_at
                 ) VALUES (
-                    :id, :sandbox_id, :proposal_id, :mode, :status, :selected_service,
+                    :id, :sandbox_id, :proposal_id, :mode, :kind, :task_id, :commit_sha,
+                    :status, :selected_service,
                     :container_port, :host_port, :config_json, :config_digest,
                     :network_name, :created_at, :started_at, :expires_at, :last_activity_at
                 )
                 """,
-                dict(values),
+                {"kind": "live", "task_id": None, "commit_sha": None, **dict(values)},
             )
             if values.get("host_port"):
                 connection.execute(
@@ -544,7 +1338,13 @@ class ControllerStore:
                 sandbox_id=str(values["sandbox_id"]),
                 run_id=str(values["id"]),
                 kind="preview.started",
-                payload={"mode": values["mode"], "host_port": values.get("host_port")},
+                payload={
+                    "mode": values["mode"],
+                    "kind": values.get("kind", "live"),
+                    "task_id": values.get("task_id"),
+                    "commit_sha": values.get("commit_sha"),
+                    "host_port": values.get("host_port"),
+                },
             )
 
     def update_preview_run(self, run_id: str, **changes: Any) -> None:

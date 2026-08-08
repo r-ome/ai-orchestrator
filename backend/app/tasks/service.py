@@ -1,0 +1,760 @@
+import hashlib
+import re
+import sqlite3
+from uuid import uuid4
+
+from docker.client import DockerClient
+from docker.errors import DockerException
+
+from app.controller.store import ControllerStore
+from app.previews.config import get_preview_settings
+from app.projects.models import ProjectRegistration
+from app.projects.service import (
+    ProjectOperationError,
+    ensure_git_baseline,
+    inspect_registered_project,
+    project_id,
+)
+from app.tasks.models import (
+    DEFAULT_BASE_BRANCH,
+    OPEN_TASK_STATUSES,
+    TERMINAL_TASK_STATUSES,
+    ReportTaskRequest,
+    StartTaskRequest,
+    Task,
+    TaskStatus,
+    TasksResponse,
+    source_statuses,
+)
+
+
+TASK_BRANCH_PREFIX = "task/"
+_TASK_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{7,64}$")
+_BRANCH_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
+
+
+class TaskOperationError(Exception):
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+def start_task(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    request: StartTaskRequest,
+) -> Task:
+    project, sandbox_id = _resolve_sandbox(docker_client, request.project_name)
+    if not project.ready:
+        raise TaskOperationError(
+            409,
+            f"Sandbox '{request.project_name}' is not ready",
+        )
+    source_path = getattr(project, "source_path", "") or f"legacy:{project.name}"
+    controller_store.register_sandbox(
+        sandbox_id=sandbox_id,
+        project_id=project_id(source_path),
+        project_name=project.name,
+        source_path=source_path,
+        volume_name=project.volume_name,
+        status="ready",
+        created_at=getattr(project, "created_at", ""),
+    )
+
+    # ensure_git_baseline is idempotent and returns the sandbox's current HEAD,
+    # which is what a task branches from. The recorded baseline_commit is the
+    # first commit ever made, not the current one, so it cannot serve here.
+    git_image = get_preview_settings().git_image
+    base_commit = ensure_git_baseline(docker_client, git_image, project.volume_name)
+    if not _COMMIT_PATTERN.match(base_commit):
+        raise TaskOperationError(
+            502,
+            "Sandbox git baseline did not return a commit hash",
+        )
+    if not controller_store.sandbox_baseline_commit(sandbox_id):
+        controller_store.set_sandbox_baseline_commit(
+            sandbox_id=sandbox_id,
+            baseline_commit=base_commit,
+        )
+
+    task_id = uuid4().hex
+    branch = f"{TASK_BRANCH_PREFIX}{task_id}"
+    active_agent = controller_store.active_agent(sandbox_id)
+    try:
+        controller_store.create_task(
+            task_id=task_id,
+            sandbox_id=sandbox_id,
+            agent_run_id=str(active_agent["id"]) if active_agent else None,
+            branch=branch,
+            base_branch="",
+            base_commit=base_commit,
+            title=request.title,
+            status=TaskStatus.OPEN.value,
+        )
+    except sqlite3.IntegrityError as error:
+        raise TaskOperationError(
+            409,
+            f"Sandbox '{project.name}' already has an open task",
+        ) from error
+
+    # The row is the lock. It exists before git is touched, so a caller that
+    # lost the race above has changed nothing in the sandbox.
+    try:
+        output = _run_git(
+            docker_client,
+            git_image,
+            project.volume_name,
+            _branch_script(branch, base_commit),
+        )
+        base_branch = _parse_base_branch(output)
+        if not base_branch:
+            raise TaskOperationError(
+                502,
+                "Sandbox git did not report the branch the task was cut from",
+            )
+        # Checked here as well as at settlement, so a sandbox on a branch name
+        # this code cannot handle refuses the task instead of opening one that
+        # can never be accepted or rejected.
+        _validated_branch(base_branch, task_id=task_id)
+        controller_store.set_task_base_branch(
+            task_id=task_id,
+            base_branch=base_branch,
+        )
+    except Exception:
+        controller_store.delete_task(task_id=task_id)
+        raise
+
+    return _task(controller_store, task_id)
+
+
+def list_tasks(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    project_name: str,
+) -> TasksResponse:
+    _, sandbox_id = _resolve_sandbox(docker_client, project_name)
+    tasks = [
+        Task.model_validate(row)
+        for row in controller_store.tasks_for_sandbox(sandbox_id)
+    ]
+    return TasksResponse(count=len(tasks), tasks=tasks)
+
+
+def get_task(controller_store: ControllerStore, task_id: str) -> Task:
+    return _task(controller_store, _validated_task_id(task_id))
+
+
+def report_task_complete(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    task_id: str,
+    request: ReportTaskRequest,
+) -> Task:
+    """Verifies an agent's completion claim against the task branch itself.
+
+    The claim decides nothing. The controller runs git in a throwaway
+    container, reads the branch head and the worktree state, and advances the
+    task only when a real commit exists on the branch. No file inside the
+    sandbox volume is read, so /workspace/.agent/preview.yaml and anything
+    else the agent authored is inert here.
+    """
+    task = _task(controller_store, _validated_task_id(task_id))
+    controller_store.event(
+        sandbox_id=task.sandbox_id,
+        run_id=task.id,
+        kind="task.completion_claimed",
+        payload={"summary": request.summary},
+    )
+    if task.status is not TaskStatus.OPEN:
+        raise TaskOperationError(
+            409,
+            f"Task '{task.id}' is not open (status '{task.status.value}')",
+        )
+
+    sandbox = controller_store.sandbox(task.sandbox_id)
+    if sandbox is None:
+        raise TaskOperationError(404, f"Sandbox '{task.sandbox_id}' is unknown")
+    volume_name = str(sandbox["volume_name"])
+
+    git_image = get_preview_settings().git_image
+    output = _run_git(
+        docker_client,
+        git_image,
+        volume_name,
+        _report_script(task.branch),
+    )
+    head_commit, checked_out, dirty_paths = _parse_report(output)
+
+    if checked_out != task.branch:
+        raise TaskOperationError(
+            409,
+            (
+                f"Sandbox is on branch '{checked_out or 'a detached HEAD'}', "
+                f"not the task branch '{task.branch}'"
+            ),
+        )
+    if dirty_paths:
+        listed = ", ".join(dirty_paths[:20])
+        suffix = "" if len(dirty_paths) <= 20 else f" (+{len(dirty_paths) - 20} more)"
+        raise TaskOperationError(
+            409,
+            f"Task branch has uncommitted changes: {listed}{suffix}",
+        )
+    if head_commit is None:
+        raise TaskOperationError(
+            409,
+            f"Task branch '{task.branch}' has no head commit",
+        )
+    if head_commit == task.base_commit:
+        raise TaskOperationError(
+            409,
+            f"Task branch '{task.branch}' has no commit beyond {task.base_commit}",
+        )
+
+    transition_task(
+        controller_store,
+        task_id=task.id,
+        to_status=TaskStatus.REPORTED,
+        head_commit=head_commit,
+    )
+    return _task(controller_store, task.id)
+
+
+def accept_task(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    task_id: str,
+) -> Task:
+    """Fast-forwards the sandbox branch onto the reviewed commit, or refuses.
+
+    This is the only code path that can destroy committed work, so every step
+    is a refusal by default: the merge is `--ff-only`, the task branch head
+    must still be the commit the human reviewed, and the worktree must be
+    clean. Git runs before the status moves, because a merge that happened
+    with a status that did not follow converges on a retry, while a status
+    that moved without the merge cannot.
+    """
+    task = _task(controller_store, _validated_task_id(task_id))
+    if task.status is TaskStatus.ACCEPTED:
+        return task
+    if task.status is not TaskStatus.REVIEW:
+        raise TaskOperationError(
+            409,
+            f"Task '{task.id}' is not in review (status '{task.status.value}')",
+        )
+    head_commit = task.head_commit or ""
+    if not _COMMIT_PATTERN.match(head_commit):
+        raise TaskOperationError(409, f"Task '{task.id}' has no reviewed head commit")
+
+    sandbox = _sandbox_for_task(controller_store, task)
+    base_branch = _base_branch(task)
+    output = _run_git(
+        docker_client,
+        get_preview_settings().git_image,
+        str(sandbox["volume_name"]),
+        _accept_script(task.branch, base_branch, head_commit),
+    )
+    result, fields, dirty = _parse_settle(output)
+    _raise_accept_refusal(task, base_branch, head_commit, result, fields, dirty)
+
+    # The merge is done. Anything below can fail without losing committed work:
+    # every commit that was reachable before is reachable from base_branch now.
+    settled = transition_task(
+        controller_store,
+        task_id=task.id,
+        to_status=TaskStatus.ACCEPTED,
+    )
+    controller_store.event(
+        sandbox_id=task.sandbox_id,
+        run_id=task.id,
+        kind="task.accepted",
+        payload={
+            "base_branch": base_branch,
+            "base_head": fields.get("base", ""),
+            "head_commit": head_commit,
+            "already_merged": result == "already-merged",
+            "agent_run_id": task.agent_run_id,
+        },
+    )
+    if not settled:
+        current = _task(controller_store, task.id)
+        if current.status is not TaskStatus.ACCEPTED:
+            raise TaskOperationError(
+                409,
+                (
+                    f"Task '{task.id}' merged into '{base_branch}' but moved to "
+                    f"'{current.status.value}' before it could be recorded as "
+                    "accepted; no commit was lost"
+                ),
+            )
+    _stop_task_preview(docker_client, controller_store, task, sandbox)
+    return _task(controller_store, task.id)
+
+
+def reject_task(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    task_id: str,
+) -> Task:
+    """Returns the sandbox to its own branch and deletes the task branch.
+
+    Works from `open` as well as `review`: an agent that never commits would
+    otherwise hold the sandbox's only task slot forever. A branch that was
+    never created, or was already deleted, is a completed reject, not an error.
+    """
+    task = _task(controller_store, _validated_task_id(task_id))
+    if task.status is TaskStatus.REJECTED:
+        return task
+    if task.status not in {TaskStatus.OPEN, TaskStatus.REVIEW}:
+        raise TaskOperationError(
+            409,
+            f"Task '{task.id}' cannot be rejected (status '{task.status.value}')",
+        )
+
+    sandbox = _sandbox_for_task(controller_store, task)
+    base_branch = _base_branch(task)
+    output = _run_git(
+        docker_client,
+        get_preview_settings().git_image,
+        str(sandbox["volume_name"]),
+        _reject_script(task.branch, base_branch),
+    )
+    result, fields, details = _parse_settle(output)
+    _raise_reject_refusal(task, base_branch, result, details)
+
+    settled = transition_task(
+        controller_store,
+        task_id=task.id,
+        to_status=TaskStatus.REJECTED,
+    )
+    controller_store.event(
+        sandbox_id=task.sandbox_id,
+        run_id=task.id,
+        kind="task.rejected",
+        payload={
+            "base_branch": base_branch,
+            "base_head": fields.get("base", ""),
+            "branch_existed": result == "deleted",
+            "agent_run_id": task.agent_run_id,
+        },
+    )
+    if not settled:
+        current = _task(controller_store, task.id)
+        if current.status is not TaskStatus.REJECTED:
+            raise TaskOperationError(
+                409,
+                (
+                    f"Task '{task.id}' branch was deleted but the task moved to "
+                    f"'{current.status.value}' before it could be recorded as "
+                    "rejected"
+                ),
+            )
+    _stop_task_preview(docker_client, controller_store, task, sandbox)
+    return _task(controller_store, task.id)
+
+
+def transition_task(
+    controller_store: ControllerStore,
+    *,
+    task_id: str,
+    to_status: TaskStatus,
+    head_commit: str | None = None,
+) -> bool:
+    """The only way a task's status changes. Sources come from TASK_TRANSITIONS.
+
+    Callers name a destination, never a source, so a transition the table does
+    not draw cannot be requested. The store turns the sources into the UPDATE's
+    WHERE clause, which makes the check atomic rather than a read-then-write.
+    """
+    return controller_store.advance_task_status(
+        task_id=task_id,
+        from_statuses=[status.value for status in source_statuses(to_status)],
+        to_status=to_status.value,
+        head_commit=head_commit,
+        settled=to_status in TERMINAL_TASK_STATUSES,
+    )
+
+
+def open_task_for_sandbox(
+    controller_store: ControllerStore,
+    sandbox_id: str,
+) -> Task | None:
+    row = controller_store.open_task(
+        sandbox_id,
+        open_statuses=[status.value for status in OPEN_TASK_STATUSES],
+    )
+    return Task.model_validate(row) if row is not None else None
+
+
+def _resolve_sandbox(
+    docker_client: DockerClient,
+    project_name: str,
+) -> tuple[ProjectRegistration, str]:
+    try:
+        project = inspect_registered_project(docker_client, project_name)
+    except ProjectOperationError as error:
+        raise TaskOperationError(error.status_code, error.detail) from error
+    # Same derivation create_agent uses, so a task and a coding agent on one
+    # sandbox address the same controller row.
+    sandbox_id = getattr(project, "sandbox_id", "") or hashlib.sha256(
+        f"sandbox:{project.volume_name}".encode()
+    ).hexdigest()[:32]
+    return project, sandbox_id
+
+
+def _task(controller_store: ControllerStore, task_id: str) -> Task:
+    row = controller_store.task(task_id)
+    if row is None:
+        raise TaskOperationError(404, f"Task '{task_id}' is unknown")
+    return Task.model_validate(row)
+
+
+def _sandbox_for_task(
+    controller_store: ControllerStore,
+    task: Task,
+) -> dict[str, object]:
+    sandbox = controller_store.sandbox(task.sandbox_id)
+    if sandbox is None:
+        raise TaskOperationError(404, f"Sandbox '{task.sandbox_id}' is unknown")
+    return sandbox
+
+
+def _base_branch(task: Task) -> str:
+    """The branch a task settles onto, from trusted metadata only.
+
+    Recorded when the controller cut the task branch. A sandbox imported from
+    a host repository keeps that repository's branch, which is often not
+    `main`, so the name is never assumed. Rows written before the column
+    existed fall back to `main`, and a missing branch is refused rather than
+    guessed from sandbox state a coding agent can change.
+    """
+    return _validated_branch(
+        (task.base_branch or DEFAULT_BASE_BRANCH).strip(),
+        task_id=task.id,
+    )
+
+
+def _validated_branch(name: str, *, task_id: str) -> str:
+    # The name reaches a shell script inside double quotes. Git itself allows
+    # characters that would end that quoting, so the accepted set is a
+    # whitelist rather than an escape.
+    if not _BRANCH_PATTERN.match(name) or ".." in name or name.endswith(".lock"):
+        raise TaskOperationError(
+            409,
+            f"Task '{task_id}' has an unusable base branch '{name}'",
+        )
+    return name
+
+
+def _stop_task_preview(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    task: Task,
+    sandbox: dict[str, object],
+) -> None:
+    """Stops the settled task's preview stack and removes its run-scoped volumes.
+
+    Runs after the status moves, so a Docker failure here leaks containers
+    rather than leaving the task claiming a settlement that did not happen.
+    The dependency volume is keyed by lockfile rather than by run and is
+    labelled persistent, so preview cleanup leaves it in place.
+    """
+    # Imported here because app.previews.service imports transition_task from
+    # this module; a module-level import would close the cycle.
+    from app.previews.service import PreviewOperationError, stop_preview
+
+    active = controller_store.active_preview(task.sandbox_id)
+    if active is None or str(active.get("task_id") or "") != task.id:
+        return
+    try:
+        stop_preview(
+            docker_client,
+            controller_store,
+            str(sandbox["project_name"]),
+            remove_data_volumes=True,
+            status="stopped",
+        )
+    except (PreviewOperationError, ProjectOperationError, DockerException) as error:
+        controller_store.event(
+            sandbox_id=task.sandbox_id,
+            run_id=task.id,
+            kind="task.preview_stop_failed",
+            payload={"preview_run_id": str(active["id"]), "error": str(error)},
+        )
+
+
+def _validated_task_id(task_id: str) -> str:
+    # Task identifiers reach a shell script as a branch name, so anything
+    # outside the generated alphabet is refused before it gets there.
+    if not _TASK_ID_PATTERN.match(task_id):
+        raise TaskOperationError(404, f"Task '{task_id}' is unknown")
+    return task_id
+
+
+def _branch_script(branch: str, base_commit: str) -> str:
+    # The base branch is read before the switch, because after it HEAD names
+    # the task branch. Accept and reject merge into and return to this branch,
+    # so a task that cannot name one is refused here rather than at settlement.
+    return (
+        "set -eu\n"
+        "cd /project\n"
+        'head="$(git rev-parse --verify HEAD)"\n'
+        f'if [ "$head" != "{base_commit}" ]; then\n'
+        '  echo "sandbox head moved to $head" >&2\n'
+        "  exit 1\n"
+        "fi\n"
+        'base_branch="$(git symbolic-ref --quiet --short HEAD || echo "")"\n'
+        'if [ -z "$base_branch" ]; then\n'
+        '  echo "sandbox HEAD is detached; a task needs a branch to settle onto" >&2\n'
+        "  exit 1\n"
+        "fi\n"
+        'printf "base-branch %s\\n" "$base_branch"\n'
+        f'git switch -c "{branch}"\n'
+        f'git rev-parse --verify "refs/heads/{branch}"\n'
+    )
+
+
+def _report_script(branch: str) -> str:
+    return (
+        "set -eu\n"
+        "cd /project\n"
+        f'printf "head %s\\n" "$(git rev-parse --verify "refs/heads/{branch}")"\n'
+        'printf "branch %s\\n" "$(git symbolic-ref --quiet --short HEAD || echo "")"\n'
+        "git status --porcelain | while IFS= read -r entry; do\n"
+        '  printf "dirty %s\\n" "$entry"\n'
+        "done\n"
+    )
+
+
+def _accept_script(branch: str, base_branch: str, head_commit: str) -> str:
+    """Refuses first, mutates last, and repeats safely.
+
+    Every condition that should return 409 prints a result line and exits 0,
+    so the caller can tell a refusal from a broken container. The mutating
+    three commands only run once nothing is left to refuse, which keeps the
+    checkout untouched when the merge would not have been a fast-forward.
+    """
+    return (
+        "set -eu\n"
+        "cd /project\n"
+        f'base_head="$(git rev-parse --verify --quiet "refs/heads/{base_branch}" || true)"\n'
+        'if [ -z "$base_head" ]; then\n'
+        '  printf "result missing-base-branch\\n"\n'
+        "  exit 0\n"
+        "fi\n"
+        f'task_head="$(git rev-parse --verify --quiet "refs/heads/{branch}" || true)"\n'
+        'if [ -z "$task_head" ]; then\n'
+        f'  if git merge-base --is-ancestor "{head_commit}" "refs/heads/{base_branch}" 2>/dev/null; then\n'
+        '    printf "result already-merged\\n"\n'
+        '    printf "base %s\\n" "$base_head"\n'
+        "    exit 0\n"
+        "  fi\n"
+        '  printf "result missing-task-branch\\n"\n'
+        "  exit 0\n"
+        "fi\n"
+        f'if [ "$task_head" != "{head_commit}" ]; then\n'
+        '  printf "result branch-moved\\n"\n'
+        '  printf "task %s\\n" "$task_head"\n'
+        "  exit 0\n"
+        "fi\n"
+        'dirty="$(git status --porcelain)"\n'
+        'if [ -n "$dirty" ]; then\n'
+        '  printf "result dirty\\n"\n'
+        '  printf "%s\\n" "$dirty" | while IFS= read -r entry; do\n'
+        '    printf "detail %s\\n" "$entry"\n'
+        "  done\n"
+        "  exit 0\n"
+        "fi\n"
+        f'if ! git merge-base --is-ancestor "refs/heads/{base_branch}" "$task_head"; then\n'
+        '  printf "result diverged\\n"\n'
+        '  printf "base %s\\n" "$base_head"\n'
+        '  printf "task %s\\n" "$task_head"\n'
+        f'  printf "counts %s\\n" "$(git rev-list --left-right --count "refs/heads/{base_branch}...$task_head" | tr "\\t" " ")"\n'
+        "  exit 0\n"
+        "fi\n"
+        f'git switch --quiet "{base_branch}"\n'
+        f'git merge --ff-only --quiet "{branch}"\n'
+        f'git branch -d "{branch}"\n'
+        'printf "result merged\\n"\n'
+        'printf "base %s\\n" "$(git rev-parse --verify HEAD)"\n'
+    )
+
+
+def _reject_script(branch: str, base_branch: str) -> str:
+    # No force flag anywhere except `branch -D`, which is the whole point of a
+    # reject. A switch that git refuses is reported, never overridden: the
+    # refusal only happens when uncommitted work would be overwritten.
+    return (
+        "set -eu\n"
+        "cd /project\n"
+        f'base_head="$(git rev-parse --verify --quiet "refs/heads/{base_branch}" || true)"\n'
+        'if [ -z "$base_head" ]; then\n'
+        '  printf "result missing-base-branch\\n"\n'
+        "  exit 0\n"
+        "fi\n"
+        'current="$(git symbolic-ref --quiet --short HEAD || echo "")"\n'
+        f'if [ "$current" != "{base_branch}" ]; then\n'
+        f'  switch_error="$(git switch --quiet "{base_branch}" 2>&1)" || {{\n'
+        '    printf "result switch-failed\\n"\n'
+        '    printf "%s\\n" "$switch_error" | while IFS= read -r entry; do\n'
+        '      printf "detail %s\\n" "$entry"\n'
+        "    done\n"
+        "    exit 0\n"
+        "  }\n"
+        "fi\n"
+        f'if git rev-parse --verify --quiet "refs/heads/{branch}" >/dev/null; then\n'
+        f'  git branch -D "{branch}"\n'
+        '  printf "result deleted\\n"\n'
+        "else\n"
+        '  printf "result missing-task-branch\\n"\n'
+        "fi\n"
+        f'printf "base %s\\n" "$(git rev-parse --verify "refs/heads/{base_branch}")"\n'
+    )
+
+
+def _run_git(
+    docker_client: DockerClient,
+    git_image: str,
+    volume_name: str,
+    script: str,
+) -> bytes:
+    return docker_client.containers.run(
+        image=git_image,
+        entrypoint=["sh", "-c"],
+        command=[script],
+        remove=True,
+        network_disabled=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges:true"],
+        volumes={volume_name: {"bind": "/project", "mode": "rw"}},
+        tmpfs={"/tmp": "rw,nosuid,size=32m"},
+    )
+
+
+def _parse_report(output: bytes) -> tuple[str | None, str, list[str]]:
+    head: str | None = None
+    checked_out = ""
+    dirty: list[str] = []
+    for line in output.decode(errors="replace").splitlines():
+        if line.startswith("head "):
+            candidate = line[5:].strip()
+            head = candidate if _COMMIT_PATTERN.match(candidate) else None
+        elif line.startswith("branch "):
+            checked_out = line[7:].strip()
+        elif line.startswith("dirty "):
+            dirty.append(_dirty_path(line[6:]))
+    return head, checked_out, dirty
+
+
+def _parse_base_branch(output: bytes) -> str:
+    for line in output.decode(errors="replace").splitlines():
+        if line.startswith("base-branch "):
+            return line[12:].strip()
+    return ""
+
+
+def _parse_settle(output: bytes) -> tuple[str, dict[str, str], list[str]]:
+    result = ""
+    fields: dict[str, str] = {}
+    details: list[str] = []
+    for line in output.decode(errors="replace").splitlines():
+        if line.startswith("result "):
+            result = line[7:].strip()
+        elif line.startswith("detail "):
+            details.append(line[7:].strip())
+        else:
+            for key in ("base", "task", "counts"):
+                if line.startswith(f"{key} "):
+                    fields[key] = line[len(key) + 1 :].strip()
+                    break
+    return result, fields, details
+
+
+def _raise_accept_refusal(
+    task: Task,
+    base_branch: str,
+    head_commit: str,
+    result: str,
+    fields: dict[str, str],
+    details: list[str],
+) -> None:
+    if result in {"merged", "already-merged"}:
+        return
+    if result == "missing-base-branch":
+        raise TaskOperationError(
+            409,
+            f"Sandbox branch '{base_branch}' does not exist; nothing to merge into",
+        )
+    if result == "missing-task-branch":
+        raise TaskOperationError(
+            409,
+            (
+                f"Task branch '{task.branch}' is gone and '{base_branch}' does not "
+                f"contain {head_commit}"
+            ),
+        )
+    if result == "branch-moved":
+        raise TaskOperationError(
+            409,
+            (
+                f"Task branch '{task.branch}' moved to {fields.get('task', 'unknown')} "
+                f"since review; the reviewed commit was {head_commit}"
+            ),
+        )
+    if result == "dirty":
+        raise TaskOperationError(
+            409,
+            f"Sandbox worktree has uncommitted changes: {_listed(details)}",
+        )
+    if result == "diverged":
+        behind, _, ahead = fields.get("counts", "").partition(" ")
+        raise TaskOperationError(
+            409,
+            (
+                f"Sandbox branch '{base_branch}' at {fields.get('base', 'unknown')} "
+                f"has diverged from task branch '{task.branch}' at "
+                f"{fields.get('task', 'unknown')}: {behind or '?'} commit(s) only on "
+                f"'{base_branch}', {ahead or '?'} only on the task branch. "
+                "A fast-forward merge is not possible"
+            ),
+        )
+    raise TaskOperationError(502, f"Sandbox git returned no accept result: {result!r}")
+
+
+def _raise_reject_refusal(
+    task: Task,
+    base_branch: str,
+    result: str,
+    details: list[str],
+) -> None:
+    if result in {"deleted", "missing-task-branch"}:
+        return
+    if result == "missing-base-branch":
+        raise TaskOperationError(
+            409,
+            f"Sandbox branch '{base_branch}' does not exist; cannot leave "
+            f"'{task.branch}'",
+        )
+    if result == "switch-failed":
+        raise TaskOperationError(
+            409,
+            (
+                f"Sandbox cannot return to '{base_branch}' without overwriting "
+                f"uncommitted work: {_listed(details)}"
+            ),
+        )
+    raise TaskOperationError(502, f"Sandbox git returned no reject result: {result!r}")
+
+
+def _listed(entries: list[str]) -> str:
+    shown = ", ".join(entry for entry in entries[:20])
+    suffix = "" if len(entries) <= 20 else f" (+{len(entries) - 20} more)"
+    return f"{shown}{suffix}"
+
+
+def _dirty_path(entry: str) -> str:
+    path = entry[3:] if len(entry) > 3 else entry.strip()
+    # A rename reads "R  old -> new"; the destination is the interesting half.
+    return path.split(" -> ")[-1].strip().strip('"')

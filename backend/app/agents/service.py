@@ -21,10 +21,18 @@ from app.agents.models import (
     ReplaceAgentRequest,
     StopAgentResponse,
 )
+from app.previews.config import get_preview_settings
+from app.previews.service import (
+    PreviewOperationError,
+    _dependency_volume,
+    _lockfile_digest,
+    _volume_runtime_files,
+)
 from app.projects.service import (
     ProjectOperationError,
+    ensure_sandbox_registered,
+    ensure_git_baseline,
     inspect_registered_project,
-    project_id,
 )
 
 LABEL_MANAGED = "orchestrator.agent.managed"
@@ -68,27 +76,24 @@ def create_agent(
 ) -> CodingAgent:
     try:
         project = inspect_registered_project(docker_client, request.project_name)
+        if not project.ready:
+            raise ProjectOperationError(
+                409,
+                f"Project '{request.project_name}' is not ready",
+            )
+        sandbox_id, _, project = ensure_sandbox_registered(
+            docker_client,
+            controller_store,
+            request.project_name,
+            project=project,
+        )
     except ProjectOperationError as error:
         raise AgentOperationError(error.status_code, error.detail) from error
-    if not project.ready:
-        raise AgentOperationError(
-            409,
-            f"Project '{request.project_name}' is not ready",
-        )
-
-    sandbox_id = getattr(project, "sandbox_id", "") or hashlib.sha256(
-        f"sandbox:{project.volume_name}".encode()
-    ).hexdigest()[:32]
-    source_path = getattr(project, "source_path", "") or f"legacy:{project.name}"
-    created_at = getattr(project, "created_at", "")
-    controller_store.register_sandbox(
+    _ensure_sandbox_git_baseline(
+        docker_client,
+        controller_store,
         sandbox_id=sandbox_id,
-        project_id=project_id(source_path),
-        project_name=project.name,
-        source_path=source_path,
-        volume_name=project.volume_name,
-        status="ready",
-        created_at=created_at,
+        project_volume=project.volume_name,
     )
     _reject_active_agent(docker_client, controller_store, project.volume_name, sandbox_id)
 
@@ -116,6 +121,16 @@ def create_agent(
     }
 
     try:
+        dependency_volume = _agent_dependency_volume(
+            docker_client,
+            sandbox_id=sandbox_id,
+            project_volume=project.volume_name,
+            labels=labels,
+        )
+    except PreviewOperationError as error:
+        raise AgentOperationError(error.status_code, error.detail) from error
+
+    try:
         controller_store.start_agent_run(
             run_id=run_id,
             sandbox_id=sandbox_id,
@@ -138,6 +153,8 @@ def create_agent(
             read_only=True,
             cap_drop=["ALL"],
             security_opt=["no-new-privileges:true"],
+            pids_limit=512,
+            mem_limit=settings.agent_memory,
             working_dir=WORKSPACE_DIRECTORY,
             environment={
                 provider.credential_environment_variable: CREDENTIAL_DIRECTORY,
@@ -153,6 +170,10 @@ def create_agent(
                 credential_volume.name: {
                     "bind": CREDENTIAL_DIRECTORY,
                     "mode": "rw",
+                },
+                dependency_volume.name: {
+                    "bind": f"{WORKSPACE_DIRECTORY}/node_modules",
+                    "mode": "ro",
                 },
             },
             tmpfs={"/tmp": "rw,nosuid,size=512m"},
@@ -353,6 +374,57 @@ def inspect_agent_exec(docker_client: DockerClient, exec_id: str) -> int | None:
     return int(exit_code) if exit_code is not None else None
 
 
+def _agent_dependency_volume(
+    docker_client: DockerClient,
+    *,
+    sandbox_id: str,
+    project_volume: str,
+    labels: dict[str, str],
+) -> Volume:
+    """Resolves the sandbox's dependency volume for a read-only agent mount.
+
+    Names the volume from the sandbox and its current lockfile digest, the
+    same way a preview install would, so the coding agent can read whatever
+    the controller has already installed without gaining install authority
+    itself (ADR 0003). A preview may not have run yet, in which case the
+    volume does not exist; get-or-create makes it empty rather than failing
+    agent creation.
+    """
+    preview_settings = get_preview_settings()
+    lockfile_digest = _lockfile_digest(
+        _volume_runtime_files(docker_client, project_volume, preview_settings)
+    )
+    return _dependency_volume(docker_client, sandbox_id, lockfile_digest, labels)
+
+
+def _ensure_sandbox_git_baseline(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    *,
+    sandbox_id: str,
+    project_volume: str,
+) -> None:
+    """Ensures the sandbox volume has a git baseline commit before an agent starts.
+
+    Runs on demand, at agent creation, rather than at project registration:
+    every sandbox needs a baseline for its coding agent to commit against
+    (ADR 0002), including sandboxes registered before this existed. Skips
+    the container spawn once a baseline is recorded, so a second agent
+    creation on the same sandbox costs one read. GIT_BASELINE_SCRIPT is
+    idempotent, so a failure here is safe to retry on the next agent
+    creation; it is not swallowed, since a coding agent on a sandbox with
+    no git repository cannot produce a task branch.
+    """
+    if controller_store.sandbox_baseline_commit(sandbox_id):
+        return
+    git_image = get_preview_settings().git_image
+    baseline_commit = ensure_git_baseline(docker_client, git_image, project_volume)
+    controller_store.set_sandbox_baseline_commit(
+        sandbox_id=sandbox_id,
+        baseline_commit=baseline_commit,
+    )
+
+
 def _credential_volume(
     docker_client: DockerClient,
     provider: AgentProvider,
@@ -393,6 +465,9 @@ def _credential_volume(
             f"Docker volume '{volume_name}' is not the requested credential profile",
         )
     return volume
+
+
+credential_volume = _credential_volume
 
 
 def _credential_volume_name(provider: AgentProvider, profile: str) -> str:

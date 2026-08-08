@@ -15,6 +15,40 @@ _Avoid_: Worker, bot
 **Reviewer**:
 A read-only participant that can inspect a sandbox without changing it.
 
+**Planning session**:
+One attempt to turn a feature request into a reviewed plan for a project.
+_Avoid_: Planning run, plan thread
+
+**Clarifier**:
+The model that questions the human until the feature is understood and never writes a plan.
+_Avoid_: Main model, interviewer
+
+**Planner**:
+The model that turns the agreed feature brief into a proposed implementation plan across review rounds.
+
+**Plan reviewer**:
+The model that judges one plan revision, separate from the read-only sandbox **Reviewer**.
+_Avoid_: Reviewer, critic, checker
+
+**Feature brief**:
+The controller-assembled document frozen when the human confirms the feature understanding.
+_Avoid_: Requirements, prompt
+
+**Plan revision**:
+One numbered planner output.
+
+**Finding**:
+One reviewer objection to a plan revision with a stable id, severity, status, and planner response.
+
+**Review ledger**:
+The compact per-session record of every unresolved finding and its current state.
+
+**Plan Spec**:
+The final planning-session document with scope, approach, risks, open questions, and reviewer outcome.
+
+**Turn**:
+One model invocation in one short-lived container.
+
 **Preview proposal**:
 A non-executable suggestion for running the current sandbox, including protected-file changes and editable settings.
 _Avoid_: Detection result, preview configuration
