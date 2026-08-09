@@ -136,41 +136,88 @@ for units that leave the application unbuildable mid-graph.
 ## Order
 
 1. ~~Decide the §0.7 question above.~~ Decided: non-preview verification path.
-2. Store: delegation tables, migration runner, migrations from 9.
-3. Writable turn on the base's runner, plus metrics and tool-call inspection.
-4. Headless task execution, resolving §0.7.
-5. Implementation context, including command confirmation.
-6. Delegation persistence, graph, and the Delegator.
-7. Packets, execution wiring, results.
-8. Routing.
-9. Verification and bounded recovery.
-10. Delegation UI, following the planning UI's conventions, and the integration review.
+2. ~~Store: delegation tables, migration runner, migrations from 9.~~
+3. ~~Writable turn on the base's runner, plus metrics and tool-call inspection.~~
+4. ~~Headless task execution, resolving §0.7.~~
+5. ~~Implementation context, including command confirmation.~~
+6. ~~Delegation persistence, graph, and the Delegator.~~
+7. ~~Packets, execution wiring, results.~~
+8. ~~Routing.~~
+9. ~~Verification and bounded recovery.~~
+10. ~~Delegation UI, following the planning UI's conventions, and the integration review.~~
 
 ---
 
-## Where this stopped
+## Port complete
 
-Committed on `feat/delegator`: `5f48dfc`, steps 1 to 4 of the order above.
-282 backend tests pass, 30 skipped, up from the base's 251.
+Steps 1 to 4 are committed on `feat/delegator` at `5f48dfc`. Steps 5 to 10
+are implemented in the working tree. The backend has 403 passing tests and
+34 skipped tests. The frontend production build and lint check pass.
 
-**Step 5 is next: implementation context.** Port from
-`wip/delegator-on-old-main` at `752f27a`:
+Implementation context now:
 
-| Take | To | Change |
-|---|---|---|
-| `backend/app/implementation_context/inventory.py` | same path | none |
-| `backend/app/implementation_context/validators.py` | same path | none |
-| `backend/app/implementation_context/{models,service,prompts,config}.py` | same path | session lookups use this base's `planning_sessions` (`project_id`, `title`, `plan_spec_json`, statuses `plan_ready` / `review_limit_reached`); the turn calls `run_planning_turn` from `app/planning/runner.py`, not the old `app/turns` |
-| `backend/tests/implementation_context/*` | same path | fixtures rebuilt on this base's session shape |
+- accepts `plan_ready` and `review_limit_reached` planning sessions;
+- reads `title` and `plan_spec_json` from this base's session shape;
+- runs through `app/planning/runner.py` with the session's credential profile;
+- confirms proposed commands against project manifests before retaining them;
+- keeps one context per session, not revisions, and permits one repair turn;
+- refuses to regenerate once the session has a delegation, which is what
+  keeps a running delegation's context from changing underneath it;
+- exposes one project- and session-scoped route: POST to generate, GET to read,
+  returning null before a context has ever been generated.
 
-Retrieve any file with `git show wip/delegator-on-old-main:<path>`. Do not
-check that branch out; it is built on the pre-merge tree.
+Delegation now:
 
-The store already carries `implementation_contexts`, so step 5 needs service
-and router work only, plus its store accessors.
+- stores each validated decomposition and its work items atomically;
+- rejects duplicate keys, missing dependencies, self-dependencies, cycles,
+  invalid fields, and unconfirmed verification command kinds;
+- derives waves, readiness, blockers, and potential parallel work from the
+  dependency graph and retained run attempts;
+- allows one repair turn before rejecting an invalid generated graph;
+- requires a ready implementation context with confirmed verification
+  commands before spending a Delegator turn;
+- keeps active-delegation and active-run limits in SQLite unique indexes;
+- exposes project- and session-scoped create, generate, list, detail, and
+  lifecycle routes.
 
-After that: delegation persistence and graph, the Delegator, packets and
-execution wiring, routing, verification and recovery, then the delegation UI.
+Execution now:
+
+- builds a bounded packet from the plan and the exact context retained by the
+  delegation;
+- resolves only controller-confirmed verification commands and carries
+  accepted upstream results into dependent packets;
+- starts each item through the existing task branch and writable turn path;
+- adds the commit and structured-result contract at the headless task layer;
+- retains the reported model, token use, cost, duration, exit code, and result
+  payload for every attempt;
+- keeps a successful run active and its dependants blocked until a person
+  accepts and merges its task;
+- rejects failed task branches, preserves retry history, and halts the
+  delegation if task cleanup fails;
+- exposes project-, session-, and delegation-scoped packet, run, accept, and
+  reject routes.
+
+Routing and recovery now:
+
+- route by item override, run preference, complexity, then system default;
+- retain the chosen provider, reported model, routing source, and warning;
+- run confirmed commands in hardened, network-disabled containers without a
+  shell interpreting the command;
+- retry one provider failure once and run one focused repair after a
+  verification failure;
+- halt after repeated provider or verification failure;
+- reopen only controller-reported tasks for focused repair.
+
+Integration and UI now:
+
+- retain feature-level review revisions against the reviewed plan, collected
+  results, controller verification, and final repository state;
+- validate review output and permit one output-repair turn;
+- expose context generation, decomposition, waves, blockers, potential
+  parallel work, routing overrides, runs, accept, reject, retry, and final
+  review from one delegation page;
+- poll active delegations and follow the planning UI's existing cards, pills,
+  dialogs, API helpers, and route conventions.
 
 ### Still open
 
@@ -180,12 +227,7 @@ execution wiring, routing, verification and recovery, then the delegation UI.
   works and is commented. Moving `LABEL_CONTROLLER_MANAGED` and `LABEL_KIND`
   to a neutral module would remove the ring properly, and touches three
   existing files.
-- **Verification commands are not run yet.** `verify_task` takes
-  `verification_passed` and defaults it to true. Step 9 is what makes that
-  argument mean something; until then review is gated on the git check alone.
 - **Codex has no headless coding turn.** `run_coding_turn` returns 501 for it.
   Its own sandbox cannot start under `cap_drop ALL` and `no-new-privileges`.
   The fix is likely `--dangerously-bypass-approvals-and-sandbox`, relying on
   the container as the boundary, but that was never verified.
-- **ADR numbering.** The earlier ADRs 0002 and 0003 on the wip branch clash
-  with this base's 0002 to 0004. Renumber to 0005 and 0006 when ported.

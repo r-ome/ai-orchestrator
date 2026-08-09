@@ -1,6 +1,9 @@
 import hashlib
+import json
 import re
+import shlex
 import sqlite3
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -122,6 +125,10 @@ def start_task(
                 502,
                 "Sandbox git did not report the branch the task was cut from",
             )
+        controller_store.set_task_baseline_dirty(
+            task_id=task_id,
+            paths=_parse_dirty(output),
+        )
         # Checked here as well as at settlement, so a sandbox on a branch name
         # this code cannot handle refuses the task instead of opening one that
         # can never be accepted or rejected.
@@ -182,7 +189,7 @@ def run_task(
         task_id=task.id,
         volume_name=str(sandbox["volume_name"]),
         provider=request.provider,
-        prompt=request.prompt,
+        prompt=_task_prompt(request.prompt),
         model=request.model,
     )
     controller_store.event(
@@ -267,6 +274,32 @@ def verify_task(
     return _task(controller_store, task.id)
 
 
+def reopen_task_for_repair(
+    controller_store: ControllerStore,
+    task_id: str,
+) -> Task:
+    """Return a reported task to open for one controller-directed repair."""
+    task = _task(controller_store, _validated_task_id(task_id))
+    if task.status is not TaskStatus.REPORTED:
+        raise TaskOperationError(
+            409,
+            f"Task '{task.id}' is not reported (status '{task.status.value}')",
+        )
+    if not transition_task(
+        controller_store,
+        task_id=task.id,
+        to_status=TaskStatus.OPEN,
+    ):
+        raise TaskOperationError(409, f"Task '{task.id}' could not reopen for repair")
+    controller_store.event(
+        sandbox_id=task.sandbox_id,
+        run_id=task.id,
+        kind="task.repair_started",
+        payload={"previous_head": task.head_commit or ""},
+    )
+    return _task(controller_store, task.id)
+
+
 def _run_response(
     controller_store: ControllerStore,
     task_id: str,
@@ -291,10 +324,36 @@ def _run_response(
             cost_usd=result.usage.cost_usd,
         ),
         duration_ms=result.duration_ms,
+        exit_code=result.exit_code,
         tool_calls=len(result.tool_calls),
         failed_tool_calls=failed,
         result=result.payload,
     )
+
+
+def _task_prompt(prompt: str) -> str:
+    """Add the task-layer completion contract to a caller's work prompt."""
+    return f"""{prompt.rstrip()}
+
+## Completion contract
+
+Commit all intended changes to the current task branch with a clear message.
+Do not switch branches. Do not push.
+
+Return exactly one JSON object as the last content in your reply. Use this shape:
+
+{{
+  "changed": ["what changed"],
+  "decisions": ["implementation decisions"],
+  "interfaces": ["interfaces introduced or changed"],
+  "verification": {{
+    "ran": ["commands you ran"],
+    "outcome": "not_run",
+    "detail": "optional detail"
+  }},
+  "notes_for_downstream": ["information later work items need"]
+}}
+"""
 
 
 def list_tasks(
@@ -363,9 +422,14 @@ def report_task_complete(
                 f"not the task branch '{task.branch}'"
             ),
         )
-    if dirty_paths:
-        listed = ", ".join(dirty_paths[:20])
-        suffix = "" if len(dirty_paths) <= 20 else f" (+{len(dirty_paths) - 20} more)"
+    # Only paths the turn itself left behind count. Anything already dirty when
+    # the branch was cut is the sandbox's own baggage, and failing on it would
+    # make every run in an imported repository fail no matter what the model did.
+    baseline = _baseline_dirty(controller_store, task.id)
+    new_dirty = [path for path in dirty_paths if path not in baseline]
+    if new_dirty:
+        listed = ", ".join(new_dirty[:20])
+        suffix = "" if len(new_dirty) <= 20 else f" (+{len(new_dirty) - 20} more)"
         raise TaskOperationError(
             409,
             f"Task branch has uncommitted changes: {listed}{suffix}",
@@ -422,7 +486,12 @@ def accept_task(
         docker_client,
         get_preview_settings().git_image,
         str(sandbox["volume_name"]),
-        _accept_script(task.branch, base_branch, head_commit),
+        _accept_script(
+            task.branch,
+            base_branch,
+            head_commit,
+            sorted(_baseline_dirty(controller_store, task.id)),
+        ),
     )
     result, fields, dirty = _parse_settle(output)
     _raise_accept_refusal(task, base_branch, head_commit, result, fields, dirty)
@@ -475,7 +544,11 @@ def reject_task(
     task = _task(controller_store, _validated_task_id(task_id))
     if task.status is TaskStatus.REJECTED:
         return task
-    if task.status not in {TaskStatus.OPEN, TaskStatus.REVIEW}:
+    if task.status not in {
+        TaskStatus.OPEN,
+        TaskStatus.REPORTED,
+        TaskStatus.REVIEW,
+    }:
         raise TaskOperationError(
             409,
             f"Task '{task.id}' cannot be rejected (status '{task.status.value}')",
@@ -679,6 +752,13 @@ def _branch_script(branch: str, base_commit: str) -> str:
         "  exit 1\n"
         "fi\n"
         'printf "base-branch %s\\n" "$base_branch"\n'
+        # Snapshot what is already dirty. A sandbox copied from a real
+        # repository routinely arrives with untracked files — tool directories,
+        # scratch folders, anything not in .gitignore — and settlement would
+        # otherwise read them as work the turn failed to commit.
+        "git status --porcelain | while IFS= read -r entry; do\n"
+        '  printf "dirty %s\\n" "$entry"\n'
+        "done\n"
         f'git switch -c "{branch}"\n'
         f'git rev-parse --verify "refs/heads/{branch}"\n'
     )
@@ -696,13 +776,24 @@ def _report_script(branch: str) -> str:
     )
 
 
-def _accept_script(branch: str, base_branch: str, head_commit: str) -> str:
+def _accept_script(
+    branch: str,
+    base_branch: str,
+    head_commit: str,
+    baseline_dirty: Sequence[str] = (),
+) -> str:
     """Refuses first, mutates last, and repeats safely.
 
     Every condition that should return 409 prints a result line and exits 0,
     so the caller can tell a refusal from a broken container. The mutating
     three commands only run once nothing is left to refuse, which keeps the
     checkout untouched when the merge would not have been a fast-forward.
+
+    `baseline_dirty` is what was already uncommitted when the branch was cut.
+    Those paths are excluded from the dirty refusal for the same reason
+    `report_task` excludes them: a sandbox imported from a real repository
+    carries untracked files the task never touched, and refusing on them makes
+    every task in that sandbox impossible to settle.
     """
     return (
         "set -eu\n"
@@ -727,12 +818,27 @@ def _accept_script(branch: str, base_branch: str, head_commit: str) -> str:
         '  printf "task %s\\n" "$task_head"\n'
         "  exit 0\n"
         "fi\n"
-        'dirty="$(git status --porcelain)"\n'
-        'if [ -n "$dirty" ]; then\n'
+        # Keep the path normalisation in step with `_dirty_path`: strip the
+        # two-column status and its space, then take the destination half of a
+        # rename, then unquote. A baseline entry only matches what git would
+        # print for that same path today.
+        f"baseline={shlex.quote(chr(10).join(baseline_dirty))}\n"
+        'new_dirty=""\n'
+        'git status --porcelain | while IFS= read -r entry; do\n'
+        '  [ -n "$entry" ] || continue\n'
+        '  path="${entry#???}"\n'
+        '  case "$path" in *" -> "*) path="${path##* -> }";; esac\n'
+        '  path="${path#\\"}"\n'
+        '  path="${path%\\"}"\n'
+        '  if ! printf "%s\\n" "$baseline" | grep -qxF -- "$path"; then\n'
+        '    printf "%s\\n" "$entry"\n'
+        "  fi\n"
+        'done > /tmp/new_dirty\n'
+        'if [ -s /tmp/new_dirty ]; then\n'
         '  printf "result dirty\\n"\n'
-        '  printf "%s\\n" "$dirty" | while IFS= read -r entry; do\n'
+        '  while IFS= read -r entry; do\n'
         '    printf "detail %s\\n" "$entry"\n'
-        "  done\n"
+        "  done < /tmp/new_dirty\n"
         "  exit 0\n"
         "fi\n"
         f'if ! git merge-base --is-ancestor "refs/heads/{base_branch}" "$task_head"; then\n'
@@ -821,6 +927,28 @@ def _parse_base_branch(output: bytes) -> str:
         if line.startswith("base-branch "):
             return line[12:].strip()
     return ""
+
+
+def _parse_dirty(output: bytes) -> list[str]:
+    return [
+        _dirty_path(line[6:])
+        for line in output.decode(errors="replace").splitlines()
+        if line.startswith("dirty ")
+    ]
+
+
+def _baseline_dirty(controller_store: ControllerStore, task_id: str) -> set[str]:
+    """What git already called dirty when this task's branch was cut.
+
+    An empty set for a task opened before the snapshot existed, which keeps the
+    old, stricter behaviour for those rather than inventing a baseline.
+    """
+    row = controller_store.task(task_id) or {}
+    try:
+        parsed = json.loads(str(row.get("baseline_dirty_json") or "[]"))
+    except ValueError:
+        return set()
+    return {str(path) for path in parsed} if isinstance(parsed, list) else set()
 
 
 def _parse_settle(output: bytes) -> tuple[str, dict[str, str], list[str]]:

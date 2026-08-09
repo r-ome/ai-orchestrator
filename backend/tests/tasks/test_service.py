@@ -41,6 +41,9 @@ class _StubContainers:
         self.reject_output = b"result deleted\nbase " + BASE_COMMIT.encode() + b"\n"
         self.base_branch = "main"
         self.branch_error: Exception | None = None
+        # What git already called dirty when the branch was cut. A sandbox
+        # copied from a real repository arrives with untracked files.
+        self.branch_dirty: tuple[str, ...] = ()
 
     def run(self, **kwargs: Any) -> bytes:
         script = kwargs["command"][0]
@@ -48,7 +51,10 @@ class _StubContainers:
         if "git switch -c" in script:
             if self.branch_error is not None:
                 raise self.branch_error
-            return f"base-branch {self.base_branch}\n{BASE_COMMIT}\n".encode()
+            lines = [f"base-branch {self.base_branch}"]
+            lines += [f"dirty {entry}" for entry in self.branch_dirty]
+            lines.append(BASE_COMMIT)
+            return ("\n".join(lines) + "\n").encode()
         if "result branch-moved" in script:
             return self.accept_output
         if "result switch-failed" in script:
@@ -349,9 +355,8 @@ def test_settling_a_task_stamps_settled_at(
     assert controller_store.task(task.id)["settled_at"] is not None
 
 
-def test_open_is_the_only_status_an_agent_action_can_reach() -> None:
-    # Nothing transitions into open, and only an open task can be reported.
-    assert source_statuses(TaskStatus.OPEN) == frozenset()
+def test_only_reported_tasks_can_reopen_for_controller_directed_repair() -> None:
+    assert source_statuses(TaskStatus.OPEN) == frozenset({TaskStatus.REPORTED})
     assert source_statuses(TaskStatus.REPORTED) == frozenset({TaskStatus.OPEN})
     for terminal in (TaskStatus.ACCEPTED, TaskStatus.REJECTED, TaskStatus.FAILED):
         assert TASK_TRANSITIONS[terminal] == frozenset()
@@ -740,6 +745,25 @@ def test_reject_works_on_a_task_that_never_left_open(
     assert _start(docker_client, controller_store).id != task.id
 
 
+def test_reject_works_on_a_reported_task(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+) -> None:
+    task = _start(docker_client, controller_store)
+    docker_client.containers.report_output = _report_output(NEXT_COMMIT, task.branch)
+    report_task_complete(
+        docker_client,
+        controller_store,
+        task.id,
+        ReportTaskRequest(),
+    )
+
+    rejected = reject_task(docker_client, controller_store, task.id)
+
+    assert rejected.status is TaskStatus.REJECTED
+    assert open_task_for_sandbox(controller_store, "sandbox-1") is None
+
+
 def test_reject_deletes_only_the_task_branch(
     docker_client: _StubDockerClient,
     controller_store: ControllerStore,
@@ -1025,7 +1049,9 @@ def test_a_headless_turn_that_commits_reaches_reported(
     assert response.task.head_commit == NEXT_COMMIT
     # The turn runs on the branch start_task already switched to.
     assert calls[0]["volume_name"] == VOLUME_NAME
-    assert calls[0]["prompt"] == "do the thing"
+    assert calls[0]["prompt"].startswith("do the thing\n\n## Completion contract")
+    assert "Commit all intended changes" in calls[0]["prompt"]
+    assert '"notes_for_downstream"' in calls[0]["prompt"]
 
 
 def test_the_run_records_cost_model_and_tool_outcomes(
@@ -1048,6 +1074,7 @@ def test_the_run_records_cost_model_and_tool_outcomes(
     assert response.usage.cost_usd == 0.05
     assert response.usage.input_tokens == 11
     assert response.duration_ms == 1234
+    assert response.exit_code == 0
     assert response.model == "claude-sonnet-5"
     assert response.tool_calls == 1
     assert response.failed_tool_calls == 0
@@ -1202,3 +1229,115 @@ def test_verify_refuses_when_verification_did_not_pass(
     assert error.value.status_code == 409
     assert "build failed" in error.value.detail
     assert get_task(controller_store, task.id).status is TaskStatus.REPORTED
+
+
+def test_controller_can_reopen_reported_task_for_repair(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.tasks.models import RunTaskRequest
+    from app.tasks.service import reopen_task_for_repair, run_task
+
+    task = _open(docker_client, controller_store)
+    docker_client.containers.report_output = _report_output(NEXT_COMMIT, task.branch)
+    _set_turn(monkeypatch, _turn())
+    run_task(
+        docker_client,
+        controller_store,
+        _settings(),
+        task.id,
+        RunTaskRequest(prompt="p"),
+    )
+
+    reopened = reopen_task_for_repair(controller_store, task.id)
+
+    assert reopened.status is TaskStatus.OPEN
+    assert reopened.head_commit == NEXT_COMMIT
+    assert any(
+        event["kind"] == "task.repair_started"
+        for event in controller_store.events_for_run(task.id)
+    )
+
+
+def test_paths_already_dirty_when_the_branch_was_cut_do_not_fail_the_report(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+) -> None:
+    """A sandbox copied from a real repository carries untracked files.
+
+    `.agent/`, `.claude/` and friends are not in .gitignore and are not the
+    turn's work. Refusing on them made every task in such a sandbox impossible
+    to settle no matter what the model committed.
+    """
+    docker_client.containers.branch_dirty = ("?? .agent/", "?? .claude/")
+    task = _start(docker_client, controller_store)
+    docker_client.containers.report_output = _report_output(
+        NEXT_COMMIT,
+        task.branch,
+        dirty=("?? .agent/", "?? .claude/"),
+    )
+
+    reported = report_task_complete(
+        docker_client,
+        controller_store,
+        task.id,
+        ReportTaskRequest(),
+    )
+
+    assert reported.status is TaskStatus.REPORTED
+    assert reported.head_commit == NEXT_COMMIT
+
+
+def test_work_the_turn_left_uncommitted_still_fails_the_report(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+) -> None:
+    """The baseline excuses its own paths and nothing else."""
+    docker_client.containers.branch_dirty = ("?? .agent/",)
+    task = _start(docker_client, controller_store)
+    docker_client.containers.report_output = _report_output(
+        NEXT_COMMIT,
+        task.branch,
+        dirty=("?? .agent/", " M src/pages/index.astro"),
+    )
+
+    with pytest.raises(TaskOperationError) as error:
+        report_task_complete(
+            docker_client,
+            controller_store,
+            task.id,
+            ReportTaskRequest(),
+        )
+
+    assert error.value.status_code == 409
+    assert "src/pages/index.astro" in error.value.detail
+    assert ".agent/" not in error.value.detail
+
+
+def test_the_baseline_is_recorded_and_passed_to_the_accept_script(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+) -> None:
+    """Accept refuses a dirty worktree too, so it needs the same exemption."""
+    docker_client.containers.branch_dirty = ("?? .agent/", "?? interview-prep/")
+    task = _start(docker_client, controller_store)
+
+    assert controller_store.task(task.id)["baseline_dirty_json"] == (
+        '[".agent/", "interview-prep/"]'
+    )
+
+    docker_client.containers.report_output = _report_output(NEXT_COMMIT, task.branch)
+    report_task_complete(
+        docker_client,
+        controller_store,
+        task.id,
+        ReportTaskRequest(),
+    )
+    for target in (TaskStatus.PREVIEWING, TaskStatus.REVIEW):
+        assert transition_task(controller_store, task_id=task.id, to_status=target)
+
+    accept_task(docker_client, controller_store, task.id)
+
+    accept_script = docker_client.containers.scripts[-1]
+    assert "baseline='.agent/\ninterview-prep/'" in accept_script

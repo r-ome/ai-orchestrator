@@ -126,6 +126,10 @@ COPY_COMMAND = [
         "exit \"$copy_exit\"\n"
     ),
 ]
+#: Directories the controller and its agents create inside a sandbox. They are
+#: not the project's files and must never reach a task branch or a review diff.
+SANDBOX_SCAFFOLDING = (".agent", ".claude", ".orchestrator")
+
 GIT_BASELINE_SCRIPT = (
     "set -eu\n"
     "cd /project\n"
@@ -134,6 +138,19 @@ GIT_BASELINE_SCRIPT = (
     "fi\n"
     'git config user.name "orchestrator"\n'
     'git config user.email "orchestrator@localhost"\n'
+    # `.git/info/exclude` rather than `.gitignore`: the scaffolding belongs to
+    # the sandbox, not to the project. An exclude entry is local to this clone,
+    # so it never appears in the imported repository, in a commit, or in a diff
+    # a person reviews — and it applies to every project without editing any.
+    # Appended before the baseline commit below, so `git add -A` on a
+    # repository with no history does not pick the directories up either.
+    "mkdir -p .git/info\n"
+    "touch .git/info/exclude\n"
+    f'for scaffold in {" ".join(SANDBOX_SCAFFOLDING)}; do\n'
+    '  if ! grep -qxF "/$scaffold/" .git/info/exclude; then\n'
+    '    printf "/%s/\\n" "$scaffold" >> .git/info/exclude\n'
+    "  fi\n"
+    "done\n"
     "if ! git rev-parse HEAD >/dev/null 2>&1; then\n"
     "  git add -A\n"
     '  git commit -q -m "sandbox baseline" --allow-empty\n'

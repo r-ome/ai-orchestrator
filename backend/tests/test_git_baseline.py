@@ -331,3 +331,71 @@ def test_agent_creation_gives_a_baseline_to_a_sandbox_missing_one(
     # A second agent creation on the same sandbox reuses the recorded
     # baseline instead of spawning another git container.
     assert baseline_calls == ["orchestrator-project-sample"]
+
+
+@requires_docker
+def test_controller_scaffolding_is_excluded_from_the_sandbox_repository() -> None:
+    """`.agent/` and friends are the sandbox's, not the project's.
+
+    They are created inside the volume by the controller and its agents. Left
+    visible to git they read as uncommitted work, which made settlement refuse
+    every task in an imported repository. The rule goes in `.git/info/exclude`
+    rather than `.gitignore` so it never reaches the project's own files.
+    """
+    client = docker.from_env()
+    run_id = uuid4().hex
+    volume = client.volumes.create(name=f"orchestrator-git-baseline-test-{run_id[:12]}")
+    try:
+        client.containers.run(
+            GIT_IMAGE,
+            entrypoint=["sh", "-c"],
+            command=[
+                "set -eu\n"
+                "cd /project\n"
+                "git init -q -b main\n"
+                'git config user.name "agent"\n'
+                'git config user.email "agent@localhost"\n'
+                "printf 'work' > work.txt\n"
+                "git add -A\n"
+                'git commit -q -m "project history"\n'
+                # Pre-existing local excludes must survive.
+                "mkdir -p .git/info\n"
+                "printf '.env\\n' >> .git/info/exclude\n"
+                # Scaffolding the controller writes, plus real untracked content.
+                "mkdir -p .agent .claude .orchestrator notes\n"
+                "printf 'x' > .claude/settings.json\n"
+                "printf 'x' > notes/todo.md\n"
+            ],
+            remove=True,
+            volumes={volume.name: {"bind": "/project", "mode": "rw"}},
+        )
+
+        ensure_git_baseline(client, GIT_IMAGE, volume.name)
+        # Twice: the sandbox is re-baselined on every task, so appending has to
+        # be idempotent or the exclude file grows without bound.
+        ensure_git_baseline(client, GIT_IMAGE, volume.name)
+
+        status = client.containers.run(
+            GIT_IMAGE,
+            entrypoint=["sh", "-c"],
+            command=["cd /project && git status --porcelain"],
+            remove=True,
+            volumes={volume.name: {"bind": "/project", "mode": "ro"}},
+        )
+        exclude = client.containers.run(
+            GIT_IMAGE,
+            entrypoint=["sh", "-c"],
+            command=["cd /project && cat .git/info/exclude"],
+            remove=True,
+            volumes={volume.name: {"bind": "/project", "mode": "ro"}},
+        )
+    finally:
+        volume.remove(force=True)
+
+    # The project's own untracked content stays visible; scaffolding does not.
+    assert status.decode().split() == ["??", "notes/"]
+    lines = exclude.decode().splitlines()
+    assert ".env" in lines
+    assert lines.count("/.agent/") == 1
+    assert lines.count("/.claude/") == 1
+    assert lines.count("/.orchestrator/") == 1

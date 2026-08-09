@@ -126,6 +126,11 @@ export interface PreviewRun {
   sandbox_id: string
   project_name: string
   proposal_id: string
+  /** 'task' when built from one task's commit, 'live' from the working tree. */
+  kind: 'live' | 'task'
+  /** The task a 'task' preview was built from. Null for a live preview. */
+  task_id: string | null
+  commit_sha: string | null
   mode: PreviewMode
   runtime: PreviewRuntime
   status: string
@@ -173,12 +178,18 @@ export function inspectPreview(projectName: string): Promise<PreviewProposal> {
   )
 }
 
+/**
+ * Naming a task is what makes this a task preview rather than a live one. The
+ * backend reads that task's commit from its own row, so the preview shows the
+ * task branch as the controller verified it — before any merge.
+ */
 export function startPreview(
   projectName: string,
   proposal: PreviewProposal,
   config: PreviewConfiguration,
   action: 'start' | 'rebuild',
   saveDefault: boolean,
+  taskId = '',
 ): Promise<PreviewRun> {
   return postJson<PreviewRun>(
     `/projects/${encodeURIComponent(projectName)}/previews`,
@@ -189,6 +200,7 @@ export function startPreview(
       action,
       actor: 'human',
       save_default: saveDefault,
+      task_id: taskId,
     },
   )
 }

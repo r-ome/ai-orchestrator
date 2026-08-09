@@ -10,10 +10,13 @@ from app.controller.config import get_controller_settings
 from app.controller.lifecycle import cancel_task, expiry_loop, reconcile_controller_state
 from app.controller.store import get_controller_store
 from app.containers.router import router as containers_router
+from app.delegation.router import router as delegation_router
+from app.implementation_context.router import router as implementation_context_router
 from app.planning.router import router as planning_router
 from app.projects.router import router as projects_router
 from app.previews.router import router as previews_router
 from app.tasks.router import router as tasks_router
+from app.turns.router import router as turns_router
 from app.volumes.router import router as volumes_router
 
 
@@ -34,10 +37,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="Backend API", lifespan=lifespan)
 app.include_router(agents_router)
 app.include_router(containers_router)
+app.include_router(delegation_router)
+app.include_router(implementation_context_router)
 app.include_router(planning_router)
 app.include_router(projects_router)
 app.include_router(previews_router)
 app.include_router(tasks_router)
+app.include_router(turns_router)
 app.include_router(volumes_router)
 
 

@@ -51,6 +51,7 @@ function downloadMarkdown(planSpec: PlanSpec): void {
 
 interface PlanSpecViewProps {
   planSpec: PlanSpec
+  onImplementPlan?: () => void
   /**
    * The understanding the clarifier and the human settled on. It heads this
    * view because it is the input the plan was built from, so it is what the
@@ -59,7 +60,7 @@ interface PlanSpecViewProps {
   understanding: string
 }
 
-function PlanSpecView({ planSpec, understanding }: PlanSpecViewProps) {
+function PlanSpecView({ planSpec, understanding, onImplementPlan }: PlanSpecViewProps) {
   const topRisks = highestSeverityRisks(planSpec.risks)
   const { reviewer_outcome: reviewerOutcome } = planSpec
   const roundLabel = reviewerOutcome.rounds === 1 ? 'round' : 'rounds'
@@ -170,9 +171,16 @@ function PlanSpecView({ planSpec, understanding }: PlanSpecViewProps) {
       <CollapsibleCard
         title="Final plan"
         aside={
-          <button type="button" onClick={() => downloadMarkdown(planSpec)}>
-            Download markdown
-          </button>
+          <span className="button-row">
+            {onImplementPlan && (
+              <button type="button" className="primary" onClick={onImplementPlan}>
+                Implement this plan
+              </button>
+            )}
+            <button type="button" onClick={() => downloadMarkdown(planSpec)}>
+              Download markdown
+            </button>
+          </span>
         }
       >
         <Markdown source={planSpec.plan_markdown} />

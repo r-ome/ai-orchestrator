@@ -65,15 +65,6 @@ src/helpers.js. Another unit owns it. Leave it alone.
 
 - src/math.js exports multiply(a, b) returning a * b
 - the existing add export is unchanged
-
-## When you are done
-
-Commit your work to the current branch with a clear message. Do not switch
-branches and do not push.
-
-Then output one JSON object as the last thing in your reply, nothing after it:
-
-{"changed": ["what you changed"], "notes": ["anything worth passing on"]}
 """
 
 

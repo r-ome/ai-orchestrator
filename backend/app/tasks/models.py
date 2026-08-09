@@ -10,10 +10,8 @@ from app.agents.models import AgentProvider
 class TaskStatus(StrEnum):
     """Where one unit of coding-agent work sits between start and settlement.
 
-    OPEN is the only status an agent's own actions can reach: the agent
-    commits to the task branch and the controller, having read that branch
-    itself, is the party that moves the task on. Every later status is a
-    controller decision, so no file an agent writes can produce one.
+    An agent cannot choose a status. The controller opens the task, verifies
+    its branch, and can reopen a reported task for one focused repair.
     """
 
     OPEN = "open"
@@ -53,6 +51,7 @@ TASK_TRANSITIONS: Mapping[TaskStatus, frozenset[TaskStatus]] = {
     # its sandbox's only task slot forever. Every non-terminal status sits
     # inside one_open_task_per_sandbox, so a status with no exit is a deadlock.
     TaskStatus.OPEN: frozenset({TaskStatus.REPORTED, TaskStatus.REJECTED}),
+    # reported -> open is the controller-directed focused repair path.
     # reported -> review is the non-preview path, taken by a delegated run
     # whose branch the controller verified and whose configured verification
     # commands passed. Many units of delegated work — a shared helper, a
@@ -65,7 +64,12 @@ TASK_TRANSITIONS: Mapping[TaskStatus, frozenset[TaskStatus]] = {
     # status whose only exit is unavailable holds the sandbox's one task slot
     # forever.
     TaskStatus.REPORTED: frozenset(
-        {TaskStatus.PREVIEWING, TaskStatus.REVIEW, TaskStatus.REJECTED}
+        {
+            TaskStatus.OPEN,
+            TaskStatus.PREVIEWING,
+            TaskStatus.REVIEW,
+            TaskStatus.REJECTED,
+        }
     ),
     TaskStatus.PREVIEWING: frozenset({TaskStatus.REVIEW, TaskStatus.FAILED}),
     TaskStatus.REVIEW: frozenset(
@@ -134,6 +138,7 @@ class TaskRunResponse(BaseModel):
     model: str = ""
     usage: TurnUsageView = Field(default_factory=TurnUsageView)
     duration_ms: int | None = None
+    exit_code: int | None = None
     tool_calls: int = 0
     failed_tool_calls: int = 0
     #: The turn's own structured report, when it produced one. Recorded, never

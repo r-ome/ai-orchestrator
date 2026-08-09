@@ -14,6 +14,12 @@ import {
 } from '../api/planning'
 import CollapsibleCard from '../components/CollapsibleCard'
 import ConfirmDialog from '../components/ConfirmDialog'
+import {
+  ContextModal,
+  DelegationPanel,
+  useDelegationWorkspace,
+  type DelegationTabId,
+} from '../components/DelegationWorkspace'
 import Markdown from '../components/Markdown'
 import PlanSpecView from '../components/PlanSpecView'
 import PlanningRawOutput from '../components/PlanningRawOutput'
@@ -24,7 +30,17 @@ import { useApiResource } from '../hooks/useApiResource'
 
 type PendingDialog = 'proceed' | 'cancel' | null
 
-type TabId = 'clarifier' | 'review' | 'spec'
+/** The planning phases, which own the left half of the tab strip. */
+type PlanningTabId = 'clarifier' | 'review' | 'spec'
+
+/**
+ * Every phase of the session, planning and delegation alike, in one strip.
+ *
+ * The delegation phases were their own page. They are the same session though:
+ * a plan is only worth reading next to what is being built from it, and the
+ * reader who approves a plan is the reader who then runs its work items.
+ */
+type TabId = 'clarifier' | 'review' | 'spec' | DelegationTabId
 
 function thinkingRole(status: PlanningStatus): string | null {
   if (status === 'clarifying' || status === 'awaiting_confirmation') {
@@ -41,7 +57,7 @@ function thinkingRole(status: PlanningStatus): string | null {
  * Used only until the reader picks a tab themselves, so an open page follows a
  * running session from clarification through to the finished spec.
  */
-function phaseTab(status: PlanningStatus): TabId {
+function phaseTab(status: PlanningStatus): PlanningTabId {
   if (status === 'plan_ready' || status === 'review_limit_reached') return 'spec'
   if (status === 'planning' || status === 'under_review') return 'review'
   return 'clarifier'
@@ -162,7 +178,7 @@ function PlanningSessionPage() {
     sessionId,
   ])
   const [message, setMessage] = useState('')
-  const [correcting, setCorrecting] = useState(false)
+  const [addingClarification, setAddingClarification] = useState(false)
   const [pendingDialog, setPendingDialog] = useState<PendingDialog>(null)
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -171,11 +187,12 @@ function PlanningSessionPage() {
 
   const terminal = data ? isPlanningTerminal(data.status) : false
   const turnRunning = data?.turn_state === 'running'
-  const canProceed =
-    data !== null &&
-    !turnRunning &&
-    (data.status === 'clarifying' || data.status === 'awaiting_confirmation')
-  const composerVisible = data?.status === 'clarifying' || correcting
+  // Proceed anyway is the escape hatch from the questioning, so it belongs to
+  // the clarifying composer only. Once a summary is on screen the human can
+  // read it and confirm, and "I read your summary but will not endorse it" is
+  // not a choice worth offering.
+  const canProceed = data !== null && !turnRunning && data.status === 'clarifying'
+  const composerVisible = data?.status === 'clarifying' || addingClarification
   const canSend = composerVisible && !turnRunning && !busy && message.trim() !== ''
   const showReviewProgress =
     data !== null &&
@@ -190,16 +207,21 @@ function PlanningSessionPage() {
   const review = useMemo(() => groupRounds(threads.review), [threads.review])
   const settled =
     data !== null && ['plan_ready', 'review_limit_reached'].includes(data.status)
+  // Delegation has nothing to show, and nothing to ask the backend, until the
+  // plan it works from has settled.
+  const delegation = useDelegationWorkspace(projectName, sessionId, settled)
   const disabledTabs: Record<TabId, boolean> = {
     clarifier: false,
     review: threads.review.length === 0,
     spec: !data?.plan_spec,
+    ...delegation.disabledTabs,
   }
   // The phase can point at a tab with nothing in it yet — status turns to
   // `planning` before the planner's first turn lands. Fall back rather than
   // leave a disabled tab selected.
   const preferredTab = chosenTab ?? (data ? phaseTab(data.status) : 'clarifier')
   const activeTab: TabId = disabledTabs[preferredTab] ? 'clarifier' : preferredTab
+  const isDelegationTab = activeTab === 'items' || activeTab === 'feature-review'
 
   useEffect(() => {
     if (!data || isPlanningTerminal(data.status)) return
@@ -209,7 +231,7 @@ function PlanningSessionPage() {
   }, [data, reload])
 
   useEffect(() => {
-    setCorrecting(false)
+    setAddingClarification(false)
     setMessage('')
     setActionError(null)
     setChosenTab(null)
@@ -220,7 +242,7 @@ function PlanningSessionPage() {
     setActionError(null)
     try {
       await action()
-      setCorrecting(false)
+      setAddingClarification(false)
       setMessage('')
       setPendingDialog(null)
       reload()
@@ -237,7 +259,7 @@ function PlanningSessionPage() {
 
     const text = message.trim()
     void runAction(() =>
-      correcting
+      addingClarification
         ? correctPlanningUnderstanding(projectName, sessionId, text)
         : sendPlanningMessage(projectName, sessionId, text),
     )
@@ -267,6 +289,7 @@ function PlanningSessionPage() {
       label: 'Plan Spec',
       disabled: disabledTabs.spec,
     },
+    ...delegation.tabs,
   ]
 
   return (
@@ -291,7 +314,10 @@ function PlanningSessionPage() {
         {data && (
           <div className="button-row">
             <PlanningStatusBadge status={data.status} />
-            {turnRunning && activeRole && (
+            {/* The clarifier's own wait is shown at the foot of its thread,
+                where the reader is already looking. The header keeps the
+                later roles, which have no thread of their own here. */}
+            {turnRunning && activeRole && activeRole !== 'Clarifier' && (
               <span className="status">{activeRole} is thinking…</span>
             )}
             <button
@@ -332,7 +358,7 @@ function PlanningSessionPage() {
           )}
 
           <Tabs
-            label="Planning session views"
+            label="Planning and delegation phases"
             tabs={tabs}
             active={activeTab}
             onSelect={setChosenTab}
@@ -379,6 +405,12 @@ function PlanningSessionPage() {
                       ))}
                     </ol>
                   )}
+                  {turnRunning && activeRole === 'Clarifier' && (
+                    <p className="status planning-thinking" aria-live="polite">
+                      <span className="planning-thinking-blip" aria-hidden="true" />
+                      Clarifier is thinking…
+                    </p>
+                  )}
                 </div>
               </section>
 
@@ -402,30 +434,18 @@ function PlanningSessionPage() {
                           }
                           disabled={busy}
                         >
-                          Confirm
+                          Confirm and start planning
                         </button>
                         <button
                           type="button"
                           onClick={() => {
                             setActionError(null)
-                            setCorrecting(true)
+                            setAddingClarification(true)
                           }}
                           disabled={busy}
                         >
-                          Correct
+                          Keep clarifying
                         </button>
-                        {!correcting && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setActionError(null)
-                              setPendingDialog('proceed')
-                            }}
-                            disabled={!canProceed || busy}
-                          >
-                            Proceed anyway
-                          </button>
-                        )}
                       </div>
                     ) : (
                       data.status !== 'clarifying' && (
@@ -447,7 +467,7 @@ function PlanningSessionPage() {
               {composerVisible && (
                 <section className="card">
                   <div className="card-header">
-                    <h2>{correcting ? 'Correction' : 'Reply'}</h2>
+                    <h2>{addingClarification ? 'Clarification' : 'Reply'}</h2>
                   </div>
                   <div className="card-body">
                     {turnRunning && (
@@ -458,7 +478,9 @@ function PlanningSessionPage() {
                     )}
                     <form onSubmit={submitMessage}>
                       <label className="dialog-field">
-                        {correcting ? 'Correct the understanding' : 'Your reply'}
+                        {addingClarification
+                          ? 'Add to the understanding'
+                          : 'Your reply'}
                         <textarea
                           value={message}
                           rows={5}
@@ -470,11 +492,7 @@ function PlanningSessionPage() {
                       </label>
                       <div className="button-row">
                         <button type="submit" className="primary" disabled={!canSend}>
-                          {busy
-                            ? 'Sending…'
-                            : correcting
-                              ? 'Send correction'
-                              : 'Send'}
+                          {busy ? 'Sending…' : 'Send'}
                         </button>
                         <button
                           type="button"
@@ -678,6 +696,17 @@ function PlanningSessionPage() {
                 <PlanSpecView
                   planSpec={data.plan_spec}
                   understanding={data.understanding_summary}
+                  // Implementation starts with the context turn, which is a
+                  // modal: one decision, then the reader is moved on to the
+                  // work items. An existing context skips straight there.
+                  onImplementPlan={
+                    settled
+                      ? () =>
+                          delegation.context
+                            ? setChosenTab(delegation.phaseTab)
+                            : delegation.openContextModal()
+                      : undefined
+                  }
                 />
               ) : (
                 <p className="status">
@@ -686,7 +715,24 @@ function PlanningSessionPage() {
               )}
             </div>
           )}
+
+          {isDelegationTab && (
+            <div
+              role="tabpanel"
+              id={`panel-${activeTab}`}
+              aria-labelledby={`tab-${activeTab}`}
+            >
+              <DelegationPanel tab={activeTab} workspace={delegation} />
+            </div>
+          )}
         </>
+      )}
+
+      {delegation.contextModalOpen && (
+        <ContextModal
+          workspace={delegation}
+          onReady={() => setChosenTab('items')}
+        />
       )}
 
       {pendingDialog === 'proceed' && (

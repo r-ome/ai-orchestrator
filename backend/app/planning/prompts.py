@@ -5,7 +5,7 @@ from typing import Any
 
 CLARIFIER_SCHEMA = """{
   \"message\": \"one short paragraph to the human\",
-  \"questions\": [\"at most three, each one sentence\"],
+  \"questions\": [\"two or three, each one sentence; never more than three\"],
   \"ready_to_summarize\": false,
   \"understanding_summary\": \"\"
 }"""
@@ -51,9 +51,13 @@ def clarifier_prompt(*, title: str, messages: Sequence[Mapping[str, Any]]) -> st
             f"Feature title: {title}",
             "You may read the project at /workspace. It is read-only.",
             (
-                "Do not produce a plan, an implementation, or a design. Ask at most "
-                "three questions per reply. Choose each question because the previous "
-                "answer made it the next most useful question."
+                "Do not produce a plan, an implementation, or a design. Ask two or "
+                "three questions per reply whenever more than one thing is genuinely "
+                "open. Ask a single question only when one answer must come first."
+            ),
+            (
+                "Batch independent questions into one reply. Hold back only a question "
+                "whose wording depends on another answer."
             ),
             (
                 "Cover these areas across the conversation, not as a questionnaire: "
@@ -82,6 +86,21 @@ def planner_prompt(
         "You are the planner for a project-level planning session.",
         "Plan only. Do not write code, write files, create a tech spec, or create a task breakdown.",
         f"Feature brief:\n{brief}",
+        # Without this the first-round plan is written blind, and the review loop
+        # becomes the channel that carries repository facts into it — one full
+        # planner/reviewer round trip per fact, with the reviewer's mistakes
+        # copied along the way.
+        (
+            "Read the project at /workspace before you plan. It is read-only. "
+            "Name real paths, real symbols, and the conventions this repository "
+            "actually follows. Do not defer reading to the implementer, and do not "
+            "write a step whose content is 'inspect the existing code'."
+        ),
+        (
+            "State a repository fact only if you read it. Do not claim to have run, "
+            "compiled, built, or tested anything. Take dependency versions from the "
+            "manifest or lockfile and name the file you took them from."
+        ),
     ]
     first_round = round_number < 2
     if not first_round:
@@ -107,6 +126,21 @@ def reviewer_prompt(
             "You are the plan reviewer for a project-level planning session.",
             f"Feature brief:\n{brief}",
             f"Current plan:\n{plan_markdown}",
+            (
+                "Verify the plan against the project at /workspace. It is read-only. "
+                "Check that the files, symbols, and conventions the plan names exist "
+                "and behave as it assumes, before you raise or dismiss a finding."
+            ),
+            # A reviewer that reasons about what it cannot observe states the
+            # conclusion with an invented method attached. Reading is reliable;
+            # claimed execution is not.
+            (
+                "Cite a repository fact only if you read it, and give the path and line "
+                "range. Do not claim to have run, compiled, built, or tested anything. "
+                "Take dependency versions from the manifest or lockfile and name the "
+                "file you took them from. Do not generalise across a directory you did "
+                "not list."
+            ),
             "Review ledger:\n" + _render_json(ledger),
             (
                 "Prior findings are context, not truth. Assess the current plan from "

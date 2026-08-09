@@ -24,6 +24,83 @@ from app.projects.service import (
 )
 
 
+_RESTART_REASON = "The backend restarted while this turn was running"
+
+
+def _settle_interrupted_turns(store: ControllerStore) -> tuple[int, list[str]]:
+    """Fail every row a background turn left in flight.
+
+    Without this a killed process leaves a context stuck on 'generating',
+    which the `one_generating_context_per_session` index then reads as a live
+    turn — the session can never generate a context again. Work item runs and
+    integration reviews have the same shape.
+
+    Returns the count settled and the task ids the failed runs abandoned, for
+    `_reject_abandoned_tasks` to collect once a Docker client exists.
+    """
+    interrupted = store.interrupted_turns()
+    settled = 0
+    abandoned: list[str] = []
+    for row in interrupted["implementation_contexts"]:
+        store.settle_implementation_context(
+            str(row["id"]),
+            to_status="failed",
+            changes={"error": _RESTART_REASON},
+        )
+        settled += 1
+    for row in interrupted["delegation_reviews"]:
+        store.settle_delegation_review(
+            str(row["id"]),
+            to_status="failed",
+            error=_RESTART_REASON,
+        )
+        settled += 1
+    for row in interrupted["work_item_runs"]:
+        store.settle_work_item_run(
+            str(row["id"]),
+            to_status="failed",
+            changes={"error": _RESTART_REASON, "failure_kind": "unknown"},
+        )
+        settled += 1
+        task_id = str(row["task_id"] or "")
+        if task_id:
+            abandoned.append(task_id)
+    return settled, abandoned
+
+
+def _reject_abandoned_tasks(
+    client: Any,
+    store: ControllerStore,
+    task_ids: list[str],
+) -> int:
+    """Remove the task branch each interrupted run left behind.
+
+    Failing the run is not enough on its own. Its task stays in an open status,
+    and a sandbox allows only one open task, so `start_task` refuses every
+    later run on that sandbox — the delegation cannot make progress again
+    without a person editing the database.
+
+    Only tasks from runs `_settle_interrupted_turns` just failed are passed in.
+    A run whose turn finished is never in that set, so no branch holding a
+    verified commit is deleted here.
+    """
+    # Imported here rather than at module scope: app.tasks.service pulls in the
+    # preview and project services, and this module is imported during startup
+    # before those are needed.
+    from app.tasks.service import TaskOperationError, reject_task
+
+    rejected = 0
+    for task_id in task_ids:
+        try:
+            reject_task(client, store, task_id)
+        except (TaskOperationError, DockerException):
+            # A branch left behind is recoverable; a startup that dies here is
+            # not. The task keeps its row, and the next reconciliation retries.
+            continue
+        rejected += 1
+    return rejected
+
+
 def reconcile_controller_state(store: ControllerStore) -> dict[str, int]:
     client = None
     counts = {
@@ -31,8 +108,10 @@ def reconcile_controller_state(store: ControllerStore) -> dict[str, int]:
         "agents": 0,
         "previews": 0,
         "planning": 0,
+        "turns": 0,
         "missing": 0,
         "unexpected": 0,
+        "abandoned_tasks": 0,
     }
     for session in store.running_planning_sessions():
         if store.advance_planning_status(
@@ -44,8 +123,14 @@ def reconcile_controller_state(store: ControllerStore) -> dict[str, int]:
         ):
             counts["planning"] += 1
         store.release_planning_turn(str(session["id"]))
+    counts["turns"], abandoned_tasks = _settle_interrupted_turns(store)
     try:
         client = docker.from_env()
+        counts["abandoned_tasks"] = _reject_abandoned_tasks(
+            client,
+            store,
+            abandoned_tasks,
+        )
         containers = client.containers.list(
             all=True,
             filters={"label": f"{LABEL_CONTROLLER_MANAGED}=true"},

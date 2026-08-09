@@ -27,6 +27,9 @@ class PlanningRole(StrEnum):
     CLARIFIER = "clarifier"
     PLANNER = "planner"
     REVIEWER = "reviewer"
+    IMPLEMENTATION_CONTEXT = "implementation_context"
+    DELEGATOR = "delegator"
+    INTEGRATION_REVIEWER = "integration_reviewer"
     SYSTEM = "system"
 
 

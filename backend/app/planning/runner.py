@@ -174,12 +174,18 @@ def extract_payload(raw: str, *, provider: AgentProvider) -> dict[str, Any]:
             text = result
         except (json.JSONDecodeError, KeyError, TypeError):
             pass
-    start = text.find("{")
-    if start < 0:
+    # The last object, not the first. Codex echoes the prompt into its
+    # transcript, and the prompt carries the JSON schema as a worked example,
+    # so the first object in the output is that example rather than the
+    # reply. The reply is last: the command cats the last-message file after
+    # the transcript. Claude's envelope leaves only the reply text here, so
+    # taking the last object costs it nothing.
+    span = _last_object_span(text)
+    if span is None:
+        if "{" in text:
+            raise PlanningTurnError(422, "Unterminated JSON object in model output", raw)
         raise PlanningTurnError(422, "No JSON object found in model output", raw)
-    end = _balanced_object_end(text, start)
-    if end is None:
-        raise PlanningTurnError(422, "Unterminated JSON object in model output", raw)
+    start, end = span
     try:
         payload = json.loads(text[start : end + 1])
     except json.JSONDecodeError as error:
@@ -202,6 +208,17 @@ def turn_model(provider: AgentProvider, settings: PlanningSettings) -> str:
 
 def _command(provider: AgentProvider, settings: PlanningSettings) -> list[str]:
     if provider is AgentProvider.CLAUDE:
+        # The tool list is deliberately a literal and deliberately not
+        # configurable. A read-only turn reads the whole repository, so any
+        # tool that reaches the network turns repository content the model was
+        # told to read into content it can send. The container has ordinary
+        # networking — the provider API needs it — so this string, not network
+        # isolation, is what holds that boundary.
+        #
+        # The codex branch below has no equivalent. It runs with a real shell,
+        # so `--search` is not the limit — curl is reachable. Repository content
+        # is readable and egress is open on that path. Closing it needs egress
+        # control on the container's network, not a CLI flag.
         return [
             "sh",
             "-c",
@@ -212,11 +229,22 @@ def _command(provider: AgentProvider, settings: PlanningSettings) -> list[str]:
             ' --allowedTools "Read,Glob,Grep"'
             " < /dev/null",
         ]
+    # Codex's own sandbox is bubblewrap, and bubblewrap cannot start here: the
+    # container drops every capability and sets no-new-privileges, so bwrap fails
+    # with "No permissions to create a new namespace" before any command runs.
+    # That failure took out file reading entirely — codex reads through shell
+    # commands — so every codex turn planned blind while believing it could look.
+    # Making bwrap work would mean handing the container SYS_ADMIN and an
+    # unconfined seccomp profile to run a second, weaker sandbox inside the one
+    # that already holds. So the container is the sandbox: `read_only=True` root
+    # filesystem, the project volume mounted `ro`, `cap_drop=ALL`, and a tmpfs
+    # /tmp. Codex can read and run commands; it cannot write outside /tmp.
+    # What this does not hold is egress — see the note on the claude branch above.
     return [
         "sh",
         "-c",
         'codex exec "$PLANNING_PROMPT"'
-        " --sandbox read-only"
+        " --sandbox danger-full-access"
         " --ephemeral"
         " --skip-git-repo-check"
         " -C /workspace"
@@ -226,6 +254,34 @@ def _command(provider: AgentProvider, settings: PlanningSettings) -> list[str]:
         " < /dev/null"
         " && cat /tmp/planning-output.json",
     ]
+
+
+def _last_object_span(text: str) -> tuple[int, int] | None:
+    """The span of the last complete top-level `{...}` in the text.
+
+    Nested objects never win: each match jumps the scan past the whole
+    object it opened. A truncated object at the very end is skipped in
+    favour of the last complete one before it.
+
+    A `{` that never closes does not end the scan, it is only skipped. A
+    codex transcript quotes the files and shell commands the turn read, and
+    those carry lone braces — `<BaseHead title={SITE_TITLE} />` is one. Ending
+    the scan there would return some fragment of the transcript instead of the
+    reply that follows it.
+    """
+    span: tuple[int, int] | None = None
+    position = 0
+    while True:
+        start = text.find("{", position)
+        if start < 0:
+            break
+        end = _balanced_object_end(text, start)
+        if end is None:
+            position = start + 1
+            continue
+        span = (start, end)
+        position = end + 1
+    return span
 
 
 def _balanced_object_end(text: str, start: int) -> int | None:

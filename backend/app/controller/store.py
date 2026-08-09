@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -162,6 +162,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     head_commit TEXT,
     status TEXT NOT NULL,
     title TEXT NOT NULL DEFAULT '',
+    -- Paths already dirty when the task branch was cut. A sandbox copied from
+    -- a real repository arrives with untracked files the task never touches,
+    -- and settlement must not read those as work the turn left uncommitted.
+    baseline_dirty_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     settled_at TEXT
@@ -239,13 +243,18 @@ CREATE TABLE IF NOT EXISTS planning_plan_revisions (
 );
 
 -- Code-level knowledge a delegated run needs so it does not have to
--- rediscover the architecture. Points at code; never contains it. Regenerating
--- adds a revision, because a run that used an earlier one must stay explicable.
+-- rediscover the architecture. Points at code; never contains it.
+--
+-- One row per session, no revisions. The context is derived from a plan the
+-- human and the model already agreed on, so choosing between derivations is a
+-- decision that should not exist. Regenerating resets this row. What keeps a
+-- running delegation's context from changing underneath it is not a revision
+-- number but `claim_context`, which refuses to regenerate once the session has
+-- a delegation.
 CREATE TABLE IF NOT EXISTS implementation_contexts (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES planning_sessions(id),
     sandbox_id TEXT NOT NULL REFERENCES sandboxes(id),
-    revision INTEGER NOT NULL,
     status TEXT NOT NULL,
     manifest_json TEXT,
     commands_json TEXT,
@@ -258,12 +267,9 @@ CREATE TABLE IF NOT EXISTS implementation_contexts (
     settled_at TEXT
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS one_context_revision_per_session
-ON implementation_contexts(session_id, revision);
-
-CREATE UNIQUE INDEX IF NOT EXISTS one_generating_context_per_session
-ON implementation_contexts(session_id)
-WHERE status = 'generating';
+-- `one_context_per_session` is created by migration 13, not here. The schema
+-- script runs before migrations, so on a database that still holds revisions
+-- the index would fail before the migration could collapse them.
 
 -- One decomposition of a ready plan into work items, at a revision.
 -- Revisions are added, never mutated: a completed run must keep pointing at
@@ -287,6 +293,27 @@ ON delegations(session_id, revision);
 CREATE UNIQUE INDEX IF NOT EXISTS one_active_delegation_per_sandbox
 ON delegations(sandbox_id)
 WHERE status IN ('ready', 'running', 'halted');
+
+CREATE TABLE IF NOT EXISTS delegation_reviews (
+    id TEXT PRIMARY KEY,
+    delegation_id TEXT NOT NULL REFERENCES delegations(id),
+    revision INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    provider TEXT,
+    model TEXT,
+    result_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    settled_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_review_revision_per_delegation
+ON delegation_reviews(delegation_id, revision);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_generating_review_per_delegation
+ON delegation_reviews(delegation_id)
+WHERE status = 'generating';
 
 -- Immutable once its delegation revision exists. There is no update path on
 -- purpose: changing a definition means a new revision. Carries no provider or
@@ -339,6 +366,12 @@ CREATE TABLE IF NOT EXISTS work_item_runs (
     duration_ms INTEGER,
     exit_code INTEGER,
     repair_count INTEGER NOT NULL DEFAULT 0,
+    -- When the coding turn stopped running. A run stays 'running' after its
+    -- turn finishes, because it settles only on a person's accept or reject.
+    -- Without this stamp those two states are the same row, and startup
+    -- reconciliation cannot tell a turn it must fail from a finished one it
+    -- must leave alone. See `interrupted_turns`.
+    turn_finished_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     settled_at TEXT
@@ -363,6 +396,37 @@ CREATE TABLE IF NOT EXISTS work_item_routing (
     updated_at TEXT NOT NULL
 );
 """
+
+
+_CONTEXT_UPDATABLE_COLUMNS = frozenset(
+    {
+        "manifest_json",
+        "commands_json",
+        "inventory_json",
+        "model",
+        "error",
+    }
+)
+
+_RUN_UPDATABLE_COLUMNS = frozenset(
+    {
+        "task_id",
+        "model",
+        "result_json",
+        "failure_kind",
+        "error",
+        "verification_json",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+        "cost_usd",
+        "duration_ms",
+        "exit_code",
+        "repair_count",
+        "routing_source",
+    }
+)
 
 
 # Versions 1 to 8 are applied inline in `initialize` above, in the order this
@@ -394,8 +458,113 @@ def _migration_9(connection: sqlite3.Connection) -> None:
     _add_column(connection, "work_item_runs", "routing_source", "TEXT")
 
 
+def _migration_10(connection: sqlite3.Connection) -> None:
+    """Retain feature-level integration review revisions."""
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS delegation_reviews (
+            id TEXT PRIMARY KEY,
+            delegation_id TEXT NOT NULL REFERENCES delegations(id),
+            revision INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            provider TEXT,
+            model TEXT,
+            result_json TEXT,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            settled_at TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS one_review_revision_per_delegation
+        ON delegation_reviews(delegation_id, revision);
+        CREATE UNIQUE INDEX IF NOT EXISTS one_generating_review_per_delegation
+        ON delegation_reviews(delegation_id)
+        WHERE status = 'generating';
+        """
+    )
+
+
+def _migration_11(connection: sqlite3.Connection) -> None:
+    """Remember what was already dirty when a task branch was cut."""
+    _add_column(connection, "tasks", "baseline_dirty_json", "TEXT")
+
+
+def _migration_12(connection: sqlite3.Connection) -> None:
+    """Separate a run whose turn is in flight from one awaiting a decision."""
+    _add_column(connection, "work_item_runs", "turn_finished_at", "TEXT")
+
+
+def _migration_13(connection: sqlite3.Connection) -> None:
+    """Collapse implementation contexts to one per session.
+
+    The surviving row is the session's ready context if it has one, else its
+    newest.
+
+    A delegation may point at a revision that does not survive: `delegations`
+    holds `context_id REFERENCES implementation_contexts(id)` and foreign keys
+    are on, so deleting that revision fails the migration outright. Each such
+    delegation is repointed at its session's surviving context first. That is
+    the same plan's context, and under the collapsed model a session has one,
+    so it is the row the delegation would resolve to anyway.
+    """
+    columns = {
+        str(row["name"])
+        for row in connection.execute(
+            "PRAGMA table_info(implementation_contexts)"
+        ).fetchall()
+    }
+    if "revision" not in columns:
+        # A database created from the current schema. It has no revisions to
+        # collapse, but the index below is still this migration's to create.
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS one_context_per_session
+            ON implementation_contexts(session_id)
+            """
+        )
+        return
+    connection.execute(
+        """
+        CREATE TEMPORARY TABLE surviving_contexts AS
+        SELECT id, session_id FROM (
+            SELECT id, session_id, ROW_NUMBER() OVER (
+                PARTITION BY session_id
+                ORDER BY status = 'ready' DESC, revision DESC
+            ) AS rank FROM implementation_contexts
+        ) WHERE rank = 1
+        """
+    )
+    # Before the delete, not after: the foreign key is checked per statement.
+    connection.execute(
+        """
+        UPDATE delegations SET context_id = (
+            SELECT s.id FROM surviving_contexts s
+            WHERE s.session_id = delegations.session_id
+        )
+        WHERE context_id IS NOT NULL
+          AND context_id NOT IN (SELECT id FROM surviving_contexts)
+        """
+    )
+    connection.executescript(
+        """
+        DELETE FROM implementation_contexts
+        WHERE id NOT IN (SELECT id FROM surviving_contexts);
+        DROP TABLE surviving_contexts;
+        DROP INDEX IF EXISTS one_context_revision_per_session;
+        DROP INDEX IF EXISTS one_generating_context_per_session;
+        ALTER TABLE implementation_contexts DROP COLUMN revision;
+        CREATE UNIQUE INDEX IF NOT EXISTS one_context_per_session
+        ON implementation_contexts(session_id);
+        """
+    )
+
+
 MIGRATIONS: Mapping[int, Callable[[sqlite3.Connection], None]] = {
     9: _migration_9,
+    10: _migration_10,
+    11: _migration_11,
+    12: _migration_12,
+    13: _migration_13,
 }
 
 
@@ -723,6 +892,18 @@ class ControllerStore:
                 (base_branch, _now(), task_id),
             )
 
+    def set_task_baseline_dirty(self, *, task_id: str, paths: Sequence[str]) -> None:
+        """Records what git already called dirty before the turn ran.
+
+        Written from the same script that cuts the branch, so the snapshot is
+        of the worktree the turn is about to be handed.
+        """
+        with self._connection() as connection:
+            connection.execute(
+                "UPDATE tasks SET baseline_dirty_json = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(sorted(set(paths))), _now(), task_id),
+            )
+
     def delete_task(self, *, task_id: str) -> None:
         """Removes a task whose branch never got created. The events it wrote stay."""
         with self._connection() as connection:
@@ -890,6 +1071,549 @@ class ControllerStore:
             ).fetchall()
         return [_row(row) for row in rows if row is not None]
 
+    def start_implementation_context(self, values: Mapping[str, Any]) -> str | None:
+        """Open the session's one context for generation. None if one is running.
+
+        Regenerating resets the existing row rather than adding a revision, and
+        keeps its id, so a `delegations.context_id` written earlier never points
+        at a row that stopped existing. The read and the write share one
+        serialized connection, so two racing callers cannot both claim it.
+        """
+        now = _now()
+        with self._connection() as connection:
+            existing = connection.execute(
+                "SELECT id, status FROM implementation_contexts WHERE session_id = ?",
+                (values["session_id"],),
+            ).fetchone()
+            if existing is not None and str(existing["status"]) == "generating":
+                return None
+            context_id = str(existing["id"]) if existing else str(values["id"])
+            if existing is None:
+                connection.execute(
+                    """
+                    INSERT INTO implementation_contexts(
+                        id, session_id, sandbox_id, status, provider,
+                        model, created_at, updated_at
+                    ) VALUES (
+                        :id, :session_id, :sandbox_id, :status,
+                        :provider, :model, :created_at, :updated_at
+                    )
+                    """,
+                    {**dict(values), "created_at": now, "updated_at": now},
+                )
+            else:
+                # Every settled column goes back to null. A regenerated context
+                # that kept the previous manifest's commands would report a
+                # result the current turn never produced.
+                connection.execute(
+                    """
+                    UPDATE implementation_contexts SET
+                        sandbox_id = :sandbox_id, status = :status,
+                        provider = :provider, model = :model,
+                        manifest_json = NULL, commands_json = NULL,
+                        inventory_json = NULL, error = NULL, settled_at = NULL,
+                        updated_at = :updated_at
+                    WHERE id = :id
+                    """,
+                    {
+                        **dict(values),
+                        "id": context_id,
+                        "updated_at": now,
+                    },
+                )
+            self._event(
+                connection,
+                sandbox_id=str(values["sandbox_id"]),
+                run_id=context_id,
+                kind="context.generating",
+                payload={"regenerated": existing is not None},
+            )
+        return context_id
+
+    def implementation_context(self, context_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM implementation_contexts WHERE id = ?",
+                (context_id,),
+            ).fetchone()
+        return _row(row)
+
+    def implementation_context_for_session(
+        self,
+        session_id: str,
+    ) -> dict[str, Any] | None:
+        """The session's context, whatever its status. At most one exists."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM implementation_contexts WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return _row(row)
+
+    def settle_implementation_context(
+        self,
+        context_id: str,
+        *,
+        to_status: str,
+        changes: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Settle a context once, guarded against a late second writer."""
+        now = _now()
+        assignments = ["status = ?", "updated_at = ?", "settled_at = ?"]
+        parameters: list[Any] = [to_status, now, now]
+        for column, value in (changes or {}).items():
+            if column not in _CONTEXT_UPDATABLE_COLUMNS:
+                continue
+            assignments.append(f"{column} = ?")
+            parameters.append(value)
+        with self._connection() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE implementation_contexts SET {", ".join(assignments)}
+                WHERE id = ? AND status = 'generating'
+                """,
+                (*parameters, context_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute(
+                "SELECT * FROM implementation_contexts WHERE id = ?",
+                (context_id,),
+            ).fetchone()
+            updated = _row(row)
+            self._event(
+                connection,
+                sandbox_id=str((updated or {}).get("sandbox_id") or ""),
+                run_id=context_id,
+                kind=f"context.{to_status}",
+                payload={"revision": (updated or {}).get("revision")},
+            )
+        return updated
+
+    def create_delegation_revision(
+        self,
+        delegation: Mapping[str, Any],
+        items: Iterable[Mapping[str, Any]],
+    ) -> None:
+        """Write a delegation and all work items in one transaction."""
+        now = _now()
+        rows = list(items)
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO delegations(
+                    id, session_id, sandbox_id, context_id, revision, status,
+                    created_at, updated_at
+                ) VALUES (
+                    :id, :session_id, :sandbox_id, :context_id, :revision,
+                    :status, :created_at, :updated_at
+                )
+                """,
+                {**dict(delegation), "created_at": now, "updated_at": now},
+            )
+            connection.executemany(
+                """
+                INSERT INTO work_items(
+                    id, delegation_id, key, position, title, objective, scope,
+                    out_of_scope, dependencies_json, files_json, symbols_json,
+                    write_scope_json, acceptance_criteria_json, verification_json,
+                    complexity, architecture_json, risks_json, created_at
+                ) VALUES (
+                    :id, :delegation_id, :key, :position, :title, :objective,
+                    :scope, :out_of_scope, :dependencies_json, :files_json,
+                    :symbols_json, :write_scope_json, :acceptance_criteria_json,
+                    :verification_json, :complexity, :architecture_json,
+                    :risks_json, :created_at
+                )
+                """,
+                [{**dict(row), "created_at": now} for row in rows],
+            )
+            self._event(
+                connection,
+                sandbox_id=str(delegation["sandbox_id"]),
+                run_id=str(delegation["id"]),
+                kind="delegation.created",
+                payload={
+                    "revision": delegation["revision"],
+                    "work_items": len(rows),
+                },
+            )
+
+    def delegation(self, delegation_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM delegations WHERE id = ?",
+                (delegation_id,),
+            ).fetchone()
+        return _row(row)
+
+    def delegations_for_session(self, session_id: str) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM delegations
+                WHERE session_id = ? ORDER BY revision DESC
+                """,
+                (session_id,),
+            ).fetchall()
+        return [_row(row) for row in rows if row is not None]
+
+    def delegations_for_sandbox(self, sandbox_id: str) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM delegations
+                WHERE sandbox_id = ? ORDER BY created_at DESC
+                """,
+                (sandbox_id,),
+            ).fetchall()
+        return [_row(row) for row in rows if row is not None]
+
+    def next_delegation_revision(self, session_id: str) -> int:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT COALESCE(MAX(revision), 0) AS highest
+                FROM delegations WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        return int(row["highest"]) + 1
+
+    def create_delegation_review(self, values: Mapping[str, Any]) -> None:
+        now = _now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO delegation_reviews(
+                    id, delegation_id, revision, status, provider, model,
+                    created_at, updated_at
+                ) VALUES (
+                    :id, :delegation_id, :revision, :status, :provider, :model,
+                    :created_at, :updated_at
+                )
+                """,
+                {**dict(values), "created_at": now, "updated_at": now},
+            )
+            self._event(
+                connection,
+                sandbox_id=None,
+                run_id=str(values["id"]),
+                kind="delegation_review.generating",
+                payload={"revision": values["revision"]},
+            )
+
+    def settle_delegation_review(
+        self,
+        review_id: str,
+        *,
+        to_status: str,
+        result_json: str | None = None,
+        model: str | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any] | None:
+        now = _now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE delegation_reviews
+                SET status = ?, result_json = ?, model = ?, error = ?,
+                    updated_at = ?, settled_at = ?
+                WHERE id = ? AND status = 'generating'
+                """,
+                (to_status, result_json, model, error, now, now, review_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute(
+                "SELECT * FROM delegation_reviews WHERE id = ?",
+                (review_id,),
+            ).fetchone()
+            self._event(
+                connection,
+                sandbox_id=None,
+                run_id=review_id,
+                kind=f"delegation_review.{to_status}",
+                payload={"status": to_status},
+            )
+        return _row(row)
+
+    def delegation_reviews(self, delegation_id: str) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM delegation_reviews
+                WHERE delegation_id = ? ORDER BY revision DESC
+                """,
+                (delegation_id,),
+            ).fetchall()
+        return [_row(row) for row in rows if row is not None]
+
+    def delegation_review(self, review_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM delegation_reviews WHERE id = ?",
+                (review_id,),
+            ).fetchone()
+        return _row(row)
+
+    def next_delegation_review_revision(self, delegation_id: str) -> int:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT COALESCE(MAX(revision), 0) AS highest
+                FROM delegation_reviews WHERE delegation_id = ?
+                """,
+                (delegation_id,),
+            ).fetchone()
+        return int(row["highest"]) + 1
+
+    def transition_delegation(
+        self,
+        delegation_id: str,
+        *,
+        to_status: str,
+        from_statuses: Iterable[str],
+        terminal: bool = False,
+        error: str | None = None,
+    ) -> dict[str, Any] | None:
+        allowed = tuple(from_statuses)
+        if not allowed:
+            return None
+        placeholders = ", ".join("?" for _ in allowed)
+        now = _now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE delegations
+                SET status = ?, updated_at = ?, settled_at = ?, error = ?
+                WHERE id = ? AND status IN ({placeholders})
+                """,
+                (
+                    to_status,
+                    now,
+                    now if terminal else None,
+                    error,
+                    delegation_id,
+                    *allowed,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute(
+                "SELECT * FROM delegations WHERE id = ?",
+                (delegation_id,),
+            ).fetchone()
+            updated = _row(row)
+            self._event(
+                connection,
+                sandbox_id=str((updated or {}).get("sandbox_id") or ""),
+                run_id=delegation_id,
+                kind=f"delegation.{to_status}",
+                payload={"status": to_status},
+            )
+        return updated
+
+    def work_items(self, delegation_id: str) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM work_items
+                WHERE delegation_id = ? ORDER BY position
+                """,
+                (delegation_id,),
+            ).fetchall()
+        return [_row(row) for row in rows if row is not None]
+
+    def work_item(self, work_item_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM work_items WHERE id = ?",
+                (work_item_id,),
+            ).fetchone()
+        return _row(row)
+
+    def start_work_item_run(self, values: Mapping[str, Any]) -> None:
+        """Append one attempt and claim the delegation's running slot."""
+        now = _now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO work_item_runs(
+                    id, work_item_id, delegation_id, attempt, status, provider,
+                    model, task_id, created_at, updated_at
+                ) VALUES (
+                    :id, :work_item_id, :delegation_id, :attempt, :status,
+                    :provider, :model, :task_id, :created_at, :updated_at
+                )
+                """,
+                {**dict(values), "created_at": now, "updated_at": now},
+            )
+            self._event(
+                connection,
+                sandbox_id=None,
+                run_id=str(values["id"]),
+                kind="work_item_run.running",
+                payload={
+                    "work_item_id": values["work_item_id"],
+                    "attempt": values["attempt"],
+                },
+            )
+
+    def settle_work_item_run(
+        self,
+        run_id: str,
+        *,
+        to_status: str,
+        changes: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        now = _now()
+        assignments = ["status = ?", "updated_at = ?", "settled_at = ?"]
+        parameters: list[Any] = [to_status, now, now]
+        for column, value in (changes or {}).items():
+            if column not in _RUN_UPDATABLE_COLUMNS:
+                continue
+            assignments.append(f"{column} = ?")
+            parameters.append(value)
+        with self._connection() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE work_item_runs SET {", ".join(assignments)}
+                WHERE id = ? AND status = 'running'
+                """,
+                (*parameters, run_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute(
+                "SELECT * FROM work_item_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+            self._event(
+                connection,
+                sandbox_id=None,
+                run_id=run_id,
+                kind=f"work_item_run.{to_status}",
+                payload={"status": to_status},
+            )
+        return _row(row)
+
+    def work_item_run(self, run_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM work_item_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+        return _row(row)
+
+    def finish_work_item_turn(self, run_id: str) -> None:
+        """Stamp that the coding turn stopped, leaving the run for a person.
+
+        Idempotent, and only ever moves a run that is still 'running': a run
+        already settled by an accept or a reject keeps its own record.
+        """
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE work_item_runs
+                SET turn_finished_at = ?, updated_at = ?
+                WHERE id = ? AND status = 'running' AND turn_finished_at IS NULL
+                """,
+                (_now(), _now(), run_id),
+            )
+
+    def record_work_item_run(
+        self,
+        run_id: str,
+        changes: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        values = {
+            column: value
+            for column, value in changes.items()
+            if column in _RUN_UPDATABLE_COLUMNS
+        }
+        if not values:
+            return None
+        assignments = ", ".join(f"{column} = ?" for column in values)
+        with self._connection() as connection:
+            connection.execute(
+                f"""
+                UPDATE work_item_runs
+                SET {assignments}, updated_at = ?
+                WHERE id = ? AND status = 'running'
+                """,
+                (*values.values(), _now(), run_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM work_item_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+        return _row(row)
+
+    def work_item_runs(self, delegation_id: str) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM work_item_runs
+                WHERE delegation_id = ? ORDER BY work_item_id, attempt
+                """,
+                (delegation_id,),
+            ).fetchall()
+        return [_row(row) for row in rows if row is not None]
+
+    def next_attempt_number(self, work_item_id: str) -> int:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT COALESCE(MAX(attempt), 0) AS highest
+                FROM work_item_runs WHERE work_item_id = ?
+                """,
+                (work_item_id,),
+            ).fetchone()
+        return int(row["highest"]) + 1
+
+    def set_work_item_routing(
+        self,
+        work_item_id: str,
+        *,
+        provider: str | None,
+        model: str | None,
+        actor: str,
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO work_item_routing(
+                    work_item_id, provider, model, actor, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(work_item_id) DO UPDATE SET
+                    provider = excluded.provider,
+                    model = excluded.model,
+                    actor = excluded.actor,
+                    updated_at = excluded.updated_at
+                """,
+                (work_item_id, provider, model, actor, _now()),
+            )
+
+    def clear_work_item_routing(self, work_item_id: str) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                "DELETE FROM work_item_routing WHERE work_item_id = ?",
+                (work_item_id,),
+            )
+
+    def work_item_routing(self, delegation_id: str) -> dict[str, dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT routing.* FROM work_item_routing AS routing
+                JOIN work_items AS item ON item.id = routing.work_item_id
+                WHERE item.delegation_id = ?
+                """,
+                (delegation_id,),
+            ).fetchall()
+        return {str(row["work_item_id"]): dict(row) for row in rows}
+
     def advance_planning_status(
         self,
         *,
@@ -973,6 +1697,39 @@ class ControllerStore:
                 """
             ).fetchall()
         return [_row(row) for row in rows if row is not None]
+
+    def interrupted_turns(self) -> dict[str, list[dict[str, Any]]]:
+        """Rows whose turn was still in flight, keyed by table.
+
+        A turn now runs on a background thread (see `app.jobs`), and a daemon
+        thread dies with the process. Nothing then settles the row it claimed,
+        so a generating context would block its session's unique index forever
+        and a running work item would block its delegation. Startup
+        reconciliation reads this and fails each one.
+
+        A work item run whose turn already finished is excluded. It is still
+        'running' on purpose — it holds a verified commit and waits for a
+        person to accept or reject it — so failing it would throw that work
+        away. `turn_finished_at` is what tells the two apart.
+        """
+        queries = {
+            "implementation_contexts": (
+                "SELECT * FROM implementation_contexts WHERE status = 'generating'"
+            ),
+            "delegation_reviews": (
+                "SELECT * FROM delegation_reviews WHERE status = 'generating'"
+            ),
+            "work_item_runs": (
+                "SELECT * FROM work_item_runs "
+                "WHERE status = 'running' AND turn_finished_at IS NULL"
+            ),
+        }
+        found: dict[str, list[dict[str, Any]]] = {}
+        with self._connection() as connection:
+            for table, query in queries.items():
+                rows = connection.execute(query).fetchall()
+                found[table] = [_row(row) for row in rows if row is not None]
+        return found
 
     def append_planning_message(
         self,

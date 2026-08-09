@@ -1,0 +1,299 @@
+from collections.abc import Mapping
+from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from app.agents.models import AgentProvider
+
+
+class Complexity(StrEnum):
+    """Reasoning difficulty, not changed-line count."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class DelegationStatus(StrEnum):
+    READY = "ready"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    HALTED = "halted"
+    ABANDONED = "abandoned"
+
+
+class IntegrationReviewStatus(StrEnum):
+    GENERATING = "generating"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+DELEGATION_TRANSITIONS: Mapping[DelegationStatus, frozenset[DelegationStatus]] = {
+    DelegationStatus.READY: frozenset(
+        {DelegationStatus.RUNNING, DelegationStatus.ABANDONED}
+    ),
+    DelegationStatus.RUNNING: frozenset(
+        {
+            DelegationStatus.COMPLETED,
+            DelegationStatus.HALTED,
+            DelegationStatus.ABANDONED,
+        }
+    ),
+    DelegationStatus.HALTED: frozenset(
+        {DelegationStatus.RUNNING, DelegationStatus.ABANDONED}
+    ),
+    DelegationStatus.COMPLETED: frozenset(),
+    DelegationStatus.ABANDONED: frozenset(),
+}
+
+TERMINAL_DELEGATION_STATUSES = frozenset(
+    status for status, exits in DELEGATION_TRANSITIONS.items() if not exits
+)
+ACTIVE_DELEGATION_STATUSES = (
+    frozenset(DELEGATION_TRANSITIONS) - TERMINAL_DELEGATION_STATUSES
+)
+
+
+class RunStatus(StrEnum):
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    ABANDONED = "abandoned"
+
+
+RUN_TRANSITIONS: Mapping[RunStatus, frozenset[RunStatus]] = {
+    RunStatus.RUNNING: frozenset(
+        {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.ABANDONED}
+    ),
+    RunStatus.SUCCEEDED: frozenset(),
+    RunStatus.FAILED: frozenset(),
+    RunStatus.ABANDONED: frozenset(),
+}
+
+
+class FailureKind(StrEnum):
+    PROVIDER = "provider"
+    VERIFICATION = "verification"
+    IMPLEMENTATION = "implementation"
+    DEFINITION = "definition"
+    UNKNOWN = "unknown"
+
+
+def delegation_source_statuses(
+    target: DelegationStatus,
+) -> frozenset[DelegationStatus]:
+    return frozenset(
+        status for status, exits in DELEGATION_TRANSITIONS.items() if target in exits
+    )
+
+
+class WorkItemState(StrEnum):
+    """A state derived from dependencies and retained attempts."""
+
+    BLOCKED = "blocked"
+    READY = "ready"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class VerificationIntent(BaseModel):
+    command_kind: str
+    reason: str = ""
+
+
+class WorkItem(BaseModel):
+    id: str
+    delegation_id: str
+    key: str
+    position: int
+    title: str
+    objective: str
+    scope: str
+    out_of_scope: str = ""
+    dependencies: list[str] = Field(default_factory=list)
+    files: list[str] = Field(default_factory=list)
+    symbols: list[str] = Field(default_factory=list)
+    write_scope: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    verification: list[VerificationIntent] = Field(default_factory=list)
+    complexity: Complexity
+    architecture: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    created_at: str
+
+
+class RunUsage(BaseModel):
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_creation_tokens: int | None = None
+    cost_usd: float | None = None
+
+
+class WorkItemRun(BaseModel):
+    id: str
+    work_item_id: str
+    delegation_id: str
+    attempt: int
+    status: RunStatus
+    provider: AgentProvider | None = None
+    model: str | None = None
+    routing_source: str | None = None
+    task_id: str | None = None
+    task_status: str | None = None
+    result: dict[str, Any] | None = None
+    failure_kind: FailureKind | None = None
+    error: str | None = None
+    verification: dict[str, Any] | None = None
+    usage: RunUsage = Field(default_factory=RunUsage)
+    duration_ms: int | None = None
+    exit_code: int | None = None
+    repair_count: int = 0
+    created_at: str
+    updated_at: str
+    settled_at: str | None = None
+
+
+class Delegation(BaseModel):
+    id: str
+    session_id: str
+    sandbox_id: str
+    context_id: str | None = None
+    revision: int
+    status: DelegationStatus
+    error: str | None = None
+    created_at: str
+    updated_at: str
+    settled_at: str | None = None
+
+
+class IntegrationFinding(BaseModel):
+    severity: str
+    text: str
+    work_item_keys: list[str] = Field(default_factory=list)
+
+
+class IntegrationReview(BaseModel):
+    id: str
+    delegation_id: str
+    revision: int
+    status: IntegrationReviewStatus
+    provider: AgentProvider | None = None
+    model: str | None = None
+    approved: bool | None = None
+    summary: str = ""
+    findings: list[IntegrationFinding] = Field(default_factory=list)
+    error: str | None = None
+    created_at: str
+    updated_at: str
+    settled_at: str | None = None
+
+
+class ItemRouting(BaseModel):
+    recommended_model: str
+    model: str
+    source: str
+    provider: AgentProvider
+    override_provider: AgentProvider | None = None
+    override_model: str | None = None
+    warning: str | None = None
+
+
+class WorkItemView(BaseModel):
+    item: WorkItem
+    state: WorkItemState
+    wave: int
+    blocked_by: list[str] = Field(default_factory=list)
+    can_run_in_parallel_with: list[str] = Field(default_factory=list)
+    runs: list[WorkItemRun] = Field(default_factory=list)
+    routing: ItemRouting | None = None
+
+
+class DelegationView(BaseModel):
+    delegation: Delegation
+    items: list[WorkItemView] = Field(default_factory=list)
+    waves: list[list[str]] = Field(default_factory=list)
+    ready: list[str] = Field(default_factory=list)
+    review: IntegrationReview | None = None
+
+
+class DelegationsResponse(BaseModel):
+    count: int
+    delegations: list[Delegation]
+
+
+class GenerateDelegationRequest(BaseModel):
+    provider: AgentProvider = AgentProvider.CLAUDE
+    model: str | None = Field(default=None, max_length=100)
+
+
+class SetRoutingRequest(BaseModel):
+    provider: AgentProvider | None = None
+    model: str | None = Field(default=None, max_length=100)
+    actor: str = Field(default="human", max_length=100)
+
+
+class GenerateIntegrationReviewRequest(BaseModel):
+    provider: AgentProvider = AgentProvider.CLAUDE
+    model: str | None = Field(default=None, max_length=100)
+
+
+class GenerateIntegrationReviewOutcome(BaseModel):
+    review: IntegrationReview
+    accepted: bool
+    attempts: int
+    validation_errors: list[str] = Field(default_factory=list)
+    turn_status: str
+    turn_error: str | None = None
+
+
+class StartRunRequest(BaseModel):
+    provider: AgentProvider = AgentProvider.CLAUDE
+    model: str | None = Field(default=None, max_length=100)
+    credential_profile: str = Field(
+        default="default",
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+    )
+
+
+class StartRunOutcome(BaseModel):
+    delegation: DelegationView
+    run_id: str
+    run_status: RunStatus
+    task_id: str | None = None
+    task_status: str | None = None
+    turn_status: str | None = None
+    committed: bool | None = None
+    result_errors: list[str] = Field(default_factory=list)
+    packet: Any | None = None
+    model: str = ""
+    routing_source: str | None = None
+    recommended_model: str | None = None
+    routing_warning: str | None = None
+
+
+class AcceptedJob(BaseModel):
+    """A claimed turn the caller follows instead of waiting for.
+
+    `job_id` is whatever the phase reports progress on: a work item run's id, a
+    review's id, or — for decomposition, which has no row until it succeeds — a
+    generated id that only `delegation.progress` events carry.
+    """
+
+    job_id: str
+    kind: str
+    detail: str
+
+
+class GenerateDelegationOutcome(BaseModel):
+    delegation: DelegationView | None = None
+    accepted: bool
+    attempts: int
+    validation_errors: list[str] = Field(default_factory=list)
+    turn_status: str
+    turn_error: str | None = None
+    model: str | None = None

@@ -804,6 +804,12 @@
   text-align: left;
 }
 
+/* A dialog that holds a live turn console rather than one paragraph and a
+   confirm field. 480px cuts the model's own output to nothing. */
+.dialog-wide {
+  width: min(760px, 100%);
+}
+
 .dialog h2 {
   margin: 0 0 0.75rem;
   font-size: 1.265rem;
@@ -2112,6 +2118,57 @@
   border-top: 1px solid var(--line);
 }
 
+/* Sits at the foot of the clarifier thread, where the next message will
+   appear, so the wait is visible without leaving the conversation. */
+.planning-thinking {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 1rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  font-style: italic;
+}
+
+/* A radar blip: a steady dot, plus a ring that expands and fades on each
+   beat. The ring is a pseudo-element so it can grow past the dot without
+   moving the text beside it. */
+.planning-thinking-blip {
+  position: relative;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.planning-thinking-blip::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  animation: planning-blip 1.6s ease-out infinite;
+}
+
+@keyframes planning-blip {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  70%,
+  100% {
+    transform: scale(3);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .planning-thinking-blip::after {
+    animation: none;
+  }
+}
+
 /* The clarifier's questions, kept numbered: it asks at most three per turn
    and the human answers them by number. */
 .planning-questions {
@@ -2445,4 +2502,136 @@ details[open] > summary > * > .collapsible-caret {
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* --- Delegation --------------------------------------------------------- */
+
+.delegation-wave {
+  margin-top: 1.6rem;
+}
+
+.delegation-wave-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0 0.15rem;
+}
+
+.delegation-wave-heading h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.delegation-wave > .card {
+  margin-top: 0.75rem;
+}
+
+.delegation-routing {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.7fr) minmax(12rem, 1.3fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+  margin: 0.75rem 0 1rem;
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel2);
+}
+
+.delegation-routing label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.delegation-routing input,
+.delegation-routing select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2.1rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.delegation-run-summary {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.delegation-item-actions {
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.feature-review-action {
+  margin-top: 0.75rem;
+}
+
+/* A card carrying something that stops the reader, like a halted delegation.
+   Tinted rather than merely outlined, so it reads as a blocker among the
+   ordinary cards it sits between. */
+.card-alert {
+  border-color: var(--err);
+  background: color-mix(in srgb, var(--err) 6%, var(--panel));
+}
+
+/* Live view of one background turn: controller milestones above, the assigned
+   model's own container output below. */
+.turn-console {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.turn-console-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.turn-progress {
+  list-style: none;
+  margin: 0.5rem 0 0.75rem;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.turn-progress li {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.9rem;
+}
+
+.turn-step {
+  color: var(--muted);
+}
+
+.turn-output {
+  max-height: 22rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 720px) {
+  .delegation-routing {
+    grid-template-columns: 1fr;
+  }
+
+  .turn-progress li {
+    grid-template-columns: 1fr;
+  }
 }
