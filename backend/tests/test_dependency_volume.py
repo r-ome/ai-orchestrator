@@ -22,6 +22,7 @@ from app.previews.service import (
     PreviewOperationError,
     _dependency_volume,
     _dependency_volume_name,
+    _dependency_volume_ready,
     _lockfile_digest,
 )
 
@@ -197,6 +198,17 @@ def test_dependency_volume_rejects_a_volume_it_does_not_trust() -> None:
 
     with pytest.raises(PreviewOperationError):
         _dependency_volume(docker_client, "sandbox-1", "digest-1", {})
+
+
+def test_dependency_volume_is_reused_only_after_install_completion() -> None:
+    settings = SimpleNamespace(inspection_image="inspection:latest")
+    incomplete = StubDockerClient(lockfile_tar=b"")
+    complete = StubDockerClient(lockfile_tar=b"ready")
+
+    assert not _dependency_volume_ready(incomplete, settings, "dependencies")
+    assert _dependency_volume_ready(complete, settings, "dependencies")
+    command = complete.containers.run_calls[0]["command"][-1]
+    assert ".orchestrator-install-complete" in command
 
 
 # --- create_agent mounts the dependency volume read-only -------------------

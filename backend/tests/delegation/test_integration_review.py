@@ -7,6 +7,7 @@ import pytest
 from app.controller.store import ControllerStore
 from app.delegation import integration_review, service
 from app.delegation.config import IntegrationReviewSettings
+from app.delegation.delivery import FeatureTarget
 from app.delegation.models import (
     DelegationStatus,
     GenerateIntegrationReviewRequest,
@@ -21,6 +22,22 @@ PLAN = {
     "scope": "Implement the feature",
     "approach": "Add the behavior and tests",
 }
+BASE_COMMIT = "1" * 40
+HEAD_COMMIT = "2" * 40
+
+
+def _pin_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = FeatureTarget("main", BASE_COMMIT, HEAD_COMMIT)
+    monkeypatch.setattr(
+        integration_review,
+        "capture_feature_target",
+        lambda *_args, **_kwargs: target,
+    )
+    monkeypatch.setattr(
+        integration_review,
+        "ensure_target_unchanged",
+        lambda *_args, **_kwargs: None,
+    )
 
 
 def _item(key: str) -> dict[str, Any]:
@@ -120,6 +137,40 @@ def test_review_reads_final_repo_and_retains_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     completed = _completed(store)
+    store.create_delegation_change_request(
+        {
+            "id": "change-1",
+            "delegation_id": completed.delegation.id,
+            "revision": 1,
+            "status": "running",
+            "instructions": "Replace the button label after it is clicked",
+            "provider": "claude",
+            "model": "change-model",
+            "task_id": None,
+        }
+    )
+    store.settle_delegation_change_request(
+        "change-1",
+        to_status="awaiting_review",
+        verification_json=json.dumps(
+            {
+                "passed": True,
+                "commands": [{"command": "npm test", "passed": True}],
+                "acceptance_evidence": {
+                    "complete": True,
+                    "errors": [],
+                    "criteria": [
+                        {
+                            "criterion": "Only the confirmation label is visible after clicking",
+                            "verified": True,
+                            "evidence": "browser test",
+                        }
+                    ],
+                },
+            }
+        ),
+    )
+    _pin_target(monkeypatch)
     calls = []
 
     def run_turn(_docker, settings, request):
@@ -147,9 +198,16 @@ def test_review_reads_final_repo_and_retains_result(
     assert outcome.review.status is IntegrationReviewStatus.COMPLETED
     assert outcome.review.approved is True
     assert outcome.review.model == "reported-model"
+    assert outcome.review.base_branch == "main"
+    assert outcome.review.base_commit == BASE_COMMIT
+    assert outcome.review.head_commit == HEAD_COMMIT
     assert calls[0][0].credential_profile == "work"
     assert calls[0][1].project_volume == "sample-volume"
     assert "controller-run verification" in calls[0][1].prompt
+    assert "Replace the button label after it is clicked" in calls[0][1].prompt
+    assert "A build alone" not in calls[0][1].prompt
+    assert "only evidence is a build" in calls[0][1].prompt
+    assert service.view(store, completed.delegation.id).changes[0].status.value == "completed"
     assert service.view(store, completed.delegation.id).review == outcome.review
 
 
@@ -158,6 +216,7 @@ def test_invalid_review_gets_one_repair_then_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     completed = _completed(store)
+    _pin_target(monkeypatch)
     prompts = []
 
     def invalid(_docker, _settings, request):
@@ -179,6 +238,65 @@ def test_invalid_review_gets_one_repair_then_fails(
     assert outcome.attempts == 2
     assert outcome.review.status is IntegrationReviewStatus.FAILED
     assert "previous response was invalid" in prompts[1]
+
+
+def test_review_cannot_approve_a_change_without_acceptance_evidence(
+    store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed = _completed(store)
+    store.create_delegation_change_request(
+        {
+            "id": "change-without-evidence",
+            "delegation_id": completed.delegation.id,
+            "revision": 1,
+            "status": "running",
+            "instructions": "Change the interactive button state",
+            "provider": "claude",
+            "model": "change-model",
+            "task_id": None,
+        }
+    )
+    store.settle_delegation_change_request(
+        "change-without-evidence",
+        to_status="awaiting_review",
+        verification_json=json.dumps(
+            {
+                "passed": True,
+                "acceptance_evidence": {
+                    "complete": False,
+                    "errors": ["Agent reported no observable acceptance criteria"],
+                },
+            }
+        ),
+    )
+    _pin_target(monkeypatch)
+
+    monkeypatch.setattr(
+        integration_review,
+        "run_planning_turn",
+        lambda *_args, **_kwargs: TurnResult(
+            raw_output="{}",
+            payload={"approved": True, "summary": "Looks correct", "findings": []},
+            model="review-model",
+        ),
+    )
+
+    outcome = integration_review.generate_integration_review(
+        object(),
+        get_planning_settings(),
+        IntegrationReviewSettings("review-model"),
+        store,
+        completed.delegation.id,
+        GenerateIntegrationReviewRequest(),
+    )
+
+    assert outcome.review.approved is False
+    assert outcome.review.findings[0].severity == "high"
+    assert "lacks complete acceptance evidence" in outcome.review.findings[0].text
+    assert service.view(store, completed.delegation.id).changes[0].status.value == (
+        "awaiting_review"
+    )
 
 
 def test_review_requires_completed_delegation(store: ControllerStore) -> None:

@@ -171,7 +171,7 @@ def register_project(
     settings: ProjectSettings,
     request: CopyProjectRequest,
 ) -> ProjectCopyJobStatus:
-    source_path = _validated_source_path(request.path, settings.projects_root)
+    source_path = validated_source_path(request.path, settings.projects_root)
     file_count, copied_bytes = _project_inventory(source_path)
     created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     job_id = uuid4().hex
@@ -510,7 +510,8 @@ def inspect_project_copy_job(
     raise ProjectOperationError(404, f"Copy job '{job_id}' was not found")
 
 
-def _validated_source_path(path_value: str, projects_root: Path) -> Path:
+def validated_source_path(path_value: str, projects_root: Path) -> Path:
+    """Resolves one project source and keeps it under the configured root."""
     submitted_path = Path(path_value).expanduser()
     if not submitted_path.is_absolute():
         raise ProjectOperationError(400, "Project path must be absolute")

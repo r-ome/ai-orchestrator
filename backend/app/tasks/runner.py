@@ -15,6 +15,7 @@ import json
 import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from time import monotonic
 from typing import Any
 
 from docker.errors import DockerException
@@ -32,8 +33,17 @@ CODING_WORKSPACE = "/workspace"
 CODING_CREDENTIALS = "/auth"
 PROMPT_VARIABLE = "CODING_PROMPT"
 LABEL_TASK_ID = "orchestrator.task.id"
+PLAYWRIGHT_BROWSERS_PATH = "/ms-playwright"
+GLOBAL_NODE_MODULES = "/usr/local/lib/node_modules"
 
 WRITABLE_TOOLS = ("Read", "Glob", "Grep", "Edit", "Write", "MultiEdit", "Bash")
+
+# Codex reports tool work as item events. Agent messages and reasoning are not
+# tool calls, so they do not belong here. Keep these names aligned with the
+# documented `codex exec --json` item types.
+CODEX_TOOL_ITEM_TYPES = frozenset(
+    {"command_execution", "file_change", "mcp_tool_call", "web_search"}
+)
 
 
 #: Why a turn ended. A turn that ran to completion is not necessarily one
@@ -65,7 +75,7 @@ class TurnUsage:
 @dataclass(frozen=True)
 class CodingTurnResult:
     provider: AgentProvider
-    #: The model the provider reports it used, which is the one worth keeping.
+    #: The reported model when available, otherwise the requested model.
     model: str
     status: str
     text: str = ""
@@ -104,22 +114,19 @@ def run_coding_turn(
     The caller checks the task branch out first; this runs on whatever branch
     the working tree is already on.
     """
-    if provider is not AgentProvider.CLAUDE:
-        raise CodingTurnError(
-            501,
-            f"Headless coding turns are not implemented for '{provider.value}'. "
-            "Codex runs its own sandbox, which cannot start under cap_drop ALL "
-            "and no-new-privileges; see docs/adr/0005-headless-coding-turns.md.",
-        )
-
-    resolved_model = model or settings.claude_model
+    resolved_model = model or settings.model(provider.value)
     provider_config = get_agent_settings().provider(provider)
     credential = credential_volume(docker_client, provider, settings.credential_profile)
     container = None
+    started_at = monotonic()
     try:
         container = docker_client.containers.create(
             image=provider_config.image,
-            command=_command(resolved_model),
+            command=_command(
+                provider,
+                resolved_model,
+                settings.codex_reasoning_effort,
+            ),
             auto_remove=False,
             init=True,
             # The container is the boundary, not the provider's own sandbox:
@@ -131,12 +138,10 @@ def run_coding_turn(
             pids_limit=settings.pids_limit,
             mem_limit=settings.memory,
             working_dir=CODING_WORKSPACE,
-            environment={
-                provider_config.credential_environment_variable: CODING_CREDENTIALS,
-                "HOME": "/tmp/home",
-                "TERM": "dumb",
-                PROMPT_VARIABLE: prompt,
-            },
+            environment=_environment(
+                provider_config.credential_environment_variable,
+                prompt,
+            ),
             labels={
                 LABEL_CONTROLLER_MANAGED: "true",
                 LABEL_KIND: "coding-turn",
@@ -169,27 +174,61 @@ def run_coding_turn(
         stderr=stderr,
         exit_code=exit_code,
         timed_out=timed_out,
+        measured_duration_ms=round((monotonic() - started_at) * 1000),
     )
 
 
-def _command(model: str) -> list[str]:
-    """Write-capable flags for the Claude CLI.
+def _environment(credential_variable: str, prompt: str) -> dict[str, str]:
+    """Build the stable coding environment, including image-owned browser tools."""
+    return {
+        credential_variable: CODING_CREDENTIALS,
+        "HOME": "/tmp/home",
+        "TERM": "dumb",
+        "CI": "1",
+        "NODE_PATH": GLOBAL_NODE_MODULES,
+        "PLAYWRIGHT_BROWSERS_PATH": PLAYWRIGHT_BROWSERS_PATH,
+        "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1",
+        PROMPT_VARIABLE: prompt,
+    }
 
-    `stream-json` rather than `json`: the event stream is the only place
-    per-tool-call outcomes appear, and those are what tell a real answer from
-    one produced with every tool call failing.
 
-    `acceptEdits` auto-approves file edits so an unattended turn does not stall
-    on a prompt nobody can answer.
+def _command(
+    provider: AgentProvider,
+    model: str,
+    codex_reasoning_effort: str,
+) -> list[str]:
+    """Build a non-interactive, write-capable provider command.
+
+    The hardened Docker container is the security boundary for both providers.
+    Codex therefore runs without its nested sandbox, which cannot start under
+    cap_drop=ALL and no-new-privileges. The task volume is the only writable
+    project path in that outer container.
+
+    Both providers emit event streams. The controller uses those events to
+    distinguish a real result from an answer produced after every tool failed.
     """
+    if provider is AgentProvider.CLAUDE:
+        return [
+            "sh",
+            "-c",
+            'exec claude -p "$CODING_PROMPT"'
+            " --output-format stream-json --verbose"
+            f" --model {shlex.quote(model)}"
+            " --permission-mode acceptEdits"
+            f' --allowedTools "{",".join(WRITABLE_TOOLS)}"'
+            " < /dev/null",
+        ]
     return [
         "sh",
         "-c",
-        'exec claude -p "$CODING_PROMPT"'
-        " --output-format stream-json --verbose"
-        f" --model {shlex.quote(model)}"
-        " --permission-mode acceptEdits"
-        f' --allowedTools "{",".join(WRITABLE_TOOLS)}"'
+        'exec codex exec "$CODING_PROMPT"'
+        " --json"
+        " --sandbox danger-full-access"
+        " --ephemeral"
+        " --skip-git-repo-check"
+        f" -C {CODING_WORKSPACE}"
+        f" -m {shlex.quote(model)}"
+        f" -c model_reasoning_effort={shlex.quote(codex_reasoning_effort)}"
         " < /dev/null",
     ]
 
@@ -202,8 +241,19 @@ def _result(
     stderr: str,
     exit_code: int | None,
     timed_out: bool,
+    measured_duration_ms: int | None = None,
 ) -> CodingTurnResult:
     events = _json_lines(stdout)
+    if provider is AgentProvider.CODEX:
+        return _codex_result(
+            model=model,
+            events=events,
+            stderr=stderr,
+            exit_code=exit_code,
+            timed_out=timed_out,
+            measured_duration_ms=measured_duration_ms,
+        )
+
     tool_calls = _tool_calls(events)
     envelope = next(
         (event for event in reversed(events) if event.get("type") == "result"),
@@ -223,6 +273,7 @@ def _result(
             payload = extract_payload(text, provider=provider)
         except Exception:  # noqa: BLE001 - a missing result is not a failed turn
             payload = None
+    reported_duration_ms = _integer((envelope or {}).get("duration_ms"))
     return CodingTurnResult(
         provider=provider,
         model=_reported_model(envelope) or model,
@@ -231,11 +282,94 @@ def _result(
         payload=payload,
         usage=_usage(envelope),
         tool_calls=tuple(tool_calls),
-        duration_ms=_integer((envelope or {}).get("duration_ms")),
+        duration_ms=(
+            reported_duration_ms
+            if reported_duration_ms is not None
+            else measured_duration_ms
+        ),
         exit_code=exit_code,
         error=error,
         logs=stderr[-4000:],
     )
+
+
+def _codex_result(
+    *,
+    model: str,
+    events: list[dict[str, Any]],
+    stderr: str,
+    exit_code: int | None,
+    timed_out: bool,
+    measured_duration_ms: int | None,
+) -> CodingTurnResult:
+    tool_calls = _codex_tool_calls(events)
+    completed = next(
+        (event for event in reversed(events) if event.get("type") == "turn.completed"),
+        None,
+    )
+    failed = next(
+        (event for event in reversed(events) if event.get("type") == "turn.failed"),
+        None,
+    )
+    status, error = _codex_status(
+        completed=completed,
+        failed=failed,
+        events=events,
+        tool_calls=tool_calls,
+        exit_code=exit_code,
+        timed_out=timed_out,
+        stderr=stderr,
+    )
+    text = _codex_text(events)
+    payload = None
+    if status == SUCCEEDED and text:
+        try:
+            payload = extract_payload(text, provider=AgentProvider.CODEX)
+        except Exception:  # noqa: BLE001 - the branch remains authoritative
+            payload = None
+    return CodingTurnResult(
+        provider=AgentProvider.CODEX,
+        model=model,
+        status=status,
+        text=text,
+        payload=payload,
+        usage=_codex_usage(completed),
+        tool_calls=tuple(tool_calls),
+        duration_ms=measured_duration_ms,
+        exit_code=exit_code,
+        error=error,
+        logs=stderr[-4000:],
+    )
+
+
+def _codex_status(
+    *,
+    completed: Mapping[str, Any] | None,
+    failed: Mapping[str, Any] | None,
+    events: list[dict[str, Any]],
+    tool_calls: list[ToolCall],
+    exit_code: int | None,
+    timed_out: bool,
+    stderr: str,
+) -> tuple[str, str | None]:
+    if timed_out:
+        return TIMED_OUT, "Turn exceeded its timeout and was killed"
+    if exit_code != 0:
+        detail = _codex_error(events) or stderr.strip()[-500:] or "no stderr"
+        return PROVIDER_FAILURE, f"Provider exited with code {exit_code}: {detail}"
+    if failed is not None:
+        return PROVIDER_FAILURE, _error_detail(failed) or "Codex reported a failed turn"
+    if completed is None:
+        return (
+            PROVIDER_FAILURE,
+            _codex_error(events) or "Provider produced no completed turn",
+        )
+    if tool_calls and all(call.failed for call in tool_calls):
+        return (
+            TOOL_FAILURE,
+            f"All {len(tool_calls)} tool calls failed; the answer is unsupported",
+        )
+    return SUCCEEDED, None
 
 
 def _status(
@@ -258,8 +392,7 @@ def _status(
             envelope.get("api_error_status") or envelope.get("subtype") or "error"
         )
     # A clean exit with every tool call failing means the answer rests on
-    # nothing. Measured on Codex, whose sandbox could not start inside ours:
-    # every command failed, and the model answered anyway.
+    # nothing. The process can still produce a final message in that state.
     if tool_calls and all(call.failed for call in tool_calls):
         return (
             TOOL_FAILURE,
@@ -309,6 +442,82 @@ def _tool_calls(events: list[dict[str, Any]]) -> list[ToolCall]:
     ]
 
 
+def _codex_tool_calls(events: list[dict[str, Any]]) -> list[ToolCall]:
+    """Pair Codex item starts and completions by item id.
+
+    A started item without a completion failed. A completed command also
+    failed when it reports a non-zero exit code, even if its status field is
+    absent. Codex can recover after one failed command, so the caller rejects
+    the turn only when every tool item failed.
+    """
+    names: dict[str, str] = {}
+    failures: dict[str, bool] = {}
+    for event in events:
+        if event.get("type") not in {"item.started", "item.completed"}:
+            continue
+        item = event.get("item")
+        if not isinstance(item, Mapping):
+            continue
+        item_type = str(item.get("type") or "")
+        if item_type not in CODEX_TOOL_ITEM_TYPES:
+            continue
+        item_id = str(item.get("id") or "")
+        if not item_id:
+            continue
+        names[item_id] = _codex_tool_name(item_type)
+        if event.get("type") == "item.completed":
+            status = str(item.get("status") or "completed").lower()
+            exit_code = _integer(item.get("exit_code"))
+            failures[item_id] = (
+                status in {"failed", "error", "cancelled", "canceled"}
+                or (exit_code is not None and exit_code != 0)
+            )
+    return [
+        ToolCall(name=name, failed=failures.get(item_id, True))
+        for item_id, name in names.items()
+    ]
+
+
+def _codex_tool_name(item_type: str) -> str:
+    return {
+        "command_execution": "Bash",
+        "file_change": "ApplyPatch",
+        "mcp_tool_call": "MCP",
+        "web_search": "WebSearch",
+    }.get(item_type, item_type)
+
+
+def _codex_text(events: list[dict[str, Any]]) -> str:
+    for event in reversed(events):
+        if event.get("type") != "item.completed":
+            continue
+        item = event.get("item")
+        if isinstance(item, Mapping) and item.get("type") == "agent_message":
+            return str(item.get("text") or "")
+    return ""
+
+
+def _codex_error(events: list[dict[str, Any]]) -> str | None:
+    for event in reversed(events):
+        if event.get("type") == "error":
+            return _error_detail(event)
+    return None
+
+
+def _error_detail(event: Mapping[str, Any]) -> str | None:
+    error = event.get("error")
+    if isinstance(error, Mapping):
+        for key in ("message", "detail", "code"):
+            if error.get(key):
+                return str(error[key])
+    if error:
+        return str(error)
+    for key in ("message", "detail"):
+        if event.get(key):
+            return str(event[key])
+    return None
+
+
 def _usage(envelope: Mapping[str, Any] | None) -> TurnUsage:
     if envelope is None:
         return TurnUsage()
@@ -321,6 +530,18 @@ def _usage(envelope: Mapping[str, Any] | None) -> TurnUsage:
         cache_read_tokens=_integer(usage.get("cache_read_input_tokens")),
         cache_creation_tokens=_integer(usage.get("cache_creation_input_tokens")),
         cost_usd=float(cost) if isinstance(cost, (int, float)) else None,
+    )
+
+
+def _codex_usage(completed: Mapping[str, Any] | None) -> TurnUsage:
+    if completed is None:
+        return TurnUsage()
+    usage = completed.get("usage")
+    usage = usage if isinstance(usage, Mapping) else {}
+    return TurnUsage(
+        input_tokens=_integer(usage.get("input_tokens")),
+        output_tokens=_integer(usage.get("output_tokens")),
+        cache_read_tokens=_integer(usage.get("cached_input_tokens")),
     )
 
 

@@ -701,7 +701,13 @@ def test_native_preview_reports_real_container_and_dependency_durations() -> Non
         client.close()
 
 
-def test_reused_dependency_volume_still_reports_zero_duration() -> None:
+def test_reused_dependency_volume_still_reports_zero_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # This test covers dependency reuse. Environment masking has separate
+    # integration coverage and Docker Desktop cannot mount pytest's private
+    # temporary directory into a container on macOS.
+    monkeypatch.setattr("app.previews.service._environment_masks", lambda *_: [])
     client = docker.from_env()
     # `_dependency_volume_name` truncates to the first 12 characters of the
     # sandbox id, so the random part has to lead or two runs collide on the

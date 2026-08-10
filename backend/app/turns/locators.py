@@ -20,7 +20,7 @@ from app.planning.runner import LABEL_ROLE, LABEL_SESSION_ID
 from app.tasks.runner import LABEL_TASK_ID
 
 
-TURN_KINDS = ("context", "delegation", "run", "review")
+TURN_KINDS = ("context", "delegation", "run", "review", "change")
 
 #: The event kind each phase writes its progress under.
 EVENT_KINDS: Mapping[str, str] = {
@@ -28,6 +28,7 @@ EVENT_KINDS: Mapping[str, str] = {
     "delegation": "delegation.progress",
     "run": "run.progress",
     "review": "review.progress",
+    "change": "change.progress",
 }
 
 #: A progress step that means the turn is over, either way. A work-item run
@@ -107,6 +108,21 @@ def locate(
         task_id = str(run.get("task_id") or "")
         if not task_id:
             raise TurnNotFound("Work item run has no task")
+        return TurnLocator(
+            event_kind,
+            {LABEL_KIND: "coding-turn", LABEL_TASK_ID: task_id},
+        )
+
+    if kind == "change":
+        change = store.delegation_change_request(job_id)
+        if change is None:
+            raise TurnNotFound("Feature change request was not found")
+        delegation = store.delegation(str(change["delegation_id"]))
+        if delegation is None or str(delegation["session_id"]) != session_id:
+            raise TurnNotFound("Feature change request was not found")
+        task_id = str(change.get("task_id") or "")
+        if not task_id:
+            raise TurnNotFound("Feature change request has no task")
         return TurnLocator(
             event_kind,
             {LABEL_KIND: "coding-turn", LABEL_TASK_ID: task_id},

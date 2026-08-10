@@ -12,6 +12,10 @@ from docker.client import DockerClient
 from app.controller.store import ControllerStore
 from app.delegation import service
 from app.delegation.config import IntegrationReviewSettings
+from app.delegation.delivery import (
+    capture_feature_target,
+    ensure_target_unchanged,
+)
 from app.delegation.models import (
     DelegationStatus,
     GenerateIntegrationReviewOutcome,
@@ -23,6 +27,7 @@ from app.delegation.models import (
 from app.planning.config import PlanningSettings
 from app.planning.models import PlanningRole
 from app.planning.runner import PlanningTurnError, TurnRequest, TurnResult, run_planning_turn
+from app.previews.config import get_preview_settings
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,7 @@ class ReviewClaim:
     model: str
     prompt: str
     item_keys: set[str]
+    evidence_findings: list[dict[str, Any]]
     turn_settings: PlanningSettings
     request: GenerateIntegrationReviewRequest
 
@@ -117,6 +123,7 @@ def claim_integration_review(
         model=model,
         prompt=_prompt(plan, delegation_view),
         item_keys={entry.item.key for entry in delegation_view.items},
+        evidence_findings=_change_evidence_findings(delegation_view),
         turn_settings=_settings(planning_settings, session, request, model),
         request=request,
     )
@@ -169,6 +176,44 @@ def execute_integration_review(
     delegation_id = claim.delegation_id
     review_id = claim.review_id
     model = claim.model
+    preview_settings = get_preview_settings()
+    try:
+        target = capture_feature_target(
+            docker_client,
+            preview_settings,
+            store,
+            service.view(store, delegation_id),
+        )
+        pinned = store.pin_delegation_review_target(
+            review_id,
+            base_branch=target.base_branch,
+            base_commit=target.base_commit,
+            head_commit=target.head_commit,
+        )
+        if pinned is None:
+            raise service.DelegationOperationError(
+                409,
+                "Feature review target was not reserved",
+            )
+    except Exception as error:
+        detail = (
+            str(getattr(error, "detail", error))
+            or "Feature review target is unavailable"
+        )
+        store.settle_delegation_review(
+            review_id,
+            to_status=IntegrationReviewStatus.FAILED.value,
+            error=detail[:1500],
+        )
+        _progress(
+            store,
+            review_id,
+            claim.sandbox_id,
+            step="failed",
+            message=detail,
+            level="error",
+        )
+        raise
     _progress(
         store,
         review_id,
@@ -183,7 +228,10 @@ def execute_integration_review(
             claim.request,
             claim.volume_name,
             delegation_id,
-            claim.prompt,
+            (
+                f"{claim.prompt}\n\nReview target: branch {target.base_branch}, "
+                f"commits {target.base_commit}..{target.head_commit}."
+            ),
             claim.item_keys,
         )
     except Exception as error:
@@ -218,7 +266,7 @@ def execute_integration_review(
             level="error",
         )
         return GenerateIntegrationReviewOutcome(
-            review=_review(store.delegation_reviews(delegation_id)[0]),
+            review=review_from_row(store.delegation_reviews(delegation_id)[0]),
             accepted=False,
             attempts=turn.attempts,
             validation_errors=turn.errors,
@@ -226,12 +274,60 @@ def execute_integration_review(
             turn_error=turn.error,
         )
 
+    try:
+        ensure_target_unchanged(
+            docker_client,
+            preview_settings,
+            store,
+            claim.sandbox_id,
+            target,
+        )
+    except service.DelegationOperationError as error:
+        store.settle_delegation_review(
+            review_id,
+            to_status=IntegrationReviewStatus.FAILED.value,
+            model=turn.result.model,
+            error=error.detail[:1500],
+        )
+        _progress(
+            store,
+            review_id,
+            claim.sandbox_id,
+            step="failed",
+            message=error.detail,
+            level="error",
+        )
+        return GenerateIntegrationReviewOutcome(
+            review=review_from_row(store.delegation_reviews(delegation_id)[0]),
+            accepted=False,
+            attempts=turn.attempts,
+            validation_errors=[error.detail],
+            turn_status="repository_changed",
+        )
+
+    result_payload = dict(turn.result.payload)
+    if claim.evidence_findings:
+        result_payload["approved"] = False
+        result_payload["summary"] = (
+            "Whole-feature approval is on hold because requested changes lack "
+            "complete acceptance evidence."
+        )
+        result_payload["findings"] = [
+            *result_payload.get("findings", []),
+            *claim.evidence_findings,
+        ]
+
     store.settle_delegation_review(
         review_id,
         to_status=IntegrationReviewStatus.COMPLETED.value,
-        result_json=json.dumps(turn.result.payload),
+        result_json=json.dumps(result_payload),
         model=turn.result.model,
     )
+    if result_payload["approved"] is True:
+        store.complete_awaiting_delegation_changes(
+            delegation_id,
+            review_id=review_id,
+        )
     _progress(
         store,
         review_id,
@@ -240,7 +336,7 @@ def execute_integration_review(
         message="Integration review is complete",
     )
     return GenerateIntegrationReviewOutcome(
-        review=_review(store.delegation_reviews(delegation_id)[0]),
+        review=review_from_row(store.delegation_reviews(delegation_id)[0]),
         accepted=True,
         attempts=turn.attempts,
         validation_errors=[],
@@ -356,16 +452,37 @@ def _prompt(plan: Mapping[str, Any], delegation_view: Any) -> str:
         }
         for entry in delegation_view.items
     ]
+    changes = [
+        {
+            "revision": change.revision,
+            "status": change.status.value,
+            "instructions": change.instructions,
+            "provider": change.provider.value,
+            "model": change.model,
+            "verification": _change_verification_summary(change.verification),
+        }
+        for change in delegation_view.changes
+    ]
     return f"""Review the completed feature as a whole.
 
 Compare the final repository state with the reviewed plan, item acceptance criteria,
-controller-run verification, and retained implementation results.
+controller-run verification, retained implementation results, and every requested
+feature change.
 
 Reviewed plan:
 {json.dumps(plan, indent=2)}
 
 Completed work:
 {json.dumps(results, indent=2)}
+
+Requested feature changes:
+{json.dumps(changes, indent=2)}
+
+Treat acceptance evidence as part of the review gate. Do not approve an interactive
+or user-visible change when its only evidence is a build, typecheck, lint, or static
+inspection. Check related markup, styling, state transitions, and timing. When the
+evidence cannot prove the requested behavior, return approved=false with a specific
+finding. Use an empty work_item_keys list for a finding about a feature change.
 
 Inspect current files when needed. Do not modify the repository.
 Return exactly one JSON object:
@@ -378,6 +495,58 @@ Return exactly one JSON object:
 }}
 Use an empty findings list when approved.
 """
+
+
+def _change_evidence_findings(delegation_view: Any) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for change in delegation_view.changes:
+        if change.status.value != "awaiting_review":
+            continue
+        verification = change.verification
+        evidence = (
+            verification.get("acceptance_evidence")
+            if isinstance(verification, Mapping)
+            else None
+        )
+        if isinstance(evidence, Mapping) and evidence.get("complete") is True:
+            continue
+        reasons = evidence.get("errors", []) if isinstance(evidence, Mapping) else []
+        detail = "; ".join(str(reason) for reason in reasons if str(reason).strip())
+        suffix = f": {detail}" if detail else ""
+        findings.append(
+            {
+                "severity": "high",
+                "text": (
+                    f"Feature change revision {change.revision} lacks complete "
+                    f"acceptance evidence{suffix}"
+                ),
+                "work_item_keys": [],
+            }
+        )
+    return findings
+
+
+def _change_verification_summary(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    commands = []
+    for command in value.get("commands", []):
+        if not isinstance(command, Mapping):
+            continue
+        commands.append(
+            {
+                key: command.get(key)
+                for key in ("command_kind", "command", "passed", "detail")
+                if command.get(key) is not None
+            }
+        )
+    return {
+        "passed": value.get("passed"),
+        "commands": commands,
+        "acceptance_evidence": value.get("acceptance_evidence"),
+        "agent_report": value.get("agent_report"),
+        "turn": value.get("turn"),
+    }
 
 
 def _repair_prompt(original: str, errors: list[str], raw: str) -> str:
@@ -404,7 +573,7 @@ def _settings(
     return replace(settings, **changes)
 
 
-def _review(row: Mapping[str, Any]) -> IntegrationReview:
+def review_from_row(row: Mapping[str, Any]) -> IntegrationReview:
     result = _object(row.get("result_json")) or {}
     return IntegrationReview(
         id=str(row["id"]),
@@ -413,6 +582,9 @@ def _review(row: Mapping[str, Any]) -> IntegrationReview:
         status=str(row["status"]),
         provider=row.get("provider"),
         model=row.get("model"),
+        base_branch=row.get("base_branch"),
+        base_commit=row.get("base_commit"),
+        head_commit=row.get("head_commit"),
         approved=result.get("approved"),
         summary=str(result.get("summary") or ""),
         findings=[
@@ -424,12 +596,13 @@ def _review(row: Mapping[str, Any]) -> IntegrationReview:
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
         settled_at=row.get("settled_at"),
+        source_merged_at=row.get("source_merged_at"),
     )
 
 
 def latest_review(store: ControllerStore, delegation_id: str) -> IntegrationReview | None:
     rows = store.delegation_reviews(delegation_id)
-    return _review(rows[0]) if rows else None
+    return review_from_row(rows[0]) if rows else None
 
 
 def _object(value: Any) -> dict[str, Any] | None:

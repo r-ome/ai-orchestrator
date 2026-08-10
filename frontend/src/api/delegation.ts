@@ -128,10 +128,58 @@ export interface IntegrationReview {
   status: 'generating' | 'completed' | 'failed'
   provider: AgentProvider | null
   model: string | null
+  base_branch: string | null
+  base_commit: string | null
+  head_commit: string | null
   approved: boolean | null
   summary: string
   findings: IntegrationFinding[]
   error: string | null
+  settled_at: string | null
+  source_merged_at: string | null
+}
+
+export interface FeatureDiffFile {
+  path: string
+  additions: number | null
+  deletions: number | null
+  binary: boolean
+}
+
+export interface FeatureDiff {
+  review_id: string | null
+  source_path: string
+  base_branch: string
+  base_commit: string
+  head_commit: string
+  files: FeatureDiffFile[]
+  additions: number
+  deletions: number
+  patch: string
+  truncated: boolean
+}
+
+export interface MergeFeatureOutcome {
+  review: IntegrationReview
+  source_path: string
+  branch: string
+  head_commit: string
+  already_merged: boolean
+}
+
+export interface FeatureChangeRequest {
+  id: string
+  delegation_id: string
+  revision: number
+  status: 'running' | 'awaiting_review' | 'completed' | 'failed'
+  instructions: string
+  provider: AgentProvider
+  model: string
+  task_id: string | null
+  verification: Record<string, unknown> | null
+  error: string | null
+  created_at: string
+  updated_at: string
   settled_at: string | null
 }
 
@@ -151,6 +199,7 @@ export interface DelegationView {
   waves: string[][]
   ready: string[]
   review: IntegrationReview | null
+  changes: FeatureChangeRequest[]
 }
 
 export interface DelegationsResponse {
@@ -175,7 +224,7 @@ export interface RunOutcome {
   routing_warning: string | null
 }
 
-export type TurnKind = 'context' | 'delegation' | 'run' | 'review'
+export type TurnKind = 'context' | 'delegation' | 'run' | 'review' | 'change'
 
 /** A turn the backend claimed and now runs in the background.
  *
@@ -344,6 +393,42 @@ export function runIntegrationReview(
   return postJson<AcceptedJob>(
     `${delegationPath(projectName, sessionId)}/${encodeURIComponent(delegationId)}/review`,
     {},
+  )
+}
+
+export function requestFeatureChanges(
+  projectName: string,
+  sessionId: string,
+  delegationId: string,
+  instructions: string,
+) {
+  return postJson<AcceptedJob>(
+    `${delegationPath(projectName, sessionId)}/${encodeURIComponent(delegationId)}/changes`,
+    { instructions },
+  )
+}
+
+export function fetchFeatureDiff(
+  projectName: string,
+  sessionId: string,
+  delegationId: string,
+  signal?: AbortSignal,
+) {
+  return getJson<FeatureDiff>(
+    `${delegationPath(projectName, sessionId)}/${encodeURIComponent(delegationId)}/diff`,
+    signal,
+  )
+}
+
+export function mergeFeature(
+  projectName: string,
+  sessionId: string,
+  delegationId: string,
+  reviewId: string,
+) {
+  return postJson<MergeFeatureOutcome>(
+    `${delegationPath(projectName, sessionId)}/${encodeURIComponent(delegationId)}/merge`,
+    { review_id: reviewId, confirm: true },
   )
 }
 

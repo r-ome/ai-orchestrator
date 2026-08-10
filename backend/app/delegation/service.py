@@ -20,6 +20,8 @@ from app.delegation.models import (
     Delegation,
     DelegationStatus,
     DelegationView,
+    ChangeRequestStatus,
+    FeatureChangeRequest,
     GenerateDelegationOutcome,
     GenerateDelegationRequest,
     ItemRouting,
@@ -494,6 +496,10 @@ def view(
             item.key for item in items if states[item.key].value == "ready"
         ),
         review=latest_review(store, delegation_id),
+        changes=[
+            _change_request(change)
+            for change in store.delegation_change_requests(delegation_id)
+        ],
     )
 
 
@@ -800,6 +806,24 @@ def _delegation(row: Mapping[str, Any]) -> Delegation:
         context_id=row.get("context_id"),
         revision=int(row["revision"]),
         status=DelegationStatus(str(row["status"])),
+        error=row.get("error"),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+        settled_at=row.get("settled_at"),
+    )
+
+
+def _change_request(row: Mapping[str, Any]) -> FeatureChangeRequest:
+    return FeatureChangeRequest(
+        id=str(row["id"]),
+        delegation_id=str(row["delegation_id"]),
+        revision=int(row["revision"]),
+        status=ChangeRequestStatus(str(row["status"])),
+        instructions=str(row["instructions"]),
+        provider=str(row["provider"]),
+        model=str(row["model"]),
+        task_id=row.get("task_id"),
+        verification=_object(row.get("verification_json")),
         error=row.get("error"),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),

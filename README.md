@@ -8,6 +8,8 @@ The project provides a React control panel and a FastAPI controller. The control
 
 - Copies a host project folder into an independent Docker volume.
 - Keeps each sandbox separate from its source folder and sibling sandboxes.
+- Shows a commit-pinned feature diff before delivery to the source folder.
+- Fast-forwards approved features into a clean, unchanged source branch on request.
 - Runs one writable Claude Code or Codex session in each sandbox.
 - Detects and proposes preview settings before it runs project code.
 - Supports native, Dockerfile, and Docker Compose previews.
@@ -125,6 +127,15 @@ These builds download Debian packages and npm packages. Agent sessions connect t
 
 A sandbox is a one-time snapshot. Later source-folder changes do not sync into it.
 
+The source folder changes only when a person confirms an approved feature merge.
+That action is explicit. It is not synchronization.
+
+Delegated work items merge automatically inside the sandbox after controller
+verification. Review remains at feature level. A person can request small
+agent changes and rerun verification before approving one final source merge.
+Each change stays awaiting review until an independent whole-feature review
+approves the current sandbox commit.
+
 Repeated copies of one source folder create numbered sandboxes. Each copy always reads the original host folder.
 
 ## Core concepts
@@ -138,6 +149,7 @@ Repeated copies of one source folder create numbered sandboxes. Each copy always
 | Approval | Human permission to run one exact preview proposal revision. |
 | Preview stack | The active application runtime for a sandbox. |
 | Protected runtime file | A file change that invalidates an earlier preview approval. |
+| Source merge | An explicit fast-forward of one approved feature commit into the original project folder. |
 | Shared database server | One MySQL container that can serve several sandboxes of one source project. |
 | Database guest | A sandbox that writes to another sandbox's schema. |
 | Trusted metadata | Controller-owned workflow and audit data that project code cannot modify. |
@@ -285,6 +297,7 @@ FastAPI publishes the complete request and response schemas at `/docs` and `/ope
 | `/projects/{name}/preview-proposals` | Inspect code and create a reviewable preview proposal. |
 | `/projects/{name}/previews` | Start, inspect, update, and stop preview stacks. |
 | `/projects/{name}/secrets` | Manage preview secret names and values. |
+| `/projects/{name}/planning/sessions/{id}/delegations` | Run work items, review the feature diff, and merge approved code into the source folder. |
 | `/agents` | List providers and manage coding-agent containers. |
 | `/containers` | Inspect, monitor, stop, remove, prune, and open container shells. |
 | `/volumes` | Inspect mounts, managed volumes, files, and Docker storage use. |

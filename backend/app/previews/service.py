@@ -126,6 +126,7 @@ _MASKED_DIRECTORIES = (".orchestrator",)
 # the project happens not to gitignore.
 _BUILD_OUTPUT_PATHS = ("dist", ".astro", ".next")
 _NODE_RUNTIMES = {"astro", "vite", "nextjs"}
+_DEPENDENCY_READY_MARKER = ".orchestrator-install-complete"
 _COMMIT_PATTERN = re.compile(r"^[0-9a-f]{7,64}$")
 _preview_lock = Lock()
 # Serializes get-or-create of a project's shared server across concurrent starts.
@@ -499,7 +500,7 @@ def start_preview(
                 pass
             _remove_resources(resources, remove_data_volumes=True)
             if kind is PreviewKind.TASK:
-                _move_task(controller_store, task_id, TaskStatus.FAILED)
+                _move_task(controller_store, task_id, TaskStatus.REVIEW)
             _record_preview_progress(
                 controller_store,
                 sandbox_id=project.sandbox_id,
@@ -544,7 +545,7 @@ def start_preview(
         except Exception as error:
             _remove_resources(resources, remove_data_volumes=True)
             if kind is PreviewKind.TASK:
-                _move_task(controller_store, task_id, TaskStatus.FAILED)
+                _move_task(controller_store, task_id, TaskStatus.REVIEW)
             _record_preview_progress(
                 controller_store,
                 sandbox_id=project.sandbox_id,
@@ -1115,7 +1116,11 @@ def _start_native(
             lockfile_digest,
             labels,
         )
-        dependency_reused = _volume_has_entries(docker_client, settings, dependency.name)
+        dependency_reused = _dependency_volume_ready(
+            docker_client,
+            settings,
+            dependency.name,
+        )
         volumes[dependency.name] = {"bind": "/workspace/node_modules", "mode": "rw"}
         data_volumes.append(dependency)
     elif config.runtime.value == "fastapi":
@@ -1167,6 +1172,11 @@ def _start_native(
                         "/workspace/node_modules"
                         if config.runtime.value in _NODE_RUNTIMES
                         else "/opt/venv" if config.runtime.value == "fastapi" else None
+                    ),
+                    completion_marker=(
+                        f"/workspace/node_modules/{_DEPENDENCY_READY_MARKER}"
+                        if config.runtime.value in _NODE_RUNTIMES
+                        else None
                     ),
                 )
                 finish("Dependency installation completed")
@@ -2676,6 +2686,7 @@ def _run_prepare(
     volumes: dict[str, dict[str, str]],
     labels: dict[str, str],
     size_path: str | None,
+    completion_marker: str | None = None,
     environment: dict[str, str] | None = None,
     mounts: list[Mount] | None = None,
 ) -> None:
@@ -2690,6 +2701,8 @@ def _run_prepare(
                 " echo 'Installed dependencies exceed the configured size limit' >&2;"
                 " exit 73; fi"
             )
+        if completion_marker:
+            checked_command += f"\ntouch {shlex.quote(completion_marker)}"
         container = docker_client.containers.create(
             image=image,
             command=["sh", "-lc", checked_command],
@@ -3049,14 +3062,21 @@ def _lockfile_digest(files: dict[str, bytes]) -> str:
     return hashlib.sha256(b"none").hexdigest()
 
 
-def _volume_has_entries(
+def _dependency_volume_ready(
     docker_client: DockerClient,
     settings: PreviewSettings,
     volume_name: str,
 ) -> bool:
     output = docker_client.containers.run(
         image=settings.inspection_image,
-        command=["sh", "-c", "find /workspace -mindepth 1 -maxdepth 1 -print -quit"],
+        command=[
+            "sh",
+            "-c",
+            (
+                f"if [ -f /workspace/{_DEPENDENCY_READY_MARKER} ]; "
+                "then printf ready; fi"
+            ),
+        ],
         remove=True,
         network_disabled=True,
         read_only=True,

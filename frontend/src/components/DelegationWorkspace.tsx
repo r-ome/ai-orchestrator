@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AgentProvider } from '../api/agents'
 import {
-  acceptRun,
   clearItemRouting,
   fetchContext,
   fetchDelegation,
   fetchDelegations,
+  fetchFeatureDiff,
   generateContext,
   generateDelegation,
-  rejectRun,
+  mergeFeature,
+  requestFeatureChanges,
   resumeDelegation,
   runIntegrationReview,
   setItemRouting,
@@ -16,17 +17,25 @@ import {
   type ContextManifest,
   type DelegationView,
   type ImplementationContext,
+  type IntegrationReview,
   type ItemRouting,
   type TurnKind,
   type WorkItemState,
   type WorkItemView,
 } from '../api/delegation'
-import { inspectPreview, startPreview, type PreviewRun } from '../api/previews'
+import {
+  fetchPreviewCreationLogs,
+  inspectPreview,
+  startPreview,
+  type PreviewLogs,
+  type PreviewRun,
+} from '../api/previews'
 import CollapsibleCard from './CollapsibleCard'
 import ConfirmDialog from './ConfirmDialog'
 import type { TabDefinition } from './Tabs'
 import TurnConsole from './TurnConsole'
 import { useApiResource } from '../hooks/useApiResource'
+import { formatRelativeTime, formatTimestamp } from '../utils/format'
 
 /**
  * The delegation phases that get a tab on the planning session page.
@@ -48,12 +57,6 @@ interface WatchedTurn {
 interface WorkspaceData {
   context: ImplementationContext | null
   delegation: DelegationView | null
-}
-
-interface PendingDecision {
-  action: 'accept' | 'reject'
-  runId: string
-  itemTitle: string
 }
 
 const EMPTY_DATA: WorkspaceData = {
@@ -78,8 +81,198 @@ function stateTone(state: WorkItemState): string {
   return 'warn'
 }
 
+function changeEvidenceErrors(verification: Record<string, unknown> | null): string[] {
+  const evidence = verification?.acceptance_evidence
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) return []
+  const errors = (evidence as Record<string, unknown>).errors
+  return Array.isArray(errors) ? errors.filter((error): error is string => typeof error === 'string') : []
+}
+
 function money(value: number | null): string {
   return value === null ? 'not reported' : `$${value.toFixed(4)}`
+}
+
+function patchLineClass(line: string): string {
+  if (line.startsWith('@@')) return 'feature-diff-hunk'
+  if (
+    line.startsWith('diff --git') ||
+    line.startsWith('index ') ||
+    line.startsWith('--- ') ||
+    line.startsWith('+++ ') ||
+    line.startsWith('new file ') ||
+    line.startsWith('deleted file ') ||
+    line.startsWith('similarity index ') ||
+    line.startsWith('rename from ') ||
+    line.startsWith('rename to ')
+  ) {
+    return 'feature-diff-meta'
+  }
+  if (line.startsWith('+')) return 'feature-diff-added'
+  if (line.startsWith('-')) return 'feature-diff-removed'
+  return 'feature-diff-context'
+}
+
+function FeatureCodeDiff({
+  projectName,
+  sessionId,
+  delegationId,
+  review,
+  revisionKey,
+  busy,
+  actionError,
+  runAction,
+}: {
+  projectName: string
+  sessionId: string
+  delegationId: string
+  review: IntegrationReview | null
+  revisionKey: string
+  busy: string
+  actionError: string | null
+  runAction: (label: string, action: () => Promise<unknown>) => Promise<void>
+}) {
+  const fetcher = useCallback(
+    (signal: AbortSignal) =>
+      fetchFeatureDiff(projectName, sessionId, delegationId, signal),
+    [projectName, sessionId, delegationId],
+  )
+  const diff = useApiResource(fetcher, [
+    projectName,
+    sessionId,
+    delegationId,
+    review?.id,
+    review?.source_merged_at,
+    revisionKey,
+  ])
+  const [mergeOpen, setMergeOpen] = useState(false)
+  const lines = useMemo(() => diff.data?.patch.split('\n') ?? [], [diff.data?.patch])
+  const approved = review?.status === 'completed' && review.approved === true
+  const pinned = approved && diff.data?.review_id === review.id
+  const merged = Boolean(review?.source_merged_at)
+
+  const confirmMerge = () => {
+    if (!review || !pinned) return
+    void runAction('merge-feature', async () => {
+      await mergeFeature(projectName, sessionId, delegationId, review.id)
+      setMergeOpen(false)
+      diff.reload()
+    })
+  }
+
+  return (
+    <section className="feature-diff-section" aria-labelledby="feature-diff-heading">
+      <div className="feature-diff-heading-row">
+        <div>
+          <div className="section-heading" id="feature-diff-heading">Implemented code</div>
+          {diff.data && (
+            <p className="status mono">
+              {diff.data.base_branch} · {diff.data.base_commit.slice(0, 12)} →{' '}
+              {diff.data.head_commit.slice(0, 12)}
+            </p>
+          )}
+        </div>
+        {diff.data && (
+          <span className="pill muted">
+            {diff.data.files.length} file{diff.data.files.length === 1 ? '' : 's'} ·{' '}
+            +{diff.data.additions} / −{diff.data.deletions}
+          </span>
+        )}
+      </div>
+
+      {diff.loading && <p className="status">Loading code diff…</p>}
+      {diff.error && (
+        <p className="status status-error" role="alert">
+          Failed to load code diff: {diff.error}
+        </p>
+      )}
+
+      {diff.data && (
+        <>
+          {diff.data.files.length > 0 ? (
+            <ul className="feature-diff-files">
+              {diff.data.files.map((file) => (
+                <li key={file.path}>
+                  <span className="mono">{file.path}</span>
+                  <span className="mono feature-diff-file-tally">
+                    {file.binary
+                      ? 'binary'
+                      : `+${file.additions ?? 0} / −${file.deletions ?? 0}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="status">The accepted feature commits contain no file changes.</p>
+          )}
+
+          {diff.data.patch && (
+            <pre className="feature-diff-patch" aria-label="Unified code diff">
+              {lines.map((line, index) => (
+                <span key={index} className={patchLineClass(line)}>
+                  {`${line}\n`}
+                </span>
+              ))}
+            </pre>
+          )}
+
+          {diff.data.truncated && (
+            <p className="status status-warning">
+              The displayed patch stops at 500,000 bytes. The file totals cover the full change.
+            </p>
+          )}
+
+          {merged ? (
+            <p className="status">
+              Merged into the original project folder at {review?.source_merged_at}.
+            </p>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="primary feature-merge-action"
+                disabled={Boolean(busy) || !pinned}
+                title={
+                  pinned
+                    ? undefined
+                    : 'An approved feature review for this exact commit is required'
+                }
+                onClick={() => setMergeOpen(true)}
+              >
+                Merge into project folder
+              </button>
+              {!approved && (
+                <p className="status">
+                  The merge button unlocks after the feature review approves this commit.
+                </p>
+              )}
+            </>
+          )}
+        </>
+      )}
+
+      {mergeOpen && diff.data && review && (
+        <ConfirmDialog
+          title="Merge feature into the original project folder?"
+          confirmPhrase="MERGE"
+          confirmLabel="Merge into project folder"
+          busy={busy === 'merge-feature'}
+          error={actionError}
+          onConfirm={confirmMerge}
+          onCancel={() => setMergeOpen(false)}
+        >
+          <p>
+            This fast-forwards branch <code>{diff.data.base_branch}</code> in{' '}
+            <code>{diff.data.source_path}</code> to commit{' '}
+            <code>{diff.data.head_commit.slice(0, 12)}</code>.
+          </p>
+          <p>
+            The merge stops if the source branch moved or the source folder has
+            uncommitted changes. It never resolves conflicts or overwrites local work.
+          </p>
+        </ConfirmDialog>
+      )}
+    </section>
+  )
 }
 
 function RoutingControls({
@@ -175,25 +368,18 @@ function ItemCard({
   sessionId,
   onReload,
   onRun,
-  onDecision,
-  onPreview,
-  preview,
   onSetRouting,
   onClearRouting,
 }: {
   entry: WorkItemView
   delegation: DelegationView
-  busy: boolean
+  busy: string
   /** Run id the workspace is streaming, so only that card shows a console. */
   watching: string | null
   projectName: string
   sessionId: string
   onReload: () => void
   onRun: () => void
-  onDecision: (decision: PendingDecision) => void
-  onPreview: (taskId: string) => void
-  /** The running preview, when it belongs to this card's task. */
-  preview: PreviewRun | null
   onSetRouting: (provider: AgentProvider | null, model: string | null) => void
   onClearRouting: () => void
 }) {
@@ -202,9 +388,9 @@ function ItemCard({
     ['ready', 'failed'].includes(entry.state) &&
     ['ready', 'running'].includes(delegation.delegation.status)
   const blockedReason = runBlockedReason(entry, delegation)
-  const canSettle = latest?.status === 'running' && latest.task_status === 'review'
   const verificationPassed = latest?.verification?.passed === true
   const isWatched = watching !== null && latest?.id === watching
+  const isBusy = Boolean(busy)
 
   return (
     <CollapsibleCard
@@ -268,7 +454,7 @@ function ItemCard({
           <RoutingControls
             key={`${entry.routing.override_provider}-${entry.routing.override_model}`}
             routing={entry.routing}
-            disabled={busy || entry.state === 'running' || entry.state === 'completed'}
+            disabled={isBusy || entry.state === 'running' || entry.state === 'completed'}
             onSave={onSetRouting}
             onClear={onClearRouting}
           />
@@ -311,54 +497,16 @@ function ItemCard({
 
       {!canRun && blockedReason && <p className="status">{blockedReason}</p>}
 
-      {preview && (
-        <p className="status">
-          Preview of this task's commit is {preview.status} at{' '}
-          <a href={preview.url} target="_blank" rel="noreferrer">
-            {preview.url}
-          </a>
-          . Nothing is merged yet — check it, then merge.
-        </p>
-      )}
-
       <div className="button-row delegation-item-actions">
         <button
           type="button"
           className="primary"
-          disabled={busy || !canRun}
+          disabled={isBusy || !canRun}
           title={canRun ? undefined : blockedReason ?? undefined}
           onClick={onRun}
         >
           {entry.state === 'running' ? 'Running…' : 'Run item'}
         </button>
-        {canSettle && latest && (
-          <>
-            {latest.task_id && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => onPreview(latest.task_id as string)}
-              >
-                {preview ? 'Rebuild preview' : 'Preview'}
-              </button>
-            )}
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => onDecision({ action: 'accept', runId: latest.id, itemTitle: entry.item.title })}
-            >
-              Merge
-            </button>
-            <button
-              type="button"
-              className="danger"
-              disabled={busy}
-              onClick={() => onDecision({ action: 'reject', runId: latest.id, itemTitle: entry.item.title })}
-            >
-              Reject
-            </button>
-          </>
-        )}
       </div>
     </CollapsibleCard>
   )
@@ -390,8 +538,6 @@ export interface DelegationWorkspace {
   disabledTabs: Record<DelegationTabId, boolean>
   reload: () => void
   busy: string
-  pending: PendingDecision | null
-  setPending: (decision: PendingDecision | null) => void
   watching: WatchedTurn | null
   contextProvider: AgentProvider
   setContextProvider: (provider: AgentProvider) => void
@@ -404,9 +550,9 @@ export interface DelegationWorkspace {
     title: string,
     claim: () => Promise<{ job_id: string } | { id: string }>,
   ) => Promise<string | null>
-  previewTask: (taskId: string) => void
+  previewFeature: () => void
   preview: PreviewRun | null
-  setPreview: (preview: PreviewRun | null) => void
+  previewLogs: PreviewLogs | null
   clearWatch: () => void
 }
 
@@ -447,10 +593,11 @@ export function useDelegationWorkspace(
   ])
   const [busy, setBusy] = useState('')
   const [actionError, setActionError] = useState<string | null>(null)
-  const [pending, setPending] = useState<PendingDecision | null>(null)
-  // A sandbox runs one preview at a time, so this is the workspace's preview,
-  // not the card's. The card it belongs to is found by matching the task id.
+  // A sandbox runs one preview at a time. This preview represents the current
+  // integrated feature, not an individual work-item branch.
   const [preview, setPreview] = useState<PreviewRun | null>(null)
+  const [previewLogs, setPreviewLogs] = useState<PreviewLogs | null>(null)
+  const [previewProposalId, setPreviewProposalId] = useState<string | null>(null)
   const [watching, setWatching] = useState<WatchedTurn | null>(null)
   const [contextProvider, setContextProvider] = useState<AgentProvider>('claude')
   const [contextModel, setContextModel] = useState('')
@@ -468,15 +615,39 @@ export function useDelegationWorkspace(
     sessionContext?.status === 'generating' ? sessionContext : null
   const runningItem =
     delegation?.items.find((entry) => entry.state === 'running') ?? null
+  const runningChange =
+    delegation?.changes.find((change) => change.status === 'running') ?? null
 
   useEffect(() => {
     setActionError(null)
     setWatching(null)
+    setPreview(null)
+    setPreviewLogs(null)
+    setPreviewProposalId(null)
     setContextProvider('claude')
     setContextModel('')
     setContextModalOpen(false)
     setAwaitingContextId(null)
   }, [projectName, sessionId])
+
+  useEffect(() => {
+    if (!previewProposalId) return
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const nextLogs = await fetchPreviewCreationLogs(projectName, previewProposalId)
+        if (!cancelled) setPreviewLogs(nextLogs)
+      } catch {
+        // The start request reports the authoritative error through runAction.
+      }
+    }
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 750)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [previewProposalId, projectName])
 
   useEffect(() => {
     // Every long phase settles its row from a background thread, so the page
@@ -486,11 +657,12 @@ export function useDelegationWorkspace(
       generatingContext !== null ||
       runningItem !== null ||
       delegation?.delegation.status === 'running' ||
-      delegation?.review?.status === 'generating'
+      delegation?.review?.status === 'generating' ||
+      runningChange !== null
     if (!busyPhase) return
     const timer = window.setInterval(reload, 2_000)
     return () => window.clearInterval(timer)
-  }, [generatingContext, runningItem, delegation, reload])
+  }, [generatingContext, runningItem, runningChange, delegation, reload])
 
   useEffect(() => {
     // Reattach after a page reload: the turn outlives the request that started
@@ -512,6 +684,14 @@ export function useDelegationWorkspace(
       })
       return
     }
+    if (runningChange) {
+      setWatching({
+        kind: 'change',
+        jobId: runningChange.id,
+        title: `Requested changes · revision ${runningChange.revision}`,
+      })
+      return
+    }
     if (runningItem) {
       const latest = runningItem.runs[runningItem.runs.length - 1]
       if (latest) {
@@ -522,14 +702,13 @@ export function useDelegationWorkspace(
         })
       }
     }
-  }, [watching, generatingContext, runningItem, delegation])
+  }, [watching, generatingContext, runningItem, runningChange, delegation])
 
   const runAction = async (label: string, action: () => Promise<unknown>) => {
     setBusy(label)
     setActionError(null)
     try {
       await action()
-      setPending(null)
       reload()
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Unknown error')
@@ -560,32 +739,31 @@ export function useDelegationWorkspace(
     return claimed
   }
 
-  /** Builds a preview from one task's own commit, before anything merges.
-   *
-   *  The commit is never sent: `_preview_target` reads it from the task row
-   *  the controller wrote after checking the branch. A proposal is inspected
-   *  first because the backend refuses a start whose digest it did not issue,
-   *  and its detected config is used unedited — this is a confirmation step,
-   *  not a place to reconfigure how the project builds.
-   *
-   *  Always 'rebuild', never 'start'. A sandbox holds one preview, and
-   *  `start_preview` reads `action` only when one is already active, where
-   *  'start' is a 409. This page cannot know about a preview begun on the
-   *  project page or before a reload, so it replaces whatever is there.
-   */
-  const previewTask = (taskId: string) =>
-    void runAction(`preview-${taskId}`, async () => {
+  /** Builds a preview from the sandbox's current integrated feature. */
+  const previewFeature = () => {
+    setPreviewLogs(null)
+    void runAction('preview-feature', async () => {
       const proposal = await inspectPreview(projectName)
-      const run = await startPreview(
-        projectName,
-        proposal,
-        proposal.config,
-        'rebuild',
-        false,
-        taskId,
-      )
-      setPreview(run)
+      setPreviewProposalId(proposal.id)
+      try {
+        const run = await startPreview(
+          projectName,
+          proposal,
+          proposal.config,
+          'rebuild',
+          false,
+        )
+        setPreview(run)
+      } finally {
+        try {
+          setPreviewLogs(await fetchPreviewCreationLogs(projectName, proposal.id))
+        } catch {
+          // Keep the request error. Progress retrieval is supplementary.
+        }
+        setPreviewProposalId(null)
+      }
     })
+  }
 
   const completedItems = delegation
     ? delegation.items.filter((entry) => entry.state === 'completed').length
@@ -614,7 +792,9 @@ export function useDelegationWorkspace(
       id: 'feature-review',
       label: 'Feature review',
       badge:
-        delegation?.review?.status === 'generating'
+        runningChange
+          ? 'updating'
+          : delegation?.review?.status === 'generating'
           ? 'running'
           : delegation?.review?.status === 'completed'
             ? delegation.review.approved
@@ -649,8 +829,6 @@ export function useDelegationWorkspace(
     disabledTabs,
     reload,
     busy,
-    pending,
-    setPending,
     watching,
     contextProvider,
     setContextProvider,
@@ -658,9 +836,9 @@ export function useDelegationWorkspace(
     setContextModel,
     runAction,
     watchTurn,
-    previewTask,
+    previewFeature,
     preview,
-    setPreview,
+    previewLogs,
     clearWatch: () => setWatching(null),
   }
 }
@@ -689,40 +867,37 @@ export function DelegationPanel({
     generatingContext,
     reload,
     busy,
-    pending,
-    setPending,
     watching,
     openContextModal,
     runAction,
     watchTurn,
-    previewTask,
+    previewFeature,
     preview,
-    setPreview,
+    previewLogs,
     clearWatch,
   } = workspace
 
-  const decide = () => {
-    if (!pending || !delegation) return
-    // The preview was built from the task's own commit. Once that commit is
-    // merged or its branch deleted, the preview no longer shows anything the
-    // buttons still act on, so the banner must not outlive the decision.
-    setPreview(null)
-    const action =
-      pending.action === 'accept'
-        ? acceptRun(projectName, sessionId, delegation.delegation.id, pending.runId)
-        : rejectRun(
-            projectName,
-            sessionId,
-            delegation.delegation.id,
-            pending.runId,
-            'Rejected by a person',
-          )
-    void runAction(pending.action, () => action)
-  }
+  const [changeInstructions, setChangeInstructions] = useState('')
+  const latestChange = delegation?.changes[delegation.changes.length - 1] ?? null
+  const runningChange =
+    delegation?.changes.find((change) => change.status === 'running') ?? null
+  const latestIncorporatedChange =
+    delegation?.changes
+      .slice()
+      .reverse()
+      .find(
+        (change) => change.status === 'awaiting_review' || change.status === 'completed',
+      ) ?? null
+  const reviewPredatesChange = Boolean(
+    latestIncorporatedChange &&
+      delegation?.review?.settled_at &&
+      latestIncorporatedChange.created_at > delegation.review.settled_at,
+  )
 
   const featureApproved =
     delegation?.review?.status === 'completed' &&
-    delegation.review.approved === true
+    delegation.review.approved === true &&
+    !reviewPredatesChange
 
   return (
     <>
@@ -912,7 +1087,7 @@ export function DelegationPanel({
                       key={key}
                       entry={entry}
                       delegation={delegation}
-                      busy={Boolean(busy)}
+                      busy={busy}
                       watching={watching?.kind === 'run' ? watching.jobId : null}
                       projectName={projectName}
                       sessionId={sessionId}
@@ -921,14 +1096,6 @@ export function DelegationPanel({
                         void watchTurn(`run-${key}`, 'run', entry.item.title, () =>
                           startWorkItem(projectName, sessionId, delegation.delegation.id, key),
                         )
-                      }
-                      onDecision={setPending}
-                      onPreview={previewTask}
-                      preview={
-                        preview &&
-                        preview.task_id === entry.runs[entry.runs.length - 1]?.task_id
-                          ? preview
-                          : null
                       }
                       onSetRouting={(provider, model) =>
                         void runAction(`route-${key}`, () =>
@@ -965,8 +1132,12 @@ export function DelegationPanel({
           <div className="card-header">
             <h2>Feature-level review</h2>
             {delegation.review?.status === 'completed' && (
-              <span className={`pill ${delegation.review.approved ? 'ok' : 'warn'}`}>
-                {delegation.review.approved ? 'Approved' : 'Findings remain'}
+              <span className={`pill ${featureApproved ? 'ok' : 'warn'}`}>
+                {featureApproved
+                  ? 'Approved'
+                  : reviewPredatesChange
+                    ? 'Review needed'
+                    : 'Findings remain'}
               </span>
             )}
           </div>
@@ -994,6 +1165,132 @@ export function DelegationPanel({
                 verification.
               </p>
             )}
+
+            <section className="feature-refinement" aria-labelledby="feature-refinement-heading">
+              <div className="section-heading" id="feature-refinement-heading">
+                Review and refine
+              </div>
+              <p className="status">
+                Preview the full implementation. If it needs a small update, describe it for
+                an agent. The current implementation stays on hold until you approve it.
+              </p>
+              <div className="button-row">
+                <button
+                  type="button"
+                  disabled={Boolean(busy) || Boolean(runningChange)}
+                  onClick={previewFeature}
+                >
+                  {busy === 'preview-feature'
+                    ? 'Preparing preview…'
+                    : preview
+                      ? 'Rebuild full preview'
+                      : 'Preview full implementation'}
+                </button>
+              </div>
+              {preview && (
+                <p className="status">
+                  Full preview is {preview.status} at{' '}
+                  <a href={preview.url} target="_blank" rel="noreferrer">
+                    {preview.url}
+                  </a>
+                  .
+                </p>
+              )}
+              {previewLogs && (
+                <div className="delegation-preview-progress">
+                  <p className="status">
+                    Preview status: <span className="mono">{previewLogs.status}</span>
+                  </p>
+                  <ol className="preview-progress-events" aria-live="polite">
+                    {previewLogs.events.map((event) => (
+                      <li key={event.id} className={event.level === 'error' ? 'status-error' : ''}>
+                        <span className="mono">{event.step}</span>
+                        <span>{event.message}</span>
+                        <time dateTime={event.created_at} title={formatTimestamp(event.created_at)}>
+                          {formatRelativeTime(event.created_at)}
+                        </time>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+
+              {delegation.changes.length > 0 && (
+                <ol className="feature-change-history">
+                  {delegation.changes.map((change) => (
+                    <li key={change.id}>
+                      <span className={`pill ${change.status === 'completed' ? 'ok' : change.status === 'failed' ? 'err' : 'warn'}`}>
+                        {change.status === 'awaiting_review' ? 'awaiting review' : change.status}
+                      </span>
+                      <span>Revision {change.revision}: {change.instructions}</span>
+                      {change.status === 'awaiting_review' && (
+                        <span className="status">
+                          Held until the whole-feature review approves this implementation.
+                        </span>
+                      )}
+                      {changeEvidenceErrors(change.verification).map((error) => (
+                        <span key={error} className="status status-warning">{error}</span>
+                      ))}
+                      {change.error && <span className="status status-error">{change.error}</span>}
+                    </li>
+                  ))}
+                </ol>
+              )}
+
+              <label className="field-label" htmlFor="feature-change-instructions">
+                Requested changes
+              </label>
+              <textarea
+                id="feature-change-instructions"
+                rows={4}
+                value={changeInstructions}
+                disabled={Boolean(runningChange)}
+                placeholder="Example: Reduce the dialog width and clarify the empty-state message."
+                onChange={(event) => setChangeInstructions(event.target.value)}
+              />
+              <div className="button-row">
+                <button
+                  type="button"
+                  disabled={Boolean(busy) || Boolean(runningChange) || !changeInstructions.trim()}
+                  onClick={() => {
+                    const instructions = changeInstructions.trim()
+                    void watchTurn('change', 'change', 'Requested feature changes', () =>
+                      requestFeatureChanges(
+                        projectName,
+                        sessionId,
+                        delegation.delegation.id,
+                        instructions,
+                      ),
+                    ).then((jobId) => {
+                      if (jobId) setChangeInstructions('')
+                    })
+                  }}
+                >
+                  {runningChange ? 'Applying changes…' : 'Request changes'}
+                </button>
+              </div>
+              {watching?.kind === 'change' && (
+                <TurnConsole
+                  projectName={projectName}
+                  sessionId={sessionId}
+                  kind="change"
+                  jobId={watching.jobId}
+                  title={watching.title}
+                  onFinished={reload}
+                />
+              )}
+            </section>
+
+            <FeatureCodeDiff
+              projectName={projectName}
+              sessionId={sessionId}
+              delegationId={delegation.delegation.id}
+              review={delegation.review}
+              revisionKey={`${latestChange?.id ?? 'none'}:${latestChange?.status ?? 'none'}`}
+              busy={busy}
+              actionError={actionError}
+              runAction={runAction}
+            />
             <button
               type="button"
               className="primary feature-review-action"
@@ -1031,23 +1328,6 @@ export function DelegationPanel({
         </section>
       )}
 
-      {pending && (
-        <ConfirmDialog
-          title={`${pending.action === 'accept' ? 'Merge' : 'Reject'} ${pending.itemTitle}`}
-          confirmPhrase={pending.action === 'accept' ? 'MERGE' : 'REJECT'}
-          confirmLabel={pending.action === 'accept' ? 'Merge' : 'Reject task'}
-          busy={Boolean(busy)}
-          error={actionError}
-          onConfirm={decide}
-          onCancel={() => setPending(null)}
-        >
-          <p>
-            {pending.action === 'accept'
-              ? 'This fast-forwards the reviewed task commit into the sandbox branch.'
-              : 'This deletes the task branch. The work item remains available for another attempt.'}
-          </p>
-        </ConfirmDialog>
-      )}
     </>
   )
 }

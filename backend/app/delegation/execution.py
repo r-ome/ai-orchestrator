@@ -1,4 +1,4 @@
-"""Run one work item and settle it after a human decision."""
+"""Run one work item and merge it internally after controller verification."""
 
 import json
 import sqlite3
@@ -320,9 +320,9 @@ def execute_run(
             level="error",
         )
         raise
-    # The happy path leaves the run RUNNING on purpose: it settles only when a
-    # person accepts or rejects. Reporting that as a finished run, at error
-    # level, told readers a successful turn had failed.
+    # Older rows can still be waiting for a decision. New successful runs
+    # settle inside `_execute_run` after their verified commit is merged into
+    # the internal sandbox branch.
     awaiting = outcome.run_status is RunStatus.RUNNING
     if awaiting:
         # Stamped before the event, so a crash between the two leaves a run
@@ -690,7 +690,44 @@ def _execute_run(
         raise service.DelegationOperationError(error.status_code, detail) from error
 
     store.record_work_item_run(run_id, changes)
-    response = response.model_copy(update={"task": verified})
+    try:
+        accepted = accept_task(docker_client, store, task_id)
+    except TaskOperationError as error:
+        cleanup = _fail_run_and_cleanup(
+            docker_client,
+            store,
+            delegation_id,
+            run_id,
+            task_id,
+            error.detail,
+            FailureKind.IMPLEMENTATION,
+            changes=changes,
+            session_id=session_id,
+            project_name=project_name,
+        )
+        detail = error.detail + (f"; task cleanup failed: {cleanup}" if cleanup else "")
+        _halt_delegation(
+            store,
+            delegation_id,
+            detail,
+            session_id=session_id,
+            project_name=project_name,
+        )
+        raise service.DelegationOperationError(error.status_code, detail) from error
+
+    if store.settle_work_item_run(
+        run_id,
+        to_status=RunStatus.SUCCEEDED.value,
+        changes=changes,
+    ) is None:
+        raise service.DelegationOperationError(409, "Run was settled by another request")
+    _complete_if_finished(
+        store,
+        delegation_id,
+        session_id=session_id,
+        project_name=project_name,
+    )
+    response = response.model_copy(update={"task": accepted})
     return _outcome(
         store,
         delegation_id,

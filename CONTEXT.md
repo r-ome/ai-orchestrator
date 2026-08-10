@@ -56,6 +56,23 @@ _Avoid_: Detection result, preview configuration
 **Approval**:
 Human permission to execute one exact preview proposal revision.
 
+**Feature review**:
+One model verdict pinned to the exact base and head commits for a completed delegation.
+
+**Feature change request**:
+A human instruction that updates the complete implementation after delegated work ends.
+It remains awaiting review until the current whole-feature review approves it.
+_Avoid_: Work item, fix task
+
+**Awaiting review**:
+The state of an incorporated feature change that has passed controller checks but lacks approval from the current whole-feature review.
+_Avoid_: Completed, accepted
+
+**Source merge**:
+An explicit fast-forward of an approved feature commit into the original project folder.
+It refuses a changed branch, a changed commit, or an uncommitted worktree.
+_Avoid_: Sync, copy back, publish
+
 **Preview stack**:
 The active application runtime for a sandbox, containing one or more related containers.
 _Avoid_: Preview container

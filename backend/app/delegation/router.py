@@ -15,6 +15,12 @@ from app.delegation.config import (
     get_integration_review_settings,
     get_verification_settings,
 )
+from app.delegation.change_requests import (
+    claim_change_request,
+    execute_change_request,
+    fail_change_claim,
+)
+from app.delegation.delivery import feature_diff, merge_feature_to_source
 from app.delegation.execution import (
     accept_run,
     build_run_packet,
@@ -33,8 +39,12 @@ from app.delegation.models import (
     DelegationsResponse,
     DelegationStatus,
     DelegationView,
+    FeatureDiff,
     GenerateDelegationRequest,
     GenerateIntegrationReviewRequest,
+    MergeFeatureOutcome,
+    MergeFeatureRequest,
+    RequestFeatureChange,
     SetRoutingRequest,
     StartRunOutcome,
     StartRunRequest,
@@ -56,6 +66,8 @@ from app.delegation.service import (
 from app.docker_client import get_docker_client
 from app.planning.config import PlanningSettings, get_planning_settings
 from app.planning.runner import PlanningTurnError
+from app.previews.config import PreviewSettings, get_preview_settings
+from app.projects.config import ProjectSettings, get_project_settings
 from app.tasks.config import CodingTurnSettings, get_coding_turn_settings
 from app.tasks.runner import CodingTurnError
 
@@ -450,4 +462,93 @@ def review_delegation(
         job_id=claim.review_id,
         kind="review",
         detail="Feature review is running",
+    )
+
+
+@router.post(
+    "/{delegation_id}/changes",
+    response_model=AcceptedJob,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def request_feature_changes(
+    project_name: str,
+    session_id: str,
+    delegation_id: str,
+    request: RequestFeatureChange,
+    docker_client: Annotated[DockerClient, Depends(get_docker_client)],
+    settings: Annotated[CodingTurnSettings, Depends(get_coding_turn_settings)],
+    store: StoreDep,
+) -> AcceptedJob:
+    claim = _response(
+        lambda: claim_change_request(
+            docker_client,
+            settings,
+            store,
+            delegation_id,
+            request,
+            session_id=session_id,
+            project_name=project_name,
+        )
+    )
+    jobs.submit_docker_job(
+        lambda client: execute_change_request(client, store, claim),
+        name=f"change:{claim.request_id}",
+        on_setup_error=lambda detail: fail_change_claim(store, claim, detail),
+    )
+    return AcceptedJob(
+        job_id=claim.request_id,
+        kind="change",
+        detail="Requested feature changes are running",
+    )
+
+
+@router.get("/{delegation_id}/diff", response_model=FeatureDiff)
+def read_feature_diff(
+    project_name: str,
+    session_id: str,
+    delegation_id: str,
+    docker_client: Annotated[DockerClient, Depends(get_docker_client)],
+    settings: Annotated[PreviewSettings, Depends(get_preview_settings)],
+    store: StoreDep,
+) -> FeatureDiff:
+    return _response(
+        lambda: feature_diff(
+            docker_client,
+            settings,
+            store,
+            view(
+                store,
+                delegation_id,
+                session_id=session_id,
+                project_name=project_name,
+            ),
+        )
+    )
+
+
+@router.post("/{delegation_id}/merge", response_model=MergeFeatureOutcome)
+def merge_feature(
+    project_name: str,
+    session_id: str,
+    delegation_id: str,
+    request: MergeFeatureRequest,
+    docker_client: Annotated[DockerClient, Depends(get_docker_client)],
+    preview_settings: Annotated[PreviewSettings, Depends(get_preview_settings)],
+    project_settings: Annotated[ProjectSettings, Depends(get_project_settings)],
+    store: StoreDep,
+) -> MergeFeatureOutcome:
+    return _response(
+        lambda: merge_feature_to_source(
+            docker_client,
+            preview_settings,
+            project_settings,
+            store,
+            view(
+                store,
+                delegation_id,
+                session_id=session_id,
+                project_name=project_name,
+            ),
+            request,
+        )
     )

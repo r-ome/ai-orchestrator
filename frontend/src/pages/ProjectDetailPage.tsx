@@ -276,7 +276,8 @@ function ProjectDetailPage() {
                 folder. Later edits to the source folder do not sync. To
                 remove this sandbox, use Remove project above. This closes its
                 containers and deletes its Docker volumes. The original host
-                folder remains unchanged.
+                folder changes only when you explicitly merge an approved
+                feature from the Feature review tab.
               </p>
             </div>
           </div>

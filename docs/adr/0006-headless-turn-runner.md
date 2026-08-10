@@ -16,10 +16,16 @@ The runner records tool outcomes, token use, duration, exit code, model, and
 reported cost. A clean process exit with only failed tool calls is a failed
 turn.
 
-Claude is the implemented writable provider. Codex remains unsupported for
-writable headless turns because its nested sandbox cannot start under the
-container restrictions. Any future Codex path must treat the container as the
-security boundary and verify correct tool execution before adoption.
+Claude and Codex are implemented writable providers. Claude uses its
+write-capable non-interactive mode. Codex uses `codex exec --json` with
+`--sandbox danger-full-access` because its nested sandbox cannot start under
+the container restrictions.
+
+The Codex flag disables only the nested sandbox. The hardened container stays
+the security boundary. Its read-only root, dropped capabilities,
+no-new-privileges policy, resource limits, and task-scoped writable volume stay
+in force. The controller reads Codex JSONL events and rejects a clean process
+exit when every tool item failed.
 
 ## Consequences
 
@@ -27,3 +33,6 @@ The controller can measure failed and successful attempts. It can also keep
 provider claims separate from git and verification evidence.
 
 Model selection remains explicit and is retained with each run.
+
+Codex reports token usage but no dollar amount in its JSONL completion event.
+The controller stores that cost as unreported instead of recording zero.

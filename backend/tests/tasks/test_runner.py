@@ -1,8 +1,6 @@
 import json
 from typing import Any
 
-import pytest
-
 from app.agents.models import AgentProvider
 from app.tasks.runner import (
     PROVIDER_FAILURE,
@@ -12,6 +10,7 @@ from app.tasks.runner import (
     WRITABLE_TOOLS,
     CodingTurnResult,
     _command,
+    _environment,
     _result,
     run_with_repair,
 )
@@ -63,6 +62,47 @@ def _run(stdout: str, *, exit_code: int | None = 0, timed_out: bool = False):
         stderr="",
         exit_code=exit_code,
         timed_out=timed_out,
+    )
+
+
+def _codex_item(
+    event_type: str,
+    item_id: str,
+    item_type: str,
+    **fields: Any,
+) -> str:
+    return _event(
+        type=event_type,
+        item={"id": item_id, "type": item_type, **fields},
+    )
+
+
+def _codex_completed() -> str:
+    return _event(
+        type="turn.completed",
+        usage={
+            "input_tokens": 100,
+            "cached_input_tokens": 60,
+            "output_tokens": 20,
+            "reasoning_output_tokens": 5,
+        },
+    )
+
+
+def _run_codex(
+    stdout: str,
+    *,
+    exit_code: int | None = 0,
+    timed_out: bool = False,
+):
+    return _result(
+        provider=AgentProvider.CODEX,
+        model="gpt-5.6-terra",
+        stdout=stdout,
+        stderr="",
+        exit_code=exit_code,
+        timed_out=timed_out,
+        measured_duration_ms=2345,
     )
 
 
@@ -160,8 +200,110 @@ def test_prose_without_json_leaves_the_payload_empty_rather_than_failing() -> No
     assert result.payload is None
 
 
+def test_a_successful_codex_turn_captures_events_usage_and_payload() -> None:
+    stdout = "\n".join(
+        [
+            _event(type="thread.started", thread_id="thread-1"),
+            _event(type="turn.started"),
+            _codex_item(
+                "item.started",
+                "item-1",
+                "command_execution",
+                command="git status --short",
+                status="in_progress",
+            ),
+            _codex_item(
+                "item.completed",
+                "item-1",
+                "command_execution",
+                command="git status --short",
+                status="completed",
+                exit_code=0,
+            ),
+            _codex_item(
+                "item.completed",
+                "item-2",
+                "agent_message",
+                text='Done. {"changed": ["src/app.py"]}',
+            ),
+            _codex_completed(),
+        ]
+    )
+
+    result = _run_codex(stdout)
+
+    assert result.status == SUCCEEDED
+    assert result.text == 'Done. {"changed": ["src/app.py"]}'
+    assert result.payload == {"changed": ["src/app.py"]}
+    assert result.model == "gpt-5.6-terra"
+    assert result.duration_ms == 2345
+    assert result.usage.input_tokens == 100
+    assert result.usage.cache_read_tokens == 60
+    assert result.usage.output_tokens == 20
+    assert result.usage.cost_usd is None
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "Bash"
+    assert result.tool_calls[0].failed is False
+
+
+def test_codex_can_recover_from_one_failed_command() -> None:
+    stdout = "\n".join(
+        [
+            _codex_item(
+                "item.completed",
+                "item-1",
+                "command_execution",
+                status="failed",
+                exit_code=1,
+            ),
+            _codex_item(
+                "item.completed",
+                "item-2",
+                "file_change",
+                status="completed",
+            ),
+            _codex_item("item.completed", "item-3", "agent_message", text="done"),
+            _codex_completed(),
+        ]
+    )
+
+    result = _run_codex(stdout)
+
+    assert result.status == SUCCEEDED
+    assert [call.failed for call in result.tool_calls] == [True, False]
+
+
+def test_codex_rejects_a_turn_when_every_tool_item_failed() -> None:
+    stdout = "\n".join(
+        [
+            _codex_item(
+                "item.started",
+                "item-1",
+                "command_execution",
+                status="in_progress",
+            ),
+            _codex_item("item.completed", "item-2", "agent_message", text="done"),
+            _codex_completed(),
+        ]
+    )
+
+    result = _run_codex(stdout)
+
+    assert result.status == TOOL_FAILURE
+    assert result.error == "All 1 tool calls failed; the answer is unsupported"
+
+
+def test_codex_reports_a_failed_turn_detail() -> None:
+    result = _run_codex(
+        _event(type="turn.failed", error={"message": "model unavailable"})
+    )
+
+    assert result.status == PROVIDER_FAILURE
+    assert result.error == "model unavailable"
+
+
 def test_the_command_is_writable_and_closes_stdin() -> None:
-    command = _command("claude-sonnet-5")
+    command = _command(AgentProvider.CLAUDE, "claude-sonnet-5", "medium")
 
     assert command[0] == "sh"
     script = command[2]
@@ -178,6 +320,33 @@ def test_the_command_is_writable_and_closes_stdin() -> None:
 
 def test_the_write_allowance_includes_the_editing_tools() -> None:
     assert {"Edit", "Write", "Bash"} <= set(WRITABLE_TOOLS)
+
+
+def test_coding_turns_use_image_owned_browser_tooling() -> None:
+    environment = _environment("CLAUDE_CONFIG_DIR", "do the work")
+
+    assert environment["PLAYWRIGHT_BROWSERS_PATH"] == "/ms-playwright"
+    assert environment["PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"] == "1"
+    assert environment["NODE_PATH"] == "/usr/local/lib/node_modules"
+    assert environment["CI"] == "1"
+    assert environment["CLAUDE_CONFIG_DIR"] == "/auth"
+    assert environment["CODING_PROMPT"] == "do the work"
+
+
+def test_the_codex_command_uses_the_outer_container_as_its_sandbox() -> None:
+    command = _command(AgentProvider.CODEX, "gpt-5.6-terra", "high")
+
+    assert command[0] == "sh"
+    script = command[2]
+    assert 'codex exec "$CODING_PROMPT"' in script
+    assert "--json" in script
+    assert "--sandbox danger-full-access" in script
+    assert "--ephemeral" in script
+    assert "--skip-git-repo-check" in script
+    assert "-C /workspace" in script
+    assert "-m gpt-5.6-terra" in script
+    assert "-c model_reasoning_effort=high" in script
+    assert "< /dev/null" in script
 
 
 class _Recorder:
@@ -252,20 +421,3 @@ def test_a_provider_failure_retries_with_the_original_prompt() -> None:
     assert errors == []
     # A provider failure is transient, so the prompt is not rewritten.
     assert recorder.prompts == ["go", "go"]
-
-
-def test_codex_is_refused_rather_than_half_supported() -> None:
-    from app.tasks.runner import CodingTurnError, run_coding_turn
-    from app.tasks.config import get_coding_turn_settings
-
-    with pytest.raises(CodingTurnError) as error:
-        run_coding_turn(
-            object(),
-            get_coding_turn_settings(),
-            task_id="t",
-            volume_name="v",
-            provider=AgentProvider.CODEX,
-            prompt="p",
-        )
-
-    assert error.value.status_code == 501

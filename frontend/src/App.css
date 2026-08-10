@@ -2576,6 +2576,129 @@ details[open] > summary > * > .collapsible-caret {
   margin-top: 0.75rem;
 }
 
+.feature-diff-section {
+  margin: 1.25rem 0 0.5rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--line);
+}
+
+.feature-diff-heading-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.feature-diff-heading-row .status {
+  margin: 0.25rem 0 0;
+}
+
+.feature-diff-files {
+  margin: 0.75rem 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  list-style: none;
+  overflow: hidden;
+}
+
+.feature-diff-files li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.45rem 0.65rem;
+  background: var(--panel2);
+}
+
+.feature-diff-files li + li {
+  border-top: 1px solid var(--line);
+}
+
+.feature-diff-file-tally {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.feature-diff-patch {
+  max-height: 600px;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--code-bg);
+  font-family: var(--mono);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.feature-diff-patch > span {
+  display: block;
+}
+
+.feature-diff-added {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.feature-diff-removed {
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+}
+
+.feature-diff-hunk {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.feature-diff-meta {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.feature-diff-context {
+  color: var(--muted);
+}
+
+.feature-merge-action {
+  margin-top: 0.5rem;
+}
+
+.feature-refinement {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+}
+
+.feature-refinement textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.feature-change-history {
+  display: grid;
+  gap: 0.55rem;
+  margin: 1rem 0;
+  padding-left: 1.25rem;
+}
+
+.feature-change-history li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 0.5rem;
+}
+
+.feature-change-history .status-error {
+  grid-column: 2;
+  margin: 0;
+}
+
 /* A card carrying something that stops the reader, like a halted delegation.
    Tinted rather than merely outlined, so it reads as a blocker among the
    ordinary cards it sits between. */

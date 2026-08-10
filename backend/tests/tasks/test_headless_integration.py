@@ -3,6 +3,7 @@
 Throwaway repository in its own volume, so no real sandbox is touched. Proves
 the path a delegated work item will take: open a task, run a turn with nobody
 at the terminal, verify the branch, reach review without a preview, accept.
+Set HEADLESS_TEST_PROVIDER to select Claude or Codex.
 """
 
 import json
@@ -27,16 +28,22 @@ pytestmark = pytest.mark.skipif(
 
 SOURCE = Path("/Users/jeromeagapay/.orchestrator-headless-tests")
 VOLUME = "orchestrator-headless-tests"
-GIT_IMAGE = "orchestrator-agent-claude:latest"
-MODEL = os.getenv("HEADLESS_TEST_MODEL", "claude-haiku-4-5-20251001")
+PROVIDER = AgentProvider(os.getenv("HEADLESS_TEST_PROVIDER", "claude"))
+GIT_IMAGE = f"orchestrator-agent-{PROVIDER.value}:latest"
+DEFAULT_MODEL = (
+    "claude-haiku-4-5-20251001"
+    if PROVIDER is AgentProvider.CLAUDE
+    else "gpt-5.6-terra"
+)
+MODEL = os.getenv("HEADLESS_TEST_MODEL", DEFAULT_MODEL)
 
 SETTINGS = CodingTurnSettings(
     timeout_seconds=900,
     memory="4g",
     pids_limit=512,
     max_log_bytes=2_000_000,
-    claude_model=MODEL,
-    codex_model="gpt-5.6-terra",
+    claude_model=MODEL if PROVIDER is AgentProvider.CLAUDE else "claude-sonnet-5",
+    codex_model=MODEL if PROVIDER is AgentProvider.CODEX else "gpt-5.6-terra",
     codex_reasoning_effort="medium",
     credential_profile="default",
 )
@@ -149,7 +156,7 @@ def test_a_headless_turn_commits_verifies_and_accepts(sandbox) -> None:
         store,
         SETTINGS,
         task.id,
-        RunTaskRequest(prompt=PROMPT, provider=AgentProvider.CLAUDE, model=MODEL),
+        RunTaskRequest(prompt=PROMPT, provider=PROVIDER, model=MODEL),
     )
 
     print(f"turn:      {response.turn_status}  committed={response.committed}")
@@ -167,7 +174,11 @@ def test_a_headless_turn_commits_verifies_and_accepts(sandbox) -> None:
     assert response.failed_tool_calls == 0
     # Cost and the model actually used are recorded, which is what makes the
     # per-run measurement in the brief possible.
-    assert response.usage.cost_usd is not None
+    if PROVIDER is AgentProvider.CLAUDE:
+        assert response.usage.cost_usd is not None
+    else:
+        # Codex JSONL reports tokens but does not report a dollar amount.
+        assert response.usage.input_tokens is not None
     assert response.model
 
     # The work is on the branch and nowhere else yet.

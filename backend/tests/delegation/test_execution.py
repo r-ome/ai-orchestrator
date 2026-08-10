@@ -296,7 +296,7 @@ def _start(store: ControllerStore, delegation_id: str, key: str) -> Any:
     )
 
 
-def test_run_waits_for_human_accept_before_releasing_dependencies(
+def test_verified_run_merges_and_releases_dependencies_automatically(
     store: ControllerStore,
     tasks: _Tasks,
 ) -> None:
@@ -308,11 +308,11 @@ def test_run_waits_for_human_accept_before_releasing_dependencies(
     outcome = _start(store, delegation.delegation.id, "a")
 
     assert outcome.committed is True
-    assert outcome.task_status == TaskStatus.REVIEW.value
-    assert outcome.run_status is RunStatus.RUNNING
+    assert outcome.task_status == TaskStatus.ACCEPTED.value
+    assert outcome.run_status is RunStatus.SUCCEEDED
     by_key = {entry.item.key: entry for entry in outcome.delegation.items}
-    assert by_key["a"].state is WorkItemState.RUNNING
-    assert by_key["b"].state is WorkItemState.BLOCKED
+    assert by_key["a"].state is WorkItemState.COMPLETED
+    assert by_key["b"].state is WorkItemState.READY
 
 
 def test_accept_releases_dependency_and_records_metrics(
@@ -325,24 +325,15 @@ def test_accept_releases_dependency_and_records_metrics(
     )
     started = _start(store, delegation.delegation.id, "a")
 
-    accepted = execution.accept_run(
-        object(),
-        store,
-        delegation.delegation.id,
-        started.run_id,
-        session_id="session-1",
-        project_name="sample",
-    )
-
-    run = accepted.delegation.items[0].runs[0]
+    run = started.delegation.items[0].runs[0]
     assert tasks.accepted == [started.task_id]
-    assert accepted.run_status is RunStatus.SUCCEEDED
+    assert started.run_status is RunStatus.SUCCEEDED
     assert run.usage.input_tokens == 11
     assert run.usage.cost_usd == 0.05
     assert run.duration_ms == 1234
     assert run.exit_code == 0
     assert run.result == RESULT
-    assert accepted.delegation.items[1].state is WorkItemState.READY
+    assert started.delegation.items[1].state is WorkItemState.READY
 
 
 def test_upstream_result_reaches_next_packet(
@@ -353,13 +344,7 @@ def test_upstream_result_reaches_next_packet(
         store,
         [_item("a"), _item("b", dependencies=["a"])],
     )
-    started = _start(store, delegation.delegation.id, "a")
-    execution.accept_run(
-        object(),
-        store,
-        delegation.delegation.id,
-        started.run_id,
-    )
+    _start(store, delegation.delegation.id, "a")
 
     packet = execution.build_run_packet(store, delegation.delegation.id, "b")
 
@@ -418,7 +403,7 @@ def test_failed_turn_is_classified_cleaned_up_and_retryable(
     tasks.committed = True
     tasks.turn_status = "succeeded"
     second = _start(store, delegation.delegation.id, "a")
-    assert second.run_status is RunStatus.RUNNING
+    assert second.run_status is RunStatus.SUCCEEDED
     assert [run.attempt for run in second.delegation.items[0].runs] == [1, 2]
 
 
@@ -475,8 +460,8 @@ def test_provider_retry_can_recover(
     outcome = _start(store, delegation.delegation.id, "a")
 
     assert tasks.run_count == 2
-    assert outcome.run_status is RunStatus.RUNNING
-    assert outcome.task_status == TaskStatus.REVIEW.value
+    assert outcome.run_status is RunStatus.SUCCEEDED
+    assert outcome.task_status == TaskStatus.ACCEPTED.value
 
 
 def test_verification_failure_gets_one_focused_repair(
@@ -502,7 +487,7 @@ def test_verification_failure_gets_one_focused_repair(
     outcome = _start(store, delegation.delegation.id, "a")
 
     run = outcome.delegation.items[0].runs[0]
-    assert outcome.run_status is RunStatus.RUNNING
+    assert outcome.run_status is RunStatus.SUCCEEDED
     assert run.repair_count == 1
     assert run.verification and run.verification["passed"] is True
     assert "Focused repair" in tasks.prompts[1]
@@ -546,11 +531,11 @@ def test_missing_result_is_reported_without_failing_commit(
 
     outcome = _start(store, delegation.delegation.id, "a")
 
-    assert outcome.run_status is RunStatus.RUNNING
+    assert outcome.run_status is RunStatus.SUCCEEDED
     assert outcome.result_errors == ["the run reported no JSON result object"]
 
 
-def test_reject_keeps_dependency_blocked_and_item_retryable(
+def test_completed_item_cannot_be_rejected_individually(
     store: ControllerStore,
     tasks: _Tasks,
 ) -> None:
@@ -560,18 +545,18 @@ def test_reject_keeps_dependency_blocked_and_item_retryable(
     )
     started = _start(store, delegation.delegation.id, "a")
 
-    rejected = execution.reject_run(
-        object(),
-        store,
-        delegation.delegation.id,
-        started.run_id,
-        "not good enough",
-    )
+    with pytest.raises(service.DelegationOperationError) as error:
+        execution.reject_run(
+            object(),
+            store,
+            delegation.delegation.id,
+            started.run_id,
+            "not good enough",
+        )
 
-    assert rejected.run_status is RunStatus.FAILED
-    assert rejected.delegation.items[0].state is WorkItemState.FAILED
-    assert rejected.delegation.items[1].state is WorkItemState.BLOCKED
-    assert rejected.delegation.items[0].runs[0].error == "not good enough"
+    assert error.value.status_code == 409
+    assert "succeeded" in error.value.detail
+    assert tasks.rejected == []
 
 
 def test_accepting_final_item_completes_delegation(
@@ -581,12 +566,7 @@ def test_accepting_final_item_completes_delegation(
     delegation = _delegation(store, [_item("a")])
     started = _start(store, delegation.delegation.id, "a")
 
-    outcome = execution.accept_run(
-        object(),
-        store,
-        delegation.delegation.id,
-        started.run_id,
-    )
+    outcome = started
 
     assert outcome.delegation.delegation.status is DelegationStatus.COMPLETED
     assert outcome.delegation.delegation.settled_at is not None

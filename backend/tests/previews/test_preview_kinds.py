@@ -19,6 +19,7 @@ from app.previews.models import (
     StartPreviewRequest,
 )
 from app.previews.service import (
+    PreviewOperationError,
     _available_host_port,
     _labels,
     _remove_resources,
@@ -246,6 +247,72 @@ def test_task_preview_serves_its_commit_and_keeps_it_across_a_restart(
                 )
             except Exception:
                 pass
+        volume.remove(force=True)
+        client.close()
+
+
+def test_failed_task_preview_returns_the_task_to_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # This test covers task-state recovery. Environment masking has its own
+    # integration coverage and Docker Desktop cannot mount pytest's private
+    # temporary directory into a container on macOS.
+    monkeypatch.setattr("app.previews.service._environment_masks", lambda *_: [])
+    client = docker.from_env()
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+    store.initialize()
+    settings = _settings()
+    sandbox_id = uuid4().hex
+    project_name = f"failed-task-preview-{sandbox_id[:8]}"
+    source = tmp_path / project_name
+    source.mkdir()
+    volume = _sandbox_volume(client, project_name, sandbox_id, source)
+    try:
+        _shell(client, volume.name, "printf base > /project/index.html")
+        _mark_copied(client, volume.name)
+        ensure_git_baseline(client, GIT_IMAGE, volume.name)
+
+        task = start_task(client, store, StartTaskRequest(project_name=project_name))
+        _commit(
+            client,
+            volume.name,
+            "printf task > task.txt\n"
+            "git add -A\n"
+            'git commit -q -m "add task"\n',
+        )
+        task = report_task_complete(client, store, task.id, ReportTaskRequest())
+        proposal = propose_preview(client, store, settings, project_name)
+        config = PreviewConfiguration(
+            mode=PreviewMode.NATIVE,
+            runtime=PreviewRuntime.UNKNOWN,
+            image="alpine:latest",
+            install_command="exit 19",
+            start_command="sleep 60",
+            container_port=8000,
+            host_port=_available_host_port(),
+            network_access=PreviewNetworkAccess.ISOLATED,
+            expiry_minutes=30,
+        )
+
+        with pytest.raises(PreviewOperationError, match="failed with code 19"):
+            start_preview(
+                client,
+                store,
+                settings,
+                project_name,
+                StartPreviewRequest(
+                    proposal_id=proposal.id,
+                    proposal_digest=proposal.digest,
+                    config=config,
+                    action=PreviewAction.START,
+                    actor="integration-test",
+                    task_id=task.id,
+                ),
+            )
+
+        assert store.task(task.id)["status"] == TaskStatus.REVIEW.value
+    finally:
         volume.remove(force=True)
         client.close()
 

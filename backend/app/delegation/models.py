@@ -29,6 +29,13 @@ class IntegrationReviewStatus(StrEnum):
     FAILED = "failed"
 
 
+class ChangeRequestStatus(StrEnum):
+    RUNNING = "running"
+    AWAITING_REVIEW = "awaiting_review"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 DELEGATION_TRANSITIONS: Mapping[DelegationStatus, frozenset[DelegationStatus]] = {
     DelegationStatus.READY: frozenset(
         {DelegationStatus.RUNNING, DelegationStatus.ABANDONED}
@@ -182,6 +189,9 @@ class IntegrationReview(BaseModel):
     status: IntegrationReviewStatus
     provider: AgentProvider | None = None
     model: str | None = None
+    base_branch: str | None = None
+    base_commit: str | None = None
+    head_commit: str | None = None
     approved: bool | None = None
     summary: str = ""
     findings: list[IntegrationFinding] = Field(default_factory=list)
@@ -189,6 +199,68 @@ class IntegrationReview(BaseModel):
     created_at: str
     updated_at: str
     settled_at: str | None = None
+    source_merged_at: str | None = None
+
+
+class FeatureDiffFile(BaseModel):
+    path: str
+    additions: int | None = None
+    deletions: int | None = None
+    binary: bool = False
+
+
+class FeatureDiff(BaseModel):
+    review_id: str | None = None
+    source_path: str
+    base_branch: str
+    base_commit: str
+    head_commit: str
+    files: list[FeatureDiffFile] = Field(default_factory=list)
+    additions: int
+    deletions: int
+    patch: str
+    truncated: bool = False
+
+
+class MergeFeatureRequest(BaseModel):
+    review_id: str = Field(min_length=1, max_length=64)
+    confirm: bool = False
+
+
+class MergeFeatureOutcome(BaseModel):
+    review: IntegrationReview
+    source_path: str
+    branch: str
+    head_commit: str
+    already_merged: bool = False
+
+
+class FeatureChangeRequest(BaseModel):
+    id: str
+    delegation_id: str
+    revision: int
+    status: ChangeRequestStatus
+    instructions: str
+    provider: AgentProvider
+    model: str
+    task_id: str | None = None
+    verification: dict[str, Any] | None = None
+    error: str | None = None
+    created_at: str
+    updated_at: str
+    settled_at: str | None = None
+
+
+class RequestFeatureChange(BaseModel):
+    instructions: str = Field(min_length=1, max_length=20_000)
+    provider: AgentProvider = AgentProvider.CLAUDE
+    model: str | None = Field(default=None, max_length=100)
+    credential_profile: str = Field(
+        default="default",
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+    )
 
 
 class ItemRouting(BaseModel):
@@ -217,6 +289,7 @@ class DelegationView(BaseModel):
     waves: list[list[str]] = Field(default_factory=list)
     ready: list[str] = Field(default_factory=list)
     review: IntegrationReview | None = None
+    changes: list[FeatureChangeRequest] = Field(default_factory=list)
 
 
 class DelegationsResponse(BaseModel):

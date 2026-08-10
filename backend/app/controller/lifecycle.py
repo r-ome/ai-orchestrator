@@ -55,6 +55,16 @@ def _settle_interrupted_turns(store: ControllerStore) -> tuple[int, list[str]]:
             error=_RESTART_REASON,
         )
         settled += 1
+    for row in interrupted["delegation_change_requests"]:
+        store.settle_delegation_change_request(
+            str(row["id"]),
+            to_status="failed",
+            error=_RESTART_REASON,
+        )
+        settled += 1
+        task_id = str(row["task_id"] or "")
+        if task_id:
+            abandoned.append(task_id)
     for row in interrupted["work_item_runs"]:
         store.settle_work_item_run(
             str(row["id"]),
