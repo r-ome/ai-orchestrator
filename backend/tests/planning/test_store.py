@@ -38,7 +38,7 @@ def _create_session(store: ControllerStore, *, sandbox_id: str = "sandbox-1") ->
     )
 
 
-def test_initialize_creates_planning_tables_and_records_version_seven(
+def test_initial_migration_creates_planning_tables(
     tmp_path: Path,
 ) -> None:
     store = ControllerStore(tmp_path / "controller.sqlite3")
@@ -62,7 +62,7 @@ def test_initialize_creates_planning_tables_and_records_version_seven(
         "planning_findings",
         "planning_plan_revisions",
     } <= table_names
-    assert 7 in versions
+    assert versions == {1}
 
 
 def test_initialize_twice_is_a_no_op(tmp_path: Path) -> None:
@@ -74,11 +74,11 @@ def test_initialize_twice_is_a_no_op(tmp_path: Path) -> None:
         versions = [
             int(row[0])
             for row in connection.execute(
-                "SELECT version FROM schema_migrations WHERE version = 7"
+                "SELECT version FROM schema_migrations"
             )
         ]
 
-    assert versions == [7]
+    assert versions == [1]
 
 
 def test_creating_session_for_unregistered_sandbox_raises_integrity_error(

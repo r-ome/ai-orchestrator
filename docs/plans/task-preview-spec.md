@@ -25,7 +25,7 @@ Read these before changing anything.
 | `backend/app/projects/service.py:44` `COPY_METADATA_DIRECTORY` | `/project/.orchestrator/copy-job`, inside the agent-writable volume |
 | `backend/app/projects/service.py:67` | `node_modules` in `EXCLUDED_DIRECTORY_NAMES` for the host import |
 | `backend/app/agents/service.py:63` `create_agent` | Creates the agent container. Mounts the sandbox volume and the credential volume |
-| `backend/app/controller/store.py:161` `initialize` | Runs `SCHEMA` then records migration versions |
+| `backend/app/controller/store.py` `initialize` | Runs `INITIAL_MIGRATION` then records version 1 |
 | `backend/app/controller/store.py:670` `event`, `:687` `events_for_run` | The event store |
 | `backend/app/agents/router.py:154` | WebSocket pattern to copy for log streaming |
 
@@ -482,12 +482,11 @@ The container already sets `read_only=True`, `cap_drop=["ALL"]`, and
 
 ## 9. Schema migrations
 
-`ControllerStore.initialize` (`store.py:161`) runs `SCHEMA` with
-`CREATE TABLE IF NOT EXISTS` and then records version rows. Follow that
-pattern: add new tables to `SCHEMA`, add new columns with a guarded
-`ALTER TABLE` that ignores "duplicate column name", and insert version `3`.
-An existing `controller.sqlite3` must survive the upgrade — there is a live
-one at `backend/.controller-data/controller.sqlite3`.
+`ControllerStore.initialize` runs `INITIAL_MIGRATION` with
+`CREATE TABLE IF NOT EXISTS` and then records version `1`. Add new tables,
+columns, and indexes directly to that initial migration. Do not add upgrade
+steps before the first deployment. Reset a development database when its
+existing shape no longer matches the initial migration.
 
 ---
 

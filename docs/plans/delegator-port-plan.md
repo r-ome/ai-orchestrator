@@ -14,8 +14,9 @@ what is thrown away, and what still has to be written.
 
 The original brief's Section 0 was accurate. It described `one_open_task_per_sandbox`,
 `TASK_TRANSITIONS`, `run_turn_with_repair()`, `claim_planning_turn`, `PLANNING_CLAUDE_MODEL`,
-`report_task_complete()`, and `schema_migrations` through 8 — every one of which exists on this
-base, and none of which existed on pre-merge `main`.
+`report_task_complete()`, and the schema changes later squashed into initial
+migration version 1. Every feature exists on this base, and none existed on
+pre-merge `main`.
 
 Section 0 was verified against `main` instead of against all refs. `git log --oneline -3` and
 `git status` were run; `git branch -a`, `git log --all`, and `git reflog` were not. The stale
@@ -65,7 +66,7 @@ Roughly 6,900 lines, adapted to this base's schema, routes, and conventions.
 | `delegation/{models,service,execution,prompts,config}.py` | ~1,555 | Session lookups move to this base's `planning_sessions` shape; `PlanSpec` gains `title`, `reviewer_outcome`, structured `risks`; routes nest under `/projects/{name}/…` to match planning |
 | `implementation_context/{models,service,prompts,config}.py` | ~645 | Same session-shape adaptation |
 | Delegation store methods + tables | ~450 | `delegations`, `work_items`, `work_item_runs`, `work_item_routing`, `implementation_contexts` — new tables, no collision |
-| Migration runner | ~60 | Replaces the hardcoded inserts. New migrations start at **9**; this base's high-water mark is 8. The legacy-table retirement written earlier is not needed here and is dropped |
+| Initial migration | ~60 | Adds delegation tables directly to the pre-deployment initial schema. The legacy-table retirement is not needed and is dropped |
 | Tests for all of the above | ~3,850 | Fixtures rebuilt against this base's session and task shapes |
 
 ### Written fresh against this base
@@ -136,7 +137,7 @@ for units that leave the application unbuildable mid-graph.
 ## Order
 
 1. ~~Decide the §0.7 question above.~~ Decided: non-preview verification path.
-2. ~~Store: delegation tables, migration runner, migrations from 9.~~
+2. ~~Store: delegation tables in the initial migration.~~
 3. ~~Writable turn on the base's runner, plus metrics and tool-call inspection.~~
 4. ~~Headless task execution, resolving §0.7.~~
 5. ~~Implementation context, including command confirmation.~~

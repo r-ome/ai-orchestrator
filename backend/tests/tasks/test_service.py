@@ -400,56 +400,20 @@ def test_an_unknown_task_id_is_a_404(
     assert docker_client.containers.scripts == []
 
 
-def test_migration_adds_tasks_to_an_existing_database(tmp_path: Path) -> None:
+def test_initial_migration_creates_task_constraints(tmp_path: Path) -> None:
     database_path = tmp_path / "controller.sqlite3"
-
-    # A pre-Phase-2 database: everything through migration 3, no tasks table.
-    connection = sqlite3.connect(database_path)
-    try:
-        connection.executescript(
-            """
-            CREATE TABLE schema_migrations (
-                version INTEGER PRIMARY KEY,
-                applied_at TEXT NOT NULL
-            );
-            CREATE TABLE projects (
-                id TEXT PRIMARY KEY,
-                source_path TEXT NOT NULL UNIQUE,
-                created_at TEXT NOT NULL
-            );
-            CREATE TABLE sandboxes (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL REFERENCES projects(id),
-                project_name TEXT NOT NULL,
-                volume_name TEXT NOT NULL UNIQUE,
-                status TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                baseline_commit TEXT
-            );
-            INSERT INTO schema_migrations(version, applied_at)
-            VALUES (1, '2026-01-01T00:00:00Z'),
-                   (2, '2026-01-01T00:00:00Z'),
-                   (3, '2026-01-01T00:00:00Z');
-            INSERT INTO projects(id, source_path, created_at)
-            VALUES ('project-1', '/projects/sample', '2026-01-01T00:00:00Z');
-            INSERT INTO sandboxes(
-                id, project_id, project_name, volume_name, status,
-                created_at, updated_at, baseline_commit
-            ) VALUES (
-                'sandbox-1', 'project-1', 'sample-sandbox-1',
-                'orchestrator-project-sample-1', 'ready',
-                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL
-            );
-            """
-        )
-        connection.commit()
-    finally:
-        connection.close()
-
     store = ControllerStore(database_path)
     store.initialize()
     store.initialize()
+    store.register_sandbox(
+        sandbox_id="sandbox-1",
+        project_id="project-1",
+        project_name="sample-sandbox-1",
+        source_path="/projects/sample",
+        volume_name="orchestrator-project-sample-1",
+        status="ready",
+        created_at="2026-01-01T00:00:00Z",
+    )
 
     store.create_task(
         task_id="c" * 32,
@@ -476,18 +440,15 @@ def test_migration_adds_tasks_to_an_existing_database(tmp_path: Path) -> None:
 
     connection = sqlite3.connect(database_path)
     try:
-        versions = {
-            row[0]
+        versions = [
+            int(row[0])
             for row in connection.execute("SELECT version FROM schema_migrations")
-        }
+        ]
         sandbox_rows = connection.execute("SELECT count(*) FROM sandboxes").fetchone()
     finally:
         connection.close()
 
-    # Every migration this database grew through is recorded. Asserted as a
-    # subset rather than an exact set: later work adds versions, and this test
-    # is about the ones that created the task tables, not about the total.
-    assert {1, 2, 3, 4, 5, 6, 7, 8} <= versions
+    assert versions == [1]
     assert sandbox_rows[0] == 1
 
 

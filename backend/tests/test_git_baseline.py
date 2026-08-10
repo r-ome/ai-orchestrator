@@ -1,5 +1,4 @@
 import os
-import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -95,88 +94,9 @@ def test_folder_already_a_git_repository_keeps_its_history() -> None:
         volume.remove(force=True)
 
 
-def test_store_migration_adds_baseline_commit_and_runs_twice_without_error(
+def test_initial_migration_supports_git_baselines_and_is_idempotent(
     tmp_path: Path,
 ) -> None:
-    database_path = tmp_path / "controller.sqlite3"
-
-    # Simulate a pre-Phase-0 database: a sandboxes table without
-    # baseline_commit, already past migration versions 1 and 2.
-    connection = sqlite3.connect(database_path)
-    try:
-        connection.executescript(
-            """
-            CREATE TABLE schema_migrations (
-                version INTEGER PRIMARY KEY,
-                applied_at TEXT NOT NULL
-            );
-            CREATE TABLE projects (
-                id TEXT PRIMARY KEY,
-                source_path TEXT NOT NULL UNIQUE,
-                created_at TEXT NOT NULL
-            );
-            CREATE TABLE sandboxes (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL REFERENCES projects(id),
-                project_name TEXT NOT NULL,
-                volume_name TEXT NOT NULL UNIQUE,
-                status TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            """
-        )
-        connection.execute(
-            "INSERT INTO schema_migrations(version, applied_at) VALUES (1, '2026-01-01T00:00:00Z')"
-        )
-        connection.execute(
-            "INSERT INTO schema_migrations(version, applied_at) VALUES (2, '2026-01-01T00:00:00Z')"
-        )
-        connection.execute(
-            """
-            INSERT INTO projects(id, source_path, created_at)
-            VALUES ('project-1', '/projects/sample', '2026-01-01T00:00:00Z')
-            """
-        )
-        connection.execute(
-            """
-            INSERT INTO sandboxes(
-                id, project_id, project_name, volume_name, status, created_at, updated_at
-            ) VALUES (
-                'sandbox-1', 'project-1', 'sample-sandbox-1', 'orchestrator-project-sample-1',
-                'ready', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
-            )
-            """
-        )
-        connection.commit()
-    finally:
-        connection.close()
-
-    store = ControllerStore(database_path)
-    store.initialize()
-    store.initialize()
-
-    store.set_sandbox_baseline_commit(
-        sandbox_id="sandbox-1",
-        baseline_commit="a" * 40,
-    )
-
-    sandboxes = {row["id"]: row for row in store.sandboxes()}
-    assert sandboxes["sandbox-1"]["baseline_commit"] == "a" * 40
-
-    connection = sqlite3.connect(database_path)
-    try:
-        versions = {
-            row[0]
-            for row in connection.execute("SELECT version FROM schema_migrations")
-        }
-    finally:
-        connection.close()
-    # Subset, not equality: later phases add further migration versions.
-    assert {1, 2, 3} <= versions
-
-
-def test_store_migration_is_idempotent_on_a_fresh_database(tmp_path: Path) -> None:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
     store.initialize()

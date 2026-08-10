@@ -85,7 +85,7 @@ run at the same time. Only phase 4 and phase 5 touch `frontend/src/App.tsx` and
 ## Exit criteria
 
 **Phase 0.** `ControllerStore.initialize()` creates the four planning tables on
-a fresh database and on an existing one, and records migration version 7. Every
+a fresh database and records migration version 1. Every
 transition in `PLANNING_TRANSITIONS` is reachable and every non-terminal status
 has an exit. A guarded status update from a wrong source status changes no row
 and returns `False`. `claim_turn` succeeds once and then returns `False` until

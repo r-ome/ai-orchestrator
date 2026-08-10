@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,7 +10,7 @@ from typing import Any
 from app.controller.config import ControllerSettings, get_controller_settings
 
 
-SCHEMA = """
+INITIAL_MIGRATION = """
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS sandboxes (
     project_name TEXT NOT NULL,
     volume_name TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL,
+    baseline_commit TEXT,
     -- Versioned Git status, file type, and content fingerprints for paths that
     -- were already dirty before the first delegated task changed the sandbox.
     dirty_baseline_json TEXT,
@@ -270,9 +271,8 @@ CREATE TABLE IF NOT EXISTS implementation_contexts (
     settled_at TEXT
 );
 
--- `one_context_per_session` is created by migration 13, not here. The schema
--- script runs before migrations, so on a database that still holds revisions
--- the index would fail before the migration could collapse them.
+CREATE UNIQUE INDEX IF NOT EXISTS one_context_per_session
+ON implementation_contexts(session_id);
 
 -- One decomposition of a ready plan into work items, at a revision.
 -- Revisions are added, never mutated: a completed run must keep pointing at
@@ -458,211 +458,6 @@ _RUN_UPDATABLE_COLUMNS = frozenset(
 )
 
 
-# Versions 1 to 8 are applied inline in `initialize` above, in the order this
-# database grew. Anything added from here on goes through this table instead,
-# so a new step is declared in one place rather than as another inline block.
-#
-# Each step must be safe to run against a database that SCHEMA already brought
-# up to date, because SCHEMA describes the current shape and runs first. The
-# helpers below check before they change anything.
-FIRST_RUNNER_MIGRATION = 9
-
-
-def _add_column(
-    connection: sqlite3.Connection,
-    table: str,
-    column: str,
-    declaration: str,
-) -> None:
-    columns = {
-        str(row["name"])
-        for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
-    }
-    if column not in columns:
-        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
-
-
-def _migration_9(connection: sqlite3.Connection) -> None:
-    """Record which precedence rule chose a delegated run's model."""
-    _add_column(connection, "work_item_runs", "routing_source", "TEXT")
-
-
-def _migration_10(connection: sqlite3.Connection) -> None:
-    """Retain feature-level integration review revisions."""
-    connection.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS delegation_reviews (
-            id TEXT PRIMARY KEY,
-            delegation_id TEXT NOT NULL REFERENCES delegations(id),
-            revision INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            provider TEXT,
-            model TEXT,
-            result_json TEXT,
-            error TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            settled_at TEXT
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS one_review_revision_per_delegation
-        ON delegation_reviews(delegation_id, revision);
-        CREATE UNIQUE INDEX IF NOT EXISTS one_generating_review_per_delegation
-        ON delegation_reviews(delegation_id)
-        WHERE status = 'generating';
-        """
-    )
-
-
-def _migration_11(connection: sqlite3.Connection) -> None:
-    """Remember what was already dirty when a task branch was cut."""
-    _add_column(connection, "tasks", "baseline_dirty_json", "TEXT")
-
-
-def _migration_12(connection: sqlite3.Connection) -> None:
-    """Separate a run whose turn is in flight from one awaiting a decision."""
-    _add_column(connection, "work_item_runs", "turn_finished_at", "TEXT")
-
-
-def _migration_13(connection: sqlite3.Connection) -> None:
-    """Collapse implementation contexts to one per session.
-
-    The surviving row is the session's ready context if it has one, else its
-    newest.
-
-    A delegation may point at a revision that does not survive: `delegations`
-    holds `context_id REFERENCES implementation_contexts(id)` and foreign keys
-    are on, so deleting that revision fails the migration outright. Each such
-    delegation is repointed at its session's surviving context first. That is
-    the same plan's context, and under the collapsed model a session has one,
-    so it is the row the delegation would resolve to anyway.
-    """
-    columns = {
-        str(row["name"])
-        for row in connection.execute(
-            "PRAGMA table_info(implementation_contexts)"
-        ).fetchall()
-    }
-    if "revision" not in columns:
-        # A database created from the current schema. It has no revisions to
-        # collapse, but the index below is still this migration's to create.
-        connection.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS one_context_per_session
-            ON implementation_contexts(session_id)
-            """
-        )
-        return
-    connection.execute(
-        """
-        CREATE TEMPORARY TABLE surviving_contexts AS
-        SELECT id, session_id FROM (
-            SELECT id, session_id, ROW_NUMBER() OVER (
-                PARTITION BY session_id
-                ORDER BY status = 'ready' DESC, revision DESC
-            ) AS rank FROM implementation_contexts
-        ) WHERE rank = 1
-        """
-    )
-    # Before the delete, not after: the foreign key is checked per statement.
-    connection.execute(
-        """
-        UPDATE delegations SET context_id = (
-            SELECT s.id FROM surviving_contexts s
-            WHERE s.session_id = delegations.session_id
-        )
-        WHERE context_id IS NOT NULL
-          AND context_id NOT IN (SELECT id FROM surviving_contexts)
-        """
-    )
-    connection.executescript(
-        """
-        DELETE FROM implementation_contexts
-        WHERE id NOT IN (SELECT id FROM surviving_contexts);
-        DROP TABLE surviving_contexts;
-        DROP INDEX IF EXISTS one_context_revision_per_session;
-        DROP INDEX IF EXISTS one_generating_context_per_session;
-        ALTER TABLE implementation_contexts DROP COLUMN revision;
-        CREATE UNIQUE INDEX IF NOT EXISTS one_context_per_session
-        ON implementation_contexts(session_id);
-        """
-    )
-
-
-def _migration_14(connection: sqlite3.Connection) -> None:
-    """Pin feature reviews to commits and retain source-folder delivery."""
-    _add_column(connection, "delegation_reviews", "base_branch", "TEXT")
-    _add_column(connection, "delegation_reviews", "base_commit", "TEXT")
-    _add_column(connection, "delegation_reviews", "head_commit", "TEXT")
-    _add_column(connection, "delegation_reviews", "source_merged_at", "TEXT")
-
-
-def _migration_15(connection: sqlite3.Connection) -> None:
-    """Retain full-feature change requests and their verified task commits."""
-    connection.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS delegation_change_requests (
-            id TEXT PRIMARY KEY,
-            delegation_id TEXT NOT NULL REFERENCES delegations(id),
-            revision INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            instructions TEXT NOT NULL,
-            provider TEXT NOT NULL,
-            model TEXT NOT NULL,
-            task_id TEXT REFERENCES tasks(id),
-            prompt TEXT,
-            verification_json TEXT,
-            error TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            settled_at TEXT
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS one_change_revision_per_delegation
-        ON delegation_change_requests(delegation_id, revision);
-        CREATE UNIQUE INDEX IF NOT EXISTS one_running_change_per_delegation
-        ON delegation_change_requests(delegation_id)
-        WHERE status = 'running';
-        """
-    )
-
-
-def _migration_16(connection: sqlite3.Connection) -> None:
-    """Retain the effective feature-change prompt for later audit."""
-    _add_column(connection, "delegation_change_requests", "prompt", "TEXT")
-
-
-def _migration_17(connection: sqlite3.Connection) -> None:
-    """Retain the sandbox's original fingerprinted dirty state."""
-    _add_column(connection, "sandboxes", "dirty_baseline_json", "TEXT")
-
-
-MIGRATIONS: Mapping[int, Callable[[sqlite3.Connection], None]] = {
-    9: _migration_9,
-    10: _migration_10,
-    11: _migration_11,
-    12: _migration_12,
-    13: _migration_13,
-    14: _migration_14,
-    15: _migration_15,
-    16: _migration_16,
-    17: _migration_17,
-}
-
-
-def _apply_migrations(connection: sqlite3.Connection) -> None:
-    applied = {
-        int(row["version"])
-        for row in connection.execute("SELECT version FROM schema_migrations").fetchall()
-    }
-    for version in sorted(MIGRATIONS):
-        if version in applied:
-            continue
-        MIGRATIONS[version](connection)
-        connection.execute(
-            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-            (version, _now()),
-        )
-
-
 class ControllerStore:
     """Serialized SQLite access for controller-owned intent and audit state."""
 
@@ -673,75 +468,11 @@ class ControllerStore:
     def initialize(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connection() as connection:
-            connection.executescript(SCHEMA)
+            connection.executescript(INITIAL_MIGRATION)
             connection.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, ?)",
                 (_now(),),
             )
-            connection.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (2, ?)",
-                (_now(),),
-            )
-            try:
-                connection.execute(
-                    "ALTER TABLE sandboxes ADD COLUMN baseline_commit TEXT"
-                )
-            except sqlite3.OperationalError as error:
-                if "duplicate column name" not in str(error):
-                    raise
-            connection.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)",
-                (_now(),),
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (4, ?)",
-                (_now(),),
-            )
-            for statement in (
-                "ALTER TABLE preview_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'live'",
-                "ALTER TABLE preview_runs ADD COLUMN task_id TEXT",
-                "ALTER TABLE preview_runs ADD COLUMN commit_sha TEXT",
-            ):
-                try:
-                    connection.execute(statement)
-                except sqlite3.OperationalError as error:
-                    if "duplicate column name" not in str(error):
-                        raise
-            connection.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (5, ?)",
-                (_now(),),
-            )
-            # base_branch records the branch a task was cut from, so accept and
-            # reject switch back to it instead of assuming 'main'. A sandbox
-            # imported from a host repository keeps that repository's branch.
-            try:
-                connection.execute("ALTER TABLE tasks ADD COLUMN base_branch TEXT")
-            except sqlite3.OperationalError as error:
-                if "duplicate column name" not in str(error):
-                    raise
-            connection.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (6, ?)",
-                (_now(),),
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (7, ?)",
-                (_now(),),
-            )
-            # model records which model produced a turn, at the time it ran.
-            # The planning settings can change between a turn and the reading
-            # of it, so the setting is not a record of what happened.
-            try:
-                connection.execute(
-                    "ALTER TABLE planning_messages ADD COLUMN model TEXT NOT NULL DEFAULT ''"
-                )
-            except sqlite3.OperationalError as error:
-                if "duplicate column name" not in str(error):
-                    raise
-            connection.execute(
-                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (8, ?)",
-                (_now(),),
-            )
-            _apply_migrations(connection)
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:

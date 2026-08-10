@@ -17,8 +17,8 @@ Read these before changing anything.
 
 | Anchor | What it does |
 |---|---|
-| `backend/app/controller/store.py:13` `SCHEMA` | Every table, created with `CREATE TABLE IF NOT EXISTS` |
-| `backend/app/controller/store.py:183` `initialize` | Runs `SCHEMA`, then applies `ALTER TABLE` migrations guarded by `"duplicate column name"`, then records versions 1–6 |
+| `backend/app/controller/store.py:13` `INITIAL_MIGRATION` | Every table and index, created with `CREATE ... IF NOT EXISTS` |
+| `backend/app/controller/store.py` `initialize` | Runs `INITIAL_MIGRATION`, then records version 1 |
 | `backend/app/controller/store.py:238` `_connection` | `RLock`-serialised connection, WAL, foreign keys on, transaction per call |
 | `backend/app/controller/store.py:250` `register_sandbox` | Upserts the `projects` row then the `sandboxes` row. The only writer of either |
 | `backend/app/controller/store.py:401` `create_task` | Insert plus `_event` in one transaction. Copy this shape |
@@ -92,7 +92,7 @@ sandbox participant, so the new entry is **Plan reviewer**.
 
 ### 2.1 Schema
 
-Append to `SCHEMA` in `backend/app/controller/store.py`. Keep
+Append to `INITIAL_MIGRATION` in `backend/app/controller/store.py`. Keep
 `CREATE TABLE IF NOT EXISTS` so an existing database is unaffected.
 
 ```sql
@@ -163,16 +163,8 @@ CREATE TABLE IF NOT EXISTS planning_plan_revisions (
 );
 ```
 
-In `initialize`, after the version-6 insert, add:
-
-```python
-connection.execute(
-    "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (7, ?)",
-    (_now(),),
-)
-```
-
-No `ALTER TABLE` is needed: these tables are new.
+The tables belong to the single initial migration. Do not add a separate
+version row or an `ALTER TABLE` upgrade path.
 
 **Foreign keys matter here.** `planning_sessions.sandbox_id` references
 `sandboxes(id)`, and `PRAGMA foreign_keys = ON` is set per connection
@@ -432,7 +424,7 @@ Behaviour that is not obvious from the name:
 `backend/tests/planning/test_store.py`, using a `ControllerStore` on `tmp_path`
 as `backend/tests/controller/test_store.py` already does:
 
-- `initialize` on a fresh database creates the four tables and records version 7.
+- `initialize` on a fresh database creates the four tables and records version 1.
 - `initialize` twice is a no-op.
 - Creating a session for an unregistered sandbox raises `sqlite3.IntegrityError`.
 - `advance_planning_status` from a wrong source status returns `False` and
