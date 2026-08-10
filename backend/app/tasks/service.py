@@ -11,6 +11,7 @@ from docker.client import DockerClient
 from docker.errors import DockerException
 
 from app.controller.store import ControllerStore
+from app.dirty_state import parse_snapshot, serialize_snapshot, snapshot_shell
 from app.previews.config import get_preview_settings
 from app.projects.models import ProjectRegistration
 from app.projects.service import (
@@ -129,6 +130,12 @@ def start_task(
             task_id=task_id,
             paths=_parse_dirty(output),
         )
+        dirty_snapshot = parse_snapshot(output)
+        if dirty_snapshot is not None:
+            controller_store.set_sandbox_dirty_baseline_if_missing(
+                sandbox_id=sandbox_id,
+                baseline_json=serialize_snapshot(dirty_snapshot),
+            )
         # Checked here as well as at settlement, so a sandbox on a branch name
         # this code cannot handle refuses the task instead of opening one that
         # can never be accepted or rejected.
@@ -346,6 +353,15 @@ Return exactly one JSON object as the last content in your reply. Use this shape
   "changed": ["what changed"],
   "decisions": ["implementation decisions"],
   "interfaces": ["interfaces introduced or changed"],
+  "change_kind": "interactive_ui | api_behavior | data_behavior | static_code",
+  "acceptance_criteria": [
+    {{
+      "criterion": "observable result",
+      "verification_kind": "behavior_test | static_check | manual_check",
+      "verified": true,
+      "evidence": "test evidence"
+    }}
+  ],
   "verification": {{
     "ran": ["commands you ran"],
     "outcome": "not_run",
@@ -752,14 +768,10 @@ def _branch_script(branch: str, base_commit: str) -> str:
         "  exit 1\n"
         "fi\n"
         'printf "base-branch %s\\n" "$base_branch"\n'
-        # Snapshot what is already dirty. A sandbox copied from a real
-        # repository routinely arrives with untracked files — tool directories,
-        # scratch folders, anything not in .gitignore — and settlement would
-        # otherwise read them as work the turn failed to commit.
-        "git status --porcelain | while IFS= read -r entry; do\n"
-        '  printf "dirty %s\\n" "$entry"\n'
-        "done\n"
-        f'git switch -c "{branch}"\n'
+        # Keep the legacy path list for old task settlement code and record a
+        # fingerprinted sandbox baseline for feature delivery checks.
+        + snapshot_shell()
+        + f'git switch -c "{branch}"\n'
         f'git rev-parse --verify "refs/heads/{branch}"\n'
     )
 

@@ -188,3 +188,115 @@ def test_migration_13_repoints_delegations_off_discarded_contexts(
     delegation = store.delegation("delegation-1")
     assert delegation is not None
     assert delegation["context_id"] == "context-b"
+
+
+def test_migration_14_adds_commit_pinned_feature_delivery(tmp_path: Path) -> None:
+    database_path = tmp_path / "controller.sqlite3"
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );
+            CREATE TABLE delegation_reviews (
+                id TEXT PRIMARY KEY,
+                delegation_id TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                provider TEXT,
+                model TEXT,
+                result_json TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                settled_at TEXT
+            );
+            """
+        )
+        for version in range(1, 14):
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                (version, "2026-01-01T00:00:00Z"),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+    store = ControllerStore(database_path)
+    store.initialize()
+    store.initialize()
+
+    connection = sqlite3.connect(database_path)
+    try:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(delegation_reviews)")
+        }
+    finally:
+        connection.close()
+    assert {"base_branch", "base_commit", "head_commit", "source_merged_at"} <= columns
+
+
+def test_migration_17_adds_an_immutable_sandbox_dirty_baseline(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "controller.sqlite3"
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );
+            CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                source_path TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE sandboxes (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                project_name TEXT NOT NULL,
+                volume_name TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                baseline_commit TEXT
+            );
+            """
+        )
+        for version in range(1, 17):
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                (version, "2026-01-01T00:00:00Z"),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+    store = ControllerStore(database_path)
+    store.initialize()
+    store.register_sandbox(
+        sandbox_id="sandbox-1",
+        project_id="project-1",
+        project_name="sample",
+        source_path="/projects/sample",
+        volume_name="sample-volume",
+        status="ready",
+        created_at="2026-01-01T00:00:00Z",
+    )
+
+    assert store.set_sandbox_dirty_baseline_if_missing(
+        sandbox_id="sandbox-1",
+        baseline_json='{"version":1,"entries":[]}',
+    )
+    assert not store.set_sandbox_dirty_baseline_if_missing(
+        sandbox_id="sandbox-1",
+        baseline_json='{"version":1,"entries":[{"path":"new"}]}',
+    )
+    assert store.sandbox("sandbox-1")["dirty_baseline_json"] == (
+        '{"version":1,"entries":[]}'
+    )

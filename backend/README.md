@@ -133,6 +133,52 @@ at any depth. The API returns the active list as `excluded_directories`.
 build, coverage, dist, htmlcov, node_modules, site-packages, venv
 ```
 
+## Feature delivery
+
+A verified work item merges into the internal sandbox branch automatically.
+The UI does not require a separate merge decision for each item.
+
+A completed delegation exposes its accepted commit range through
+`GET /projects/{name}/planning/sessions/{session_id}/delegations/{id}/diff`.
+The response includes per-file totals and a unified patch. The patch stops at
+500,000 bytes. Its base and head commits remain exact.
+
+The feature review stores that same branch and commit range before its model
+turn starts. The controller rejects the review result if the sandbox changes
+during the turn.
+
+The first delegated task also stores the sandbox's original dirty Git state.
+Each entry includes Git status, file type, and a SHA-256 content fingerprint
+when the path is a regular file or symbolic link. Diff generation, feature
+review, and final merge allow unchanged pre-existing entries. They reject and
+name every new, removed, status-changed, type-changed, or content-changed path.
+
+Active sandboxes from older controller versions can have path-only task
+baselines. The first delivery check upgrades that baseline only when all
+current paths remain covered and all recorded paths still exist. Later checks
+use the stored fingerprints and never ignore a directory by path alone.
+
+`POST /projects/{name}/planning/sessions/{session_id}/delegations/{id}/changes`
+accepts agent instructions against the complete implementation. The controller
+keeps the prior implementation when the turn or full verification fails. A
+successful change becomes another internal commit in `awaiting_review`. Its
+prompt includes the reviewed plan, implementation manifest, completed work,
+and earlier change requests. The agent must report observable acceptance
+criteria and evidence. An approved whole-feature review marks held changes
+complete. The controller retains the effective prompt, structured agent
+report, turn measurements, and controller verification. Source delivery still
+requires that current approved review.
+
+Default coding images provide pinned Playwright and Chromium for behavioral
+checks. Change turns use those image-owned tools and must not install browser
+test infrastructure into a project or temporary directory.
+
+`POST /projects/{name}/planning/sessions/{session_id}/delegations/{id}/merge`
+fast-forwards the original source folder. The request must confirm the action
+and name the latest approved review. The merge refuses a different source
+branch, a changed source commit, any uncommitted source change, or a source
+folder outside `PROJECTS_ROOT`. Git runs without network access or hooks.
+
 ## Preview stacks
 
 Each sandbox supports zero or one active preview stack. A stack can use one of

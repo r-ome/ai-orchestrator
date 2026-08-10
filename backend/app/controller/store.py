@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS sandboxes (
     project_name TEXT NOT NULL,
     volume_name TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL,
+    -- Versioned Git status, file type, and content fingerprints for paths that
+    -- were already dirty before the first delegated task changed the sandbox.
+    dirty_baseline_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -301,11 +304,15 @@ CREATE TABLE IF NOT EXISTS delegation_reviews (
     status TEXT NOT NULL,
     provider TEXT,
     model TEXT,
+    base_branch TEXT,
+    base_commit TEXT,
+    head_commit TEXT,
     result_json TEXT,
     error TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    settled_at TEXT
+    settled_at TEXT,
+    source_merged_at TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS one_review_revision_per_delegation
@@ -314,6 +321,30 @@ ON delegation_reviews(delegation_id, revision);
 CREATE UNIQUE INDEX IF NOT EXISTS one_generating_review_per_delegation
 ON delegation_reviews(delegation_id)
 WHERE status = 'generating';
+
+CREATE TABLE IF NOT EXISTS delegation_change_requests (
+    id TEXT PRIMARY KEY,
+    delegation_id TEXT NOT NULL REFERENCES delegations(id),
+    revision INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    instructions TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    task_id TEXT REFERENCES tasks(id),
+    prompt TEXT,
+    verification_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    settled_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_change_revision_per_delegation
+ON delegation_change_requests(delegation_id, revision);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_running_change_per_delegation
+ON delegation_change_requests(delegation_id)
+WHERE status = 'running';
 
 -- Immutable once its delegation revision exists. There is no update path on
 -- purpose: changing a definition means a new revision. Carries no provider or
@@ -366,11 +397,9 @@ CREATE TABLE IF NOT EXISTS work_item_runs (
     duration_ms INTEGER,
     exit_code INTEGER,
     repair_count INTEGER NOT NULL DEFAULT 0,
-    -- When the coding turn stopped running. A run stays 'running' after its
-    -- turn finishes, because it settles only on a person's accept or reject.
-    -- Without this stamp those two states are the same row, and startup
-    -- reconciliation cannot tell a turn it must fail from a finished one it
-    -- must leave alone. See `interrupted_turns`.
+    -- Legacy runs can remain 'running' after their turn finishes while they
+    -- wait for a decision. New delegated runs settle automatically after
+    -- controller verification and an internal sandbox merge.
     turn_finished_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -559,12 +588,63 @@ def _migration_13(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_14(connection: sqlite3.Connection) -> None:
+    """Pin feature reviews to commits and retain source-folder delivery."""
+    _add_column(connection, "delegation_reviews", "base_branch", "TEXT")
+    _add_column(connection, "delegation_reviews", "base_commit", "TEXT")
+    _add_column(connection, "delegation_reviews", "head_commit", "TEXT")
+    _add_column(connection, "delegation_reviews", "source_merged_at", "TEXT")
+
+
+def _migration_15(connection: sqlite3.Connection) -> None:
+    """Retain full-feature change requests and their verified task commits."""
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS delegation_change_requests (
+            id TEXT PRIMARY KEY,
+            delegation_id TEXT NOT NULL REFERENCES delegations(id),
+            revision INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            instructions TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            task_id TEXT REFERENCES tasks(id),
+            prompt TEXT,
+            verification_json TEXT,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            settled_at TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS one_change_revision_per_delegation
+        ON delegation_change_requests(delegation_id, revision);
+        CREATE UNIQUE INDEX IF NOT EXISTS one_running_change_per_delegation
+        ON delegation_change_requests(delegation_id)
+        WHERE status = 'running';
+        """
+    )
+
+
+def _migration_16(connection: sqlite3.Connection) -> None:
+    """Retain the effective feature-change prompt for later audit."""
+    _add_column(connection, "delegation_change_requests", "prompt", "TEXT")
+
+
+def _migration_17(connection: sqlite3.Connection) -> None:
+    """Retain the sandbox's original fingerprinted dirty state."""
+    _add_column(connection, "sandboxes", "dirty_baseline_json", "TEXT")
+
+
 MIGRATIONS: Mapping[int, Callable[[sqlite3.Connection], None]] = {
     9: _migration_9,
     10: _migration_10,
     11: _migration_11,
     12: _migration_12,
     13: _migration_13,
+    14: _migration_14,
+    15: _migration_15,
+    16: _migration_16,
+    17: _migration_17,
 }
 
 
@@ -761,6 +841,28 @@ class ControllerStore:
                 "UPDATE sandboxes SET baseline_commit = ?, updated_at = ? WHERE id = ?",
                 (baseline_commit, _now(), sandbox_id),
             )
+
+    def set_sandbox_dirty_baseline_if_missing(
+        self,
+        *,
+        sandbox_id: str,
+        baseline_json: str,
+    ) -> bool:
+        """Record one immutable dirty baseline for a sandbox.
+
+        The conditional update prevents a later task or review from replacing
+        the original snapshot with its current worktree state.
+        """
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE sandboxes
+                SET dirty_baseline_json = ?, updated_at = ?
+                WHERE id = ? AND dirty_baseline_json IS NULL
+                """,
+                (baseline_json, _now(), sandbox_id),
+            )
+        return cursor.rowcount == 1
 
     def sandbox_baseline_commit(self, sandbox_id: str) -> str | None:
         with self._connection() as connection:
@@ -1287,13 +1389,22 @@ class ControllerStore:
                 """
                 INSERT INTO delegation_reviews(
                     id, delegation_id, revision, status, provider, model,
+                    base_branch, base_commit, head_commit,
                     created_at, updated_at
                 ) VALUES (
                     :id, :delegation_id, :revision, :status, :provider, :model,
+                    :base_branch, :base_commit, :head_commit,
                     :created_at, :updated_at
                 )
                 """,
-                {**dict(values), "created_at": now, "updated_at": now},
+                {
+                    **dict(values),
+                    "base_branch": values.get("base_branch"),
+                    "base_commit": values.get("base_commit"),
+                    "head_commit": values.get("head_commit"),
+                    "created_at": now,
+                    "updated_at": now,
+                },
             )
             self._event(
                 connection,
@@ -1338,6 +1449,35 @@ class ControllerStore:
             )
         return _row(row)
 
+    def pin_delegation_review_target(
+        self,
+        review_id: str,
+        *,
+        base_branch: str,
+        base_commit: str,
+        head_commit: str,
+    ) -> dict[str, Any] | None:
+        """Pins a generating review before its read-only model turn starts."""
+        now = _now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE delegation_reviews
+                SET base_branch = ?, base_commit = ?, head_commit = ?,
+                    updated_at = ?
+                WHERE id = ? AND status = 'generating'
+                  AND base_commit IS NULL AND head_commit IS NULL
+                """,
+                (base_branch, base_commit, head_commit, now, review_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute(
+                "SELECT * FROM delegation_reviews WHERE id = ?",
+                (review_id,),
+            ).fetchone()
+        return _row(row)
+
     def delegation_reviews(self, delegation_id: str) -> list[dict[str, Any]]:
         with self._connection() as connection:
             rows = connection.execute(
@@ -1348,6 +1488,38 @@ class ControllerStore:
                 (delegation_id,),
             ).fetchall()
         return [_row(row) for row in rows if row is not None]
+
+    def mark_delegation_review_source_merged(
+        self,
+        review_id: str,
+    ) -> dict[str, Any] | None:
+        """Records one idempotent delivery of the reviewed commit to its source."""
+        now = _now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE delegation_reviews
+                SET source_merged_at = COALESCE(source_merged_at, ?),
+                    updated_at = ?
+                WHERE id = ? AND status = 'completed'
+                """,
+                (now, now, review_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute(
+                "SELECT * FROM delegation_reviews WHERE id = ?",
+                (review_id,),
+            ).fetchone()
+            updated = _row(row)
+            self._event(
+                connection,
+                sandbox_id=None,
+                run_id=review_id,
+                kind="delegation_review.source_merged",
+                payload={"head_commit": (updated or {}).get("head_commit")},
+            )
+        return updated
 
     def delegation_review(self, review_id: str) -> dict[str, Any] | None:
         with self._connection() as connection:
@@ -1363,6 +1535,136 @@ class ControllerStore:
                 """
                 SELECT COALESCE(MAX(revision), 0) AS highest
                 FROM delegation_reviews WHERE delegation_id = ?
+                """,
+                (delegation_id,),
+            ).fetchone()
+        return int(row["highest"]) + 1
+
+    def create_delegation_change_request(self, values: Mapping[str, Any]) -> None:
+        now = _now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO delegation_change_requests(
+                    id, delegation_id, revision, status, instructions,
+                    provider, model, task_id, prompt, created_at, updated_at
+                ) VALUES (
+                    :id, :delegation_id, :revision, :status, :instructions,
+                    :provider, :model, :task_id, :prompt, :created_at, :updated_at
+                )
+                """,
+                {
+                    **dict(values),
+                    "prompt": values.get("prompt"),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            self._event(
+                connection,
+                sandbox_id=None,
+                run_id=str(values["id"]),
+                kind="change_request.running",
+                payload={"revision": values["revision"]},
+            )
+
+    def settle_delegation_change_request(
+        self,
+        request_id: str,
+        *,
+        to_status: str,
+        verification_json: str | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any] | None:
+        now = _now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE delegation_change_requests
+                SET status = ?, verification_json = ?, error = ?,
+                    updated_at = ?, settled_at = ?
+                WHERE id = ? AND status = 'running'
+                """,
+                (to_status, verification_json, error, now, now, request_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute(
+                "SELECT * FROM delegation_change_requests WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+            self._event(
+                connection,
+                sandbox_id=None,
+                run_id=request_id,
+                kind=f"change_request.{to_status}",
+                payload={"status": to_status},
+            )
+        return _row(row)
+
+    def delegation_change_request(self, request_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM delegation_change_requests WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+        return _row(row)
+
+    def delegation_change_requests(self, delegation_id: str) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM delegation_change_requests
+                WHERE delegation_id = ? ORDER BY revision
+                """,
+                (delegation_id,),
+            ).fetchall()
+        return [_row(row) for row in rows if row is not None]
+
+    def complete_awaiting_delegation_changes(
+        self,
+        delegation_id: str,
+        *,
+        review_id: str,
+    ) -> int:
+        """Complete held changes after the current whole-feature review approves."""
+        now = _now()
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id FROM delegation_change_requests
+                WHERE delegation_id = ? AND status = 'awaiting_review'
+                ORDER BY revision
+                """,
+                (delegation_id,),
+            ).fetchall()
+            if not rows:
+                return 0
+            connection.execute(
+                """
+                UPDATE delegation_change_requests
+                SET status = 'completed', updated_at = ?, settled_at = ?
+                WHERE delegation_id = ? AND status = 'awaiting_review'
+                """,
+                (now, now, delegation_id),
+            )
+            for row in rows:
+                request_id = str(row["id"])
+                self._event(
+                    connection,
+                    sandbox_id=None,
+                    run_id=request_id,
+                    kind="change_request.completed",
+                    payload={"status": "completed", "review_id": review_id},
+                )
+        return len(rows)
+
+    def next_delegation_change_revision(self, delegation_id: str) -> int:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT COALESCE(MAX(revision), 0) AS highest
+                FROM delegation_change_requests WHERE delegation_id = ?
                 """,
                 (delegation_id,),
             ).fetchone()
@@ -1718,6 +2020,9 @@ class ControllerStore:
             ),
             "delegation_reviews": (
                 "SELECT * FROM delegation_reviews WHERE status = 'generating'"
+            ),
+            "delegation_change_requests": (
+                "SELECT * FROM delegation_change_requests WHERE status = 'running'"
             ),
             "work_item_runs": (
                 "SELECT * FROM work_item_runs "

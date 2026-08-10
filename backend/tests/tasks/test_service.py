@@ -1,3 +1,4 @@
+import base64
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,6 +8,7 @@ import pytest
 from docker.errors import APIError
 
 from app.controller.store import ControllerStore
+from app.dirty_state import DirtyEntry, serialize_snapshot
 from app.tasks.models import (
     TASK_TRANSITIONS,
     ReportTaskRequest,
@@ -44,6 +46,7 @@ class _StubContainers:
         # What git already called dirty when the branch was cut. A sandbox
         # copied from a real repository arrives with untracked files.
         self.branch_dirty: tuple[str, ...] = ()
+        self.branch_snapshot: tuple[str, ...] = ()
 
     def run(self, **kwargs: Any) -> bytes:
         script = kwargs["command"][0]
@@ -52,6 +55,9 @@ class _StubContainers:
             if self.branch_error is not None:
                 raise self.branch_error
             lines = [f"base-branch {self.base_branch}"]
+            if self.branch_snapshot:
+                lines.append("snapshot-version 1")
+                lines.extend(self.branch_snapshot)
             lines += [f"dirty {entry}" for entry in self.branch_dirty]
             lines.append(BASE_COMMIT)
             return ("\n".join(lines) + "\n").encode()
@@ -1341,3 +1347,27 @@ def test_the_baseline_is_recorded_and_passed_to_the_accept_script(
 
     accept_script = docker_client.containers.scripts[-1]
     assert "baseline='.agent/\ninterview-prep/'" in accept_script
+
+
+def test_the_first_task_records_a_fingerprinted_sandbox_dirty_baseline(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+) -> None:
+    position = DirtyEntry(
+        path="interview-prep/Position.md",
+        status="??",
+        file_type="file",
+        fingerprint="sha256:original",
+    )
+    status = base64.b64encode(position.status.encode()).decode()
+    path = base64.b64encode(position.path.encode()).decode()
+    docker_client.containers.branch_snapshot = (
+        f"snapshot {status} file {position.fingerprint} {path}",
+    )
+    docker_client.containers.branch_dirty = ("?? interview-prep/Position.md",)
+
+    _start(docker_client, controller_store)
+
+    assert controller_store.sandbox("sandbox-1")["dirty_baseline_json"] == (
+        serialize_snapshot([position])
+    )
