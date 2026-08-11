@@ -11,7 +11,7 @@ from docker.models.containers import Container
 from docker.models.volumes import Volume
 
 from app.agents.config import AgentSettings
-from app.controller.store import ControllerStore
+from app.controller.store import ControllerStore, SandboxWriterAdmissionError
 from app.agents.models import (
     AgentProvider,
     CleanupAgentsResponse,
@@ -34,6 +34,7 @@ from app.projects.service import (
     ensure_git_baseline,
     inspect_registered_project,
 )
+from app.sandboxes.database import SandboxDatabaseError, sandbox_database_runtime
 
 LABEL_MANAGED = "orchestrator.agent.managed"
 LABEL_PROVIDER = "orchestrator.agent.provider"
@@ -75,7 +76,11 @@ def create_agent(
     controller_store: ControllerStore,
 ) -> CodingAgent:
     try:
-        project = inspect_registered_project(docker_client, request.project_name)
+        project = inspect_registered_project(
+            docker_client,
+            request.project_name,
+            controller_store,
+        )
         if not project.ready:
             raise ProjectOperationError(
                 409,
@@ -89,30 +94,25 @@ def create_agent(
         )
     except ProjectOperationError as error:
         raise AgentOperationError(error.status_code, error.detail) from error
-    _ensure_sandbox_git_baseline(
-        docker_client,
-        controller_store,
-        sandbox_id=sandbox_id,
-        project_volume=project.volume_name,
-    )
+    # Reconcile a stale row or reject a live environment before claiming the
+    # one active-agent slot for this attempt.
     _reject_active_agent(docker_client, controller_store, project.volume_name, sandbox_id)
 
     provider = settings.provider(request.provider)
-    credential_volume = _credential_volume(
-        docker_client,
-        request.provider,
-        request.credential_profile,
-    )
     agent_token = uuid4().hex[:12]
     run_id = uuid4().hex
     name = f"{AGENT_CONTAINER_PREFIX}{request.provider.value}-{agent_token}"
+    credential_volume_name = _credential_volume_name(
+        request.provider,
+        request.credential_profile,
+    )
     labels = {
         LABEL_MANAGED: "true",
         LABEL_PROVIDER: request.provider.value,
         LABEL_PROJECT_NAME: project.name,
         LABEL_PROJECT_VOLUME: project.volume_name,
         LABEL_CREDENTIAL_PROFILE: request.credential_profile,
-        LABEL_CREDENTIAL_VOLUME: credential_volume.name,
+        LABEL_CREDENTIAL_VOLUME: credential_volume_name,
         LABEL_COMMAND: " ".join(provider.command),
         LABEL_SANDBOX_ID: sandbox_id,
         LABEL_RUN_ID: run_id,
@@ -121,21 +121,13 @@ def create_agent(
     }
 
     try:
-        dependency_volume = _agent_dependency_volume(
-            docker_client,
-            sandbox_id=sandbox_id,
-            project_volume=project.volume_name,
-            labels=labels,
-        )
-    except PreviewOperationError as error:
-        raise AgentOperationError(error.status_code, error.detail) from error
-
-    try:
         controller_store.start_agent_run(
             run_id=run_id,
             sandbox_id=sandbox_id,
             provider=request.provider.value,
         )
+    except SandboxWriterAdmissionError as error:
+        raise AgentOperationError(409, str(error)) from error
     except sqlite3.IntegrityError as error:
         raise AgentOperationError(
             409,
@@ -144,6 +136,56 @@ def create_agent(
 
     container: Container | None = None
     try:
+        # The durable row precedes every sandbox mutation. Git baseline setup
+        # can create a repository and commit, while dependency resolution can
+        # create a sandbox-owned volume.
+        _ensure_sandbox_git_baseline(
+            docker_client,
+            controller_store,
+            sandbox_id=sandbox_id,
+            project_volume=project.volume_name,
+        )
+        credential_volume = _credential_volume(
+            docker_client,
+            request.provider,
+            request.credential_profile,
+        )
+        dependency_volume = _agent_dependency_volume(
+            docker_client,
+            sandbox_id=sandbox_id,
+            project_volume=project.volume_name,
+            labels=labels,
+        )
+        try:
+            database_runtime = sandbox_database_runtime(
+                docker_client,
+                controller_store,
+                sandbox_id,
+            )
+        except SandboxDatabaseError as error:
+            raise AgentOperationError(error.status_code, error.detail) from error
+        environment = {
+            provider.credential_environment_variable: CREDENTIAL_DIRECTORY,
+            "HOME": "/tmp/home",
+            "TERM": "xterm-256color",
+        }
+        volumes = {
+            project.volume_name: {
+                "bind": WORKSPACE_DIRECTORY,
+                "mode": "rw",
+            },
+            credential_volume.name: {
+                "bind": CREDENTIAL_DIRECTORY,
+                "mode": "rw",
+            },
+            dependency_volume.name: {
+                "bind": f"{WORKSPACE_DIRECTORY}/node_modules",
+                "mode": "ro",
+            },
+        }
+        if database_runtime is not None:
+            environment.update(database_runtime.environment)
+            volumes.update(database_runtime.volumes)
         container = docker_client.containers.create(
             image=provider.image,
             command=IDLE_COMMAND,
@@ -156,28 +198,13 @@ def create_agent(
             pids_limit=512,
             mem_limit=settings.agent_memory,
             working_dir=WORKSPACE_DIRECTORY,
-            environment={
-                provider.credential_environment_variable: CREDENTIAL_DIRECTORY,
-                "HOME": "/tmp/home",
-                "TERM": "xterm-256color",
-            },
+            environment=environment,
             labels=labels,
-            volumes={
-                project.volume_name: {
-                    "bind": WORKSPACE_DIRECTORY,
-                    "mode": "rw",
-                },
-                credential_volume.name: {
-                    "bind": CREDENTIAL_DIRECTORY,
-                    "mode": "rw",
-                },
-                dependency_volume.name: {
-                    "bind": f"{WORKSPACE_DIRECTORY}/node_modules",
-                    "mode": "ro",
-                },
-            },
+            volumes=volumes,
             tmpfs={"/tmp": "rw,nosuid,size=512m"},
         )
+        if database_runtime is not None and database_runtime.engine != "sqlite":
+            docker_client.networks.get(database_runtime.network_name).connect(container)
         container.start()
         controller_store.update_agent_run(
             run_id,
@@ -191,7 +218,15 @@ def create_agent(
             424,
             f"Agent image '{provider.image}' is not available",
         ) from error
+    except PreviewOperationError as error:
+        controller_store.update_agent_run(run_id, status="failed")
+        _remove_created_container(container)
+        raise AgentOperationError(error.status_code, error.detail) from error
     except DockerException:
+        controller_store.update_agent_run(run_id, status="failed")
+        _remove_created_container(container)
+        raise
+    except Exception:
         controller_store.update_agent_run(run_id, status="failed")
         _remove_created_container(container)
         raise

@@ -10,7 +10,7 @@ from uuid import uuid4
 from docker.client import DockerClient
 from docker.errors import DockerException
 
-from app.controller.store import ControllerStore
+from app.controller.store import ControllerStore, SandboxWriterAdmissionError
 from app.dirty_state import parse_snapshot, serialize_snapshot, snapshot_shell
 from app.previews.config import get_preview_settings
 from app.projects.models import ProjectRegistration
@@ -20,6 +20,7 @@ from app.projects.service import (
     inspect_registered_project,
     project_id,
 )
+from app.sandboxes.git import run_git
 from app.tasks.config import CodingTurnSettings
 
 if TYPE_CHECKING:  # pragma: no cover - types only
@@ -58,37 +59,27 @@ def start_task(
     controller_store: ControllerStore,
     request: StartTaskRequest,
 ) -> Task:
-    project, sandbox_id = _resolve_sandbox(docker_client, request.project_name)
+    project, sandbox_id = _resolve_sandbox(
+        docker_client,
+        controller_store,
+        request.project_name,
+    )
     if not project.ready:
         raise TaskOperationError(
             409,
             f"Sandbox '{request.project_name}' is not ready",
         )
-    source_path = getattr(project, "source_path", "") or f"legacy:{project.name}"
-    controller_store.register_sandbox(
-        sandbox_id=sandbox_id,
-        project_id=project_id(source_path),
-        project_name=project.name,
-        source_path=source_path,
-        volume_name=project.volume_name,
-        status="ready",
-        created_at=getattr(project, "created_at", ""),
-    )
-
-    # ensure_git_baseline is idempotent and returns the sandbox's current HEAD,
-    # which is what a task branches from. The recorded baseline_commit is the
-    # first commit ever made, not the current one, so it cannot serve here.
-    git_image = get_preview_settings().git_image
-    base_commit = ensure_git_baseline(docker_client, git_image, project.volume_name)
-    if not _COMMIT_PATTERN.match(base_commit):
-        raise TaskOperationError(
-            502,
-            "Sandbox git baseline did not return a commit hash",
-        )
-    if not controller_store.sandbox_baseline_commit(sandbox_id):
-        controller_store.set_sandbox_baseline_commit(
+    existing = controller_store.sandbox(sandbox_id)
+    if existing is None or existing.get("lifecycle_version") != "v1":
+        source_path = getattr(project, "source_path", "") or f"legacy:{project.name}"
+        controller_store.register_sandbox(
             sandbox_id=sandbox_id,
-            baseline_commit=base_commit,
+            project_id=project_id(source_path),
+            project_name=project.name,
+            source_path=source_path,
+            volume_name=project.volume_name,
+            status="ready",
+            created_at=getattr(project, "created_at", ""),
         )
 
     task_id = uuid4().hex
@@ -101,24 +92,52 @@ def start_task(
             agent_run_id=str(active_agent["id"]) if active_agent else None,
             branch=branch,
             base_branch="",
-            base_commit=base_commit,
+            base_commit="",
             title=request.title,
-            status=TaskStatus.OPEN.value,
+            status=TaskStatus.PREPARING.value,
         )
+    except SandboxWriterAdmissionError as error:
+        raise TaskOperationError(409, str(error)) from error
     except sqlite3.IntegrityError as error:
         raise TaskOperationError(
             409,
             f"Sandbox '{project.name}' already has an open task",
         ) from error
 
-    # The row is the lock. It exists before git is touched, so a caller that
-    # lost the race above has changed nothing in the sandbox.
+    # The preparing row covers baseline creation too. ensure_git_baseline can
+    # initialize Git and create a commit, so it is sandbox mutation rather
+    # than a harmless read.
+    git_image = get_preview_settings().git_image
     try:
-        output = _run_git(
+        base_commit = ensure_git_baseline(
             docker_client,
             git_image,
             project.volume_name,
-            _branch_script(branch, base_commit),
+        )
+        if not _COMMIT_PATTERN.match(base_commit):
+            raise TaskOperationError(
+                502,
+                "Sandbox git baseline did not return a commit hash",
+            )
+        if not controller_store.sandbox_baseline_commit(sandbox_id):
+            controller_store.set_sandbox_baseline_commit(
+                sandbox_id=sandbox_id,
+                baseline_commit=base_commit,
+            )
+    except Exception:
+        transition_task(
+            controller_store,
+            task_id=task_id,
+            to_status=TaskStatus.FAILED,
+        )
+        raise
+
+    try:
+        output = run_git(
+            docker_client,
+            image=git_image,
+            volumes={project.volume_name: {"bind": "/project", "mode": "rw"}},
+            script=_branch_script(branch, base_commit),
         )
         base_branch = _parse_base_branch(output)
         if not base_branch:
@@ -140,11 +159,23 @@ def start_task(
         # this code cannot handle refuses the task instead of opening one that
         # can never be accepted or rejected.
         _validated_branch(base_branch, task_id=task_id)
-        controller_store.set_task_base_branch(
+        if not controller_store.complete_task_preparation(
             task_id=task_id,
             base_branch=base_branch,
-        )
+            base_commit=base_commit,
+        ):
+            raise TaskOperationError(
+                409,
+                f"Task '{task_id}' changed while it was being prepared",
+            )
     except Exception:
+        transition_task(
+            controller_store,
+            task_id=task_id,
+            to_status=TaskStatus.FAILED,
+        )
+        # Keep the established branch-failure behavior. The failed status is
+        # recorded before the existing compensating deletion frees the slot.
         controller_store.delete_task(task_id=task_id)
         raise
 
@@ -198,6 +229,8 @@ def run_task(
         provider=request.provider,
         prompt=_task_prompt(request.prompt),
         model=request.model,
+        controller_store=controller_store,
+        sandbox_id=task.sandbox_id,
     )
     controller_store.event(
         sandbox_id=task.sandbox_id,
@@ -377,7 +410,7 @@ def list_tasks(
     controller_store: ControllerStore,
     project_name: str,
 ) -> TasksResponse:
-    _, sandbox_id = _resolve_sandbox(docker_client, project_name)
+    _, sandbox_id = _resolve_sandbox(docker_client, controller_store, project_name)
     tasks = [
         Task.model_validate(row)
         for row in controller_store.tasks_for_sandbox(sandbox_id)
@@ -422,11 +455,11 @@ def report_task_complete(
     volume_name = str(sandbox["volume_name"])
 
     git_image = get_preview_settings().git_image
-    output = _run_git(
+    output = run_git(
         docker_client,
-        git_image,
-        volume_name,
-        _report_script(task.branch),
+        image=git_image,
+        volumes={volume_name: {"bind": "/project", "mode": "rw"}},
+        script=_report_script(task.branch),
     )
     head_commit, checked_out, dirty_paths = _parse_report(output)
 
@@ -498,11 +531,11 @@ def accept_task(
 
     sandbox = _sandbox_for_task(controller_store, task)
     base_branch = _base_branch(task)
-    output = _run_git(
+    output = run_git(
         docker_client,
-        get_preview_settings().git_image,
-        str(sandbox["volume_name"]),
-        _accept_script(
+        image=get_preview_settings().git_image,
+        volumes={str(sandbox["volume_name"]): {"bind": "/project", "mode": "rw"}},
+        script=_accept_script(
             task.branch,
             base_branch,
             head_commit,
@@ -572,11 +605,11 @@ def reject_task(
 
     sandbox = _sandbox_for_task(controller_store, task)
     base_branch = _base_branch(task)
-    output = _run_git(
+    output = run_git(
         docker_client,
-        get_preview_settings().git_image,
-        str(sandbox["volume_name"]),
-        _reject_script(task.branch, base_branch),
+        image=get_preview_settings().git_image,
+        volumes={str(sandbox["volume_name"]): {"bind": "/project", "mode": "rw"}},
+        script=_reject_script(task.branch, base_branch),
     )
     result, fields, details = _parse_settle(output)
     _raise_reject_refusal(task, base_branch, result, details)
@@ -647,10 +680,15 @@ def open_task_for_sandbox(
 
 def _resolve_sandbox(
     docker_client: DockerClient,
+    controller_store: ControllerStore,
     project_name: str,
 ) -> tuple[ProjectRegistration, str]:
     try:
-        project = inspect_registered_project(docker_client, project_name)
+        project = inspect_registered_project(
+            docker_client,
+            project_name,
+            controller_store,
+        )
     except ProjectOperationError as error:
         raise TaskOperationError(error.status_code, error.detail) from error
     # Same derivation create_agent uses, so a task and a coding agent on one
@@ -729,7 +767,11 @@ def _stop_task_preview(
         stop_preview(
             docker_client,
             controller_store,
-            str(sandbox["project_name"]),
+            (
+                str(sandbox["id"])
+                if sandbox.get("lifecycle_version") == "v1"
+                else str(sandbox["project_name"])
+            ),
             remove_data_volumes=True,
             status="stopped",
         )
@@ -897,25 +939,6 @@ def _reject_script(branch: str, base_branch: str) -> str:
         '  printf "result missing-task-branch\\n"\n'
         "fi\n"
         f'printf "base %s\\n" "$(git rev-parse --verify "refs/heads/{base_branch}")"\n'
-    )
-
-
-def _run_git(
-    docker_client: DockerClient,
-    git_image: str,
-    volume_name: str,
-    script: str,
-) -> bytes:
-    return docker_client.containers.run(
-        image=git_image,
-        entrypoint=["sh", "-c"],
-        command=[script],
-        remove=True,
-        network_disabled=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
-        volumes={volume_name: {"bind": "/project", "mode": "rw"}},
-        tmpfs={"/tmp": "rw,nosuid,size=32m"},
     )
 
 

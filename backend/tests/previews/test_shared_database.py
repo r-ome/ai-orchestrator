@@ -467,12 +467,21 @@ def test_idleness_ignores_records_and_follows_active_previews(tmp_path: Path) ->
     assert _shared_server_is_idle(store, PROJECT_KEY) is False
 
 
-def test_shared_names_are_project_scoped_not_run_scoped() -> None:
-    names = _shared_database_names(PROJECT_KEY)
+def test_shared_names_keep_legacy_projects_on_the_existing_resources() -> None:
+    names = _shared_database_names(PROJECT_KEY, "legacy")
 
     assert names["container"] == "orchestrator-shared-db-1f2e3d4c5b6a"
     assert names["data"] == "orchestrator-shared-db-1f2e3d4c5b6a-data"
     assert _shared_database_names(PROJECT_KEY) == names
+
+
+def test_shared_names_include_the_engine_for_v1_projects() -> None:
+    names = _shared_database_names(PROJECT_KEY, "v1")
+
+    assert names["container"] == "orchestrator-shared-db-1f2e3d4c5b6a-mysql"
+    assert names["data"] == "orchestrator-shared-db-1f2e3d4c5b6a-mysql-data"
+    assert names["credentials"] == "orchestrator-shared-db-1f2e3d4c5b6a-mysql-credentials"
+    assert names["network"] == "orchestrator-shared-db-1f2e3d4c5b6a-mysql-net"
 
 
 def test_schema_identifiers_stay_within_mysql_limits() -> None:

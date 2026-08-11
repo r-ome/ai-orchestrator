@@ -18,6 +18,7 @@ from app.agents.service import (
     cleanup_agents,
 )
 from app.docker_client import get_docker_client
+from app.controller.store import get_controller_store
 from app.main import app
 from app.projects.service import ProjectOperationError
 
@@ -464,10 +465,14 @@ def test_websocket_bridges_terminal_and_keeps_container_running(
 
     with client.websocket_connect(created["websocket_url"]) as websocket:
         ready = websocket.receive_json()
+        open_writers = get_controller_store().active_writers(created["sandbox_id"])
         output = websocket.receive_bytes()
         websocket.send_json({"type": "resize", "columns": 120, "rows": 40})
         websocket.send_bytes(b"hello Claude\r")
         exited = websocket.receive_json()
+        closed = websocket.receive()
+
+    closed_writers = get_controller_store().active_writers(created["sandbox_id"])
 
     assert ready == {
         "type": "ready",
@@ -477,6 +482,11 @@ def test_websocket_bridges_terminal_and_keeps_container_running(
     }
     assert output == b"agent ready\r\n"
     assert exited == {"type": "exit", "exit_code": 0}
+    assert closed["type"] == "websocket.close"
+    assert [writer["writer_class"] for writer in open_writers] == [
+        "agent_writer_session"
+    ]
+    assert closed_writers == []
     assert docker_client.api.stream.writes == [b"hello Claude\r"]
     assert docker_client.api.resize_calls == [("exec-123", 40, 120)]
     exec_call = docker_client.api.exec_create_calls[0]

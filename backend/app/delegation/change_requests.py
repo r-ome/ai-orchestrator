@@ -215,6 +215,8 @@ def execute_change_request(
             get_verification_settings(),
             volume_name=claim.volume_name,
             commands=claim.verification,
+            controller_store=store,
+            sandbox_id=claim.sandbox_id,
         )
         if not verification["passed"]:
             raise service.DelegationOperationError(

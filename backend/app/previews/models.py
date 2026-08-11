@@ -52,6 +52,8 @@ class PreviewKind(StrEnum):
 
 class PreviewServiceType(StrEnum):
     MYSQL = "mysql"
+    POSTGRES = "postgres"
+    SQLITE = "sqlite"
 
 
 class PreviewPersistence(StrEnum):
@@ -93,6 +95,11 @@ class PreviewDependencyService(BaseModel):
     def validate_sharing(self) -> "PreviewDependencyService":
         if self.sharing is PreviewSharing.SHARED_DATA and not self.share_target:
             raise ValueError("Shared database data requires share_target")
+        if (
+            self.sharing is PreviewSharing.SHARED_DATA
+            and self.type is not PreviewServiceType.MYSQL
+        ):
+            raise ValueError("shared_data is supported only for MySQL databases")
         if self.sharing is not PreviewSharing.SHARED_DATA and self.share_target:
             raise ValueError("share_target applies only to shared_data sharing")
         return self

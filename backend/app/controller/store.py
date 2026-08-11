@@ -1,6 +1,6 @@
-import json
 import sqlite3
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+import json
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -458,6 +458,376 @@ _RUN_UPDATABLE_COLUMNS = frozenset(
 )
 
 
+# Pre-squash controller databases carry the current effective schema and stamps
+# for versions 1 through 17. Versions 2 through 17 stay reserved because a new
+# migration there would be silently skipped during their upgrade.
+FIRST_V1_MIGRATION = 18
+
+
+class SandboxAdmissionError(RuntimeError):
+    """Base error for persisted sandbox admission conflicts."""
+
+
+class SandboxLeaseHeldError(SandboxAdmissionError):
+    def __init__(self, sandbox_id: str, lease: Mapping[str, Any]) -> None:
+        self.sandbox_id = sandbox_id
+        self.lease = dict(lease)
+        super().__init__(
+            f"Sandbox '{sandbox_id}' is held by lifecycle operation "
+            f"{lease['operation']} '{lease['operation_id']}'"
+        )
+
+
+class SandboxLeaseBlockedByWriterError(SandboxAdmissionError):
+    def __init__(self, sandbox_id: str, writers: Iterable[Mapping[str, Any]]) -> None:
+        self.sandbox_id = sandbox_id
+        self.writers = [dict(writer) for writer in writers]
+        writer = self.writers[0]
+        self.writer_class = str(writer["writer_class"])
+        self.writer_id = str(writer["writer_id"])
+        super().__init__(
+            f"Sandbox '{sandbox_id}' has active {self.writer_class} "
+            f"writer '{self.writer_id}'"
+        )
+
+
+class SandboxWriterAdmissionError(SandboxAdmissionError):
+    def __init__(
+        self,
+        sandbox_id: str,
+        *,
+        lease: Mapping[str, Any] | None = None,
+        lifecycle_status: str | None = None,
+        desired_state: str | None = None,
+    ) -> None:
+        self.sandbox_id = sandbox_id
+        self.lease = dict(lease) if lease is not None else None
+        self.lifecycle_status = lifecycle_status
+        self.desired_state = desired_state
+        if lease is not None:
+            detail = (
+                f"Sandbox '{sandbox_id}' is held by lifecycle operation "
+                f"{lease['operation']} '{lease['operation_id']}'"
+            )
+        else:
+            detail = (
+                f"Sandbox '{sandbox_id}' does not admit writers while lifecycle status "
+                f"is '{lifecycle_status}' and desired state is '{desired_state}'"
+            )
+        super().__init__(detail)
+
+
+def _add_column(
+    connection: sqlite3.Connection,
+    table: str,
+    column: str,
+    ddl: str,
+) -> None:
+    try:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+    except sqlite3.OperationalError as error:
+        if "duplicate column name" not in str(error):
+            raise
+
+
+def _add_sandbox_lifecycle_columns(connection: sqlite3.Connection) -> None:
+    for column, ddl in (
+        ("lifecycle_version", "TEXT"),
+        ("feature_key", "TEXT"),
+        ("feature_title", "TEXT"),
+        ("desired_state", "TEXT"),
+        ("lifecycle_status", "TEXT"),
+        ("operation", "TEXT"),
+        ("operation_phase", "TEXT"),
+        ("last_error", "TEXT"),
+        ("base_ref", "TEXT"),
+        ("created_base_commit", "TEXT"),
+        ("current_base_commit", "TEXT"),
+        ("pending_base_commit", "TEXT"),
+        ("feature_branch", "TEXT"),
+        ("agent_provider", "TEXT"),
+        ("network_policy", "TEXT"),
+        ("db_engine", "TEXT"),
+        ("db_name", "TEXT"),
+        ("schema_baseline_hash", "TEXT"),
+        ("db_data_volume", "TEXT"),
+        ("publish_remote", "TEXT"),
+        ("remote_branch", "TEXT"),
+        ("pr_requested", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        _add_column(connection, "sandboxes", column, ddl)
+
+
+def _backfill_legacy_sandboxes(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        UPDATE sandboxes
+        SET lifecycle_version = 'legacy', desired_state = 'active'
+        WHERE lifecycle_version IS NULL
+        """
+    )
+
+
+def _rebuild_projects_table(connection: sqlite3.Connection) -> None:
+    """Makes project paths nullable while preserving sandbox foreign keys."""
+    if connection.in_transaction:
+        raise RuntimeError("projects rebuild must start in autocommit mode")
+
+    foreign_keys = int(connection.execute("PRAGMA foreign_keys").fetchone()[0])
+    connection.execute("PRAGMA foreign_keys = OFF")
+    if int(connection.execute("PRAGMA foreign_keys").fetchone()[0]) != 0:
+        raise RuntimeError("could not disable foreign keys for projects rebuild")
+
+    try:
+        connection.execute("BEGIN")
+        connection.execute(
+            """
+            CREATE TABLE projects_new (
+                id TEXT PRIMARY KEY,
+                source_path TEXT,
+                remote_url TEXT,
+                default_branch TEXT,
+                mirror_volume TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO projects_new(id, source_path, created_at)
+            SELECT id, source_path, created_at FROM projects
+            """
+        )
+        connection.execute("DROP TABLE projects")
+        connection.execute("ALTER TABLE projects_new RENAME TO projects")
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX projects_source_path ON projects(source_path)
+            WHERE source_path IS NOT NULL
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX projects_remote_url ON projects(remote_url)
+            WHERE remote_url IS NOT NULL
+            """
+        )
+        connection.commit()
+
+        violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise sqlite3.IntegrityError(
+                f"projects rebuild left foreign key violations: {violations!r}"
+            )
+    except BaseException:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+    finally:
+        connection.execute(f"PRAGMA foreign_keys = {foreign_keys}")
+
+
+def _create_agent_writer_sessions(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_writer_sessions (
+            id TEXT PRIMARY KEY,
+            sandbox_id TEXT NOT NULL REFERENCES sandboxes(id),
+            agent_run_id TEXT NOT NULL REFERENCES agent_runs(id),
+            kind TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            heartbeat_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS one_open_agent_writer_session_per_sandbox
+        ON agent_writer_sessions(sandbox_id)
+        WHERE ended_at IS NULL
+        """
+    )
+
+
+def _create_sandbox_leases(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sandbox_leases (
+            sandbox_id TEXT PRIMARY KEY REFERENCES sandboxes(id) ON DELETE CASCADE,
+            operation TEXT NOT NULL,
+            operation_id TEXT NOT NULL,
+            owner TEXT NOT NULL,
+            acquired_at TEXT NOT NULL,
+            heartbeat_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS sandbox_leases_by_heartbeat
+        ON sandbox_leases(heartbeat_at)
+        """
+    )
+
+
+def _include_preparing_in_open_tasks(connection: sqlite3.Connection) -> None:
+    connection.execute("DROP INDEX IF EXISTS one_open_task_per_sandbox")
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX one_open_task_per_sandbox
+        ON tasks(sandbox_id)
+        WHERE status IN ('preparing', 'open', 'reported', 'previewing', 'review')
+        """
+    )
+
+
+def _create_phase_5c_5d_tables(connection: sqlite3.Connection) -> None:
+    """Create the project mirror mutex and durable destroy receipts.
+
+    Lock order is deliberately not encoded in SQLite: callers must acquire a
+    sandbox lease first and this project lock second.  The two rows have
+    different scopes, and this fixed order keeps a create or sync deadlock
+    free.
+    """
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_mirror_locks (
+            project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+            operation TEXT NOT NULL,
+            operation_id TEXT NOT NULL,
+            owner TEXT NOT NULL,
+            acquired_at TEXT NOT NULL,
+            heartbeat_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS project_mirror_locks_by_heartbeat "
+        "ON project_mirror_locks(heartbeat_at)"
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sandbox_tombstones (
+            sandbox_id TEXT PRIMARY KEY,
+            destroyed_at TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            manifest_json TEXT NOT NULL
+        )
+        """
+    )
+    # The manifest records exact resources at creation time.  Destroy never
+    # searches Docker names or labels to expand this list.
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sandbox_resources (
+            sandbox_id TEXT NOT NULL REFERENCES sandboxes(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            name TEXT NOT NULL,
+            PRIMARY KEY(sandbox_id, kind, name)
+        )
+        """
+    )
+
+
+def _create_sandbox_engine_detections(connection: sqlite3.Connection) -> None:
+    """Store a reviewable engine proposal and its approved command snapshot."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sandbox_engine_detections (
+            sandbox_id TEXT PRIMARY KEY REFERENCES sandboxes(id) ON DELETE CASCADE,
+            signals_json TEXT NOT NULL,
+            proposed_engine TEXT,
+            confirmed_engine TEXT,
+            migrate_commands_json TEXT NOT NULL,
+            seed_commands_json TEXT NOT NULL,
+            commands_source TEXT NOT NULL,
+            detected_at_commit TEXT NOT NULL,
+            actor TEXT,
+            confirmed_at TEXT
+        )
+        """
+    )
+
+
+def _create_sandbox_databases(connection: sqlite3.Connection) -> None:
+    """Store only sandbox-scoped application credentials and provision state."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sandbox_databases (
+            sandbox_id TEXT PRIMARY KEY REFERENCES sandboxes(id) ON DELETE CASCADE,
+            engine TEXT NOT NULL,
+            db_name TEXT NOT NULL,
+            username TEXT NOT NULL,
+            password TEXT NOT NULL,
+            status TEXT NOT NULL,
+            provisioned_at TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def _add_project_mirror_fetched_at(connection: sqlite3.Connection) -> None:
+    """Record when the controller last fetched each shared project mirror."""
+    _add_column(connection, "projects", "mirror_fetched_at", "TEXT")
+
+
+def _create_sandbox_publications(connection: sqlite3.Connection) -> None:
+    """Record observed Git publication facts, never publication intent."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sandbox_publications (
+            sandbox_id TEXT PRIMARY KEY REFERENCES sandboxes(id) ON DELETE CASCADE,
+            remote_branch TEXT NOT NULL,
+            last_pushed_commit TEXT,
+            remote_branch_sha TEXT,
+            pr_number INTEGER,
+            pr_url TEXT,
+            pr_state TEXT,
+            last_error TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+MIGRATIONS: Mapping[int, Callable[[sqlite3.Connection], None]] = {
+    18: _add_sandbox_lifecycle_columns,
+    19: _backfill_legacy_sandboxes,
+    20: _rebuild_projects_table,
+    21: _create_sandbox_leases,
+    22: _create_agent_writer_sessions,
+    23: _include_preparing_in_open_tasks,
+    24: _create_phase_5c_5d_tables,
+    25: _create_sandbox_engine_detections,
+    26: _create_sandbox_databases,
+    27: _add_project_mirror_fetched_at,
+    28: _create_sandbox_publications,
+}
+
+
+def _apply_migrations(connection: sqlite3.Connection) -> None:
+    applied = {
+        int(row["version"])
+        for row in connection.execute("SELECT version FROM schema_migrations").fetchall()
+    }
+    for version in sorted(MIGRATIONS):
+        if version in applied:
+            continue
+        # A rebuild migration must change PRAGMA foreign_keys before its transaction
+        # starts. Commit the prior migration's version stamp first.
+        connection.commit()
+        with connection:
+            MIGRATIONS[version](connection)
+            connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                (version, _now()),
+            )
+
+
 class ControllerStore:
     """Serialized SQLite access for controller-owned intent and audit state."""
 
@@ -473,6 +843,17 @@ class ControllerStore:
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (1, ?)",
                 (_now(),),
             )
+            connection.commit()
+            _apply_migrations(connection)
+
+    def applied_versions(self) -> list[int]:
+        with self._connection() as connection:
+            return [
+                int(row["version"])
+                for row in connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                ).fetchall()
+            ]
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -521,15 +902,17 @@ class ControllerStore:
                 """
                 INSERT INTO projects(id, source_path, created_at)
                 VALUES (?, ?, ?)
-                ON CONFLICT(source_path) DO UPDATE SET id = excluded.id
+                ON CONFLICT(source_path) WHERE source_path IS NOT NULL
+                DO NOTHING
                 """,
                 (project_id, source_path, created_at or now),
             )
             connection.execute(
                 """
                 INSERT INTO sandboxes(
-                    id, project_id, project_name, volume_name, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    id, project_id, project_name, volume_name, status,
+                    lifecycle_version, desired_state, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'legacy', 'active', ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     project_name = excluded.project_name,
                     volume_name = excluded.volume_name,
@@ -545,6 +928,209 @@ class ControllerStore:
                     created_at or now,
                     now,
                 ),
+            )
+
+    def register_v1_project(
+        self,
+        *,
+        project_id: str,
+        remote_url: str,
+        default_branch: str,
+        mirror_volume: str,
+        created_at: str,
+    ) -> dict[str, Any]:
+        """Register a remote-keyed project without changing an existing project ID."""
+        # Importing at the persistence boundary makes credential-free storage an
+        # invariant, even when a future caller bypasses a service-layer helper.
+        from app.projects.remote import normalize_remote_url
+
+        normalized_remote_url = normalize_remote_url(remote_url)
+        now = _now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO projects(
+                    id, remote_url, default_branch, mirror_volume, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(remote_url) WHERE remote_url IS NOT NULL DO NOTHING
+                """,
+                (
+                    project_id,
+                    normalized_remote_url,
+                    default_branch,
+                    mirror_volume,
+                    created_at or now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM projects WHERE remote_url = ?",
+                (normalized_remote_url,),
+            ).fetchone()
+        result = _row(row)
+        if result is None:
+            raise RuntimeError("v1 project registration did not persist a project")
+        return result
+
+    def set_v1_project_mirror(
+        self,
+        *,
+        project_id: str,
+        default_branch: str,
+        mirror_volume: str,
+    ) -> dict[str, Any]:
+        """Persist canonical mirror facts after a successful fetch."""
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE projects
+                SET default_branch = ?, mirror_volume = ?, mirror_fetched_at = ?
+                WHERE id = ? AND remote_url IS NOT NULL
+                """,
+                (default_branch, mirror_volume, _now(), project_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+        result = _row(row)
+        if result is None:
+            raise RuntimeError("v1 project mirror update did not persist a project")
+        return result
+
+    def record_v1_project_mirror_fetch(self, *, project_id: str) -> dict[str, Any]:
+        """Record a successful canonical fetch without changing mirror identity."""
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE projects
+                SET mirror_fetched_at = ?
+                WHERE id = ? AND remote_url IS NOT NULL
+                """,
+                (_now(), project_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+        result = _row(row)
+        if result is None:
+            raise RuntimeError("v1 project mirror fetch update did not persist a project")
+        return result
+
+    def register_v1_sandbox(
+        self,
+        *,
+        sandbox_id: str,
+        project_id: str,
+        project_name: str,
+        volume_name: str,
+        created_at: str,
+    ) -> tuple[dict[str, Any], bool]:
+        """Record v1 sandbox intent without creating a Docker resource.
+
+        This path deliberately does not call ``register_sandbox``.  Managed v1
+        sandboxes are keyed by a remote project, while the legacy path is keyed
+        by a source path and also owns copy-flow discovery fields.
+        """
+        now = _now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO sandboxes(
+                    id, project_id, project_name, volume_name, status,
+                    lifecycle_version, desired_state, lifecycle_status,
+                    operation, operation_phase, created_at, updated_at
+                ) VALUES (
+                    ?, ?, ?, ?, 'creating',
+                    'v1', 'active', 'creating', 'create', 'manifest', ?, ?
+                )
+                ON CONFLICT(id) DO NOTHING
+                """,
+                (
+                    sandbox_id,
+                    project_id,
+                    project_name,
+                    volume_name,
+                    created_at or now,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM sandboxes WHERE id = ?", (sandbox_id,)
+            ).fetchone()
+        result = _row(row)
+        if result is None:
+            raise RuntimeError("v1 sandbox registration did not persist a sandbox")
+        return result, cursor.rowcount == 1
+
+    def update_sandbox_manifest(
+        self,
+        *,
+        sandbox_id: str,
+        values: Mapping[str, Any],
+    ) -> None:
+        """Write lifecycle manifest columns while preserving legacy discovery state."""
+        fields = (
+            "lifecycle_version",
+            "feature_key",
+            "feature_title",
+            "desired_state",
+            "lifecycle_status",
+            "operation",
+            "operation_phase",
+            "last_error",
+            "base_ref",
+            "created_base_commit",
+            "current_base_commit",
+            "pending_base_commit",
+            "feature_branch",
+            "agent_provider",
+            "network_policy",
+            "db_engine",
+            "db_name",
+            "schema_baseline_hash",
+            "db_data_volume",
+            "publish_remote",
+            "remote_branch",
+            "pr_requested",
+        )
+        unknown_fields = set(values).difference(fields)
+        if unknown_fields:
+            raise ValueError(f"unknown sandbox manifest fields: {sorted(unknown_fields)!r}")
+        missing_fields = set(fields).difference(values)
+        if missing_fields:
+            raise ValueError(f"missing sandbox manifest fields: {sorted(missing_fields)!r}")
+
+        with self._connection() as connection:
+            current = connection.execute(
+                """
+                SELECT feature_key, created_base_commit FROM sandboxes WHERE id = ?
+                """,
+                (sandbox_id,),
+            ).fetchone()
+            if current is None:
+                raise ValueError(f"sandbox {sandbox_id!r} is not registered")
+            _ensure_immutable_manifest_value(
+                field="feature_key",
+                existing=current["feature_key"],
+                requested=values["feature_key"],
+            )
+            _ensure_immutable_manifest_value(
+                field="created_base_commit",
+                existing=current["created_base_commit"],
+                requested=values["created_base_commit"],
+            )
+
+            assignments = ", ".join(f"{field} = ?" for field in fields)
+            parameters = [
+                int(bool(values[field])) if field == "pr_requested" else values[field]
+                for field in fields
+            ]
+            connection.execute(
+                f"""
+                UPDATE sandboxes
+                SET {assignments}, updated_at = ?
+                WHERE id = ?
+                """,
+                (*parameters, _now(), sandbox_id),
             )
 
     def sandboxes(self) -> list[dict[str, Any]]:
@@ -613,6 +1199,243 @@ class ControllerStore:
             ).fetchone()
         return _row(row)
 
+    def sandbox_publication(self, sandbox_id: str) -> dict[str, Any] | None:
+        """Return observed remote Git and PR state for one managed sandbox."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM sandbox_publications WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()
+        return _row(row)
+
+    def record_sandbox_publication(
+        self,
+        *,
+        sandbox_id: str,
+        remote_branch: str,
+        last_pushed_commit: str | None,
+        remote_branch_sha: str | None,
+        last_error: str | None,
+        pr_number: int | None = None,
+        pr_url: str | None = None,
+        pr_state: str | None = None,
+    ) -> dict[str, Any]:
+        """Upsert observed Git and PR state without asserting publication intent."""
+        now = _now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO sandbox_publications(
+                    sandbox_id, remote_branch, last_pushed_commit, remote_branch_sha,
+                    pr_number, pr_url, pr_state, last_error, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(sandbox_id) DO UPDATE SET
+                    remote_branch = excluded.remote_branch,
+                    last_pushed_commit = excluded.last_pushed_commit,
+                    remote_branch_sha = excluded.remote_branch_sha,
+                    pr_number = COALESCE(excluded.pr_number, sandbox_publications.pr_number),
+                    pr_url = COALESCE(excluded.pr_url, sandbox_publications.pr_url),
+                    pr_state = COALESCE(excluded.pr_state, sandbox_publications.pr_state),
+                    last_error = excluded.last_error,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    sandbox_id,
+                    remote_branch,
+                    last_pushed_commit,
+                    remote_branch_sha,
+                    pr_number,
+                    pr_url,
+                    pr_state,
+                    last_error,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM sandbox_publications WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()
+        result = _row(row)
+        if result is None:
+            raise RuntimeError("sandbox publication did not persist")
+        return result
+
+    def sandbox_engine_detection(self, sandbox_id: str) -> dict[str, Any] | None:
+        """Return one sandbox's persisted detection and command snapshot."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM sandbox_engine_detections WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()
+        return _row(row)
+
+    def record_sandbox_engine_detection(
+        self,
+        *,
+        sandbox_id: str,
+        signals: Sequence[Mapping[str, Any]],
+        proposed_engine: str | None,
+        migrate_commands: Sequence[str],
+        seed_commands: Sequence[str],
+        commands_source: Mapping[str, str],
+        detected_at_commit: str,
+    ) -> dict[str, Any]:
+        """Persist a proposal from a controller-read, pinned project state."""
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO sandbox_engine_detections(
+                    sandbox_id, signals_json, proposed_engine, confirmed_engine,
+                    migrate_commands_json, seed_commands_json, commands_source,
+                    detected_at_commit, actor, confirmed_at
+                ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL)
+                ON CONFLICT(sandbox_id) DO UPDATE SET
+                    signals_json = excluded.signals_json,
+                    proposed_engine = excluded.proposed_engine,
+                    migrate_commands_json = excluded.migrate_commands_json,
+                    seed_commands_json = excluded.seed_commands_json,
+                    commands_source = excluded.commands_source,
+                    detected_at_commit = excluded.detected_at_commit
+                WHERE sandbox_engine_detections.confirmed_engine IS NULL
+                """,
+                (
+                    sandbox_id,
+                    json.dumps(list(signals), sort_keys=True),
+                    proposed_engine,
+                    json.dumps(list(migrate_commands)),
+                    json.dumps(list(seed_commands)),
+                    json.dumps(dict(commands_source), sort_keys=True),
+                    detected_at_commit,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM sandbox_engine_detections WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()
+        result = _row(row)
+        if result is None:
+            raise RuntimeError("sandbox engine detection did not persist")
+        return result
+
+    def confirm_sandbox_engine_detection(
+        self,
+        *,
+        sandbox_id: str,
+        engine: str,
+        migrate_commands: Sequence[str],
+        seed_commands: Sequence[str],
+        commands_source: Mapping[str, str],
+        actor: str,
+    ) -> dict[str, Any]:
+        """Freeze the human-approved project command snapshot for later replay."""
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE sandbox_engine_detections
+                SET confirmed_engine = ?, migrate_commands_json = ?,
+                    seed_commands_json = ?, commands_source = ?, actor = ?,
+                    confirmed_at = ?
+                WHERE sandbox_id = ?
+                """,
+                (
+                    engine,
+                    json.dumps(list(migrate_commands)),
+                    json.dumps(list(seed_commands)),
+                    json.dumps(dict(commands_source), sort_keys=True),
+                    actor,
+                    _now(),
+                    sandbox_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"sandbox {sandbox_id!r} has no engine detection")
+            row = connection.execute(
+                "SELECT * FROM sandbox_engine_detections WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()
+        result = _row(row)
+        if result is None:
+            raise RuntimeError("sandbox engine confirmation did not persist")
+        return result
+
+    def ensure_sandbox_database(
+        self,
+        *,
+        sandbox_id: str,
+        engine: str,
+        db_name: str,
+        username: str,
+        password: str,
+    ) -> tuple[dict[str, Any], bool]:
+        """Create one durable database intent without rotating its credentials."""
+        now = _now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO sandbox_databases(
+                    sandbox_id, engine, db_name, username, password,
+                    status, provisioned_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'provisioning', NULL, ?)
+                ON CONFLICT(sandbox_id) DO NOTHING
+                """,
+                (sandbox_id, engine, db_name, username, password, now),
+            )
+            row = connection.execute(
+                "SELECT * FROM sandbox_databases WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()
+        result = _row(row)
+        if result is None:
+            raise RuntimeError("sandbox database intent did not persist")
+        if result["engine"] != engine or result["db_name"] != db_name:
+            raise ValueError(
+                f"sandbox {sandbox_id!r} already owns database "
+                f"{result['engine']}:{result['db_name']}"
+            )
+        return result, cursor.rowcount == 1
+
+    def sandbox_database(self, sandbox_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM sandbox_databases WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()
+        return _row(row)
+
+    def update_sandbox_database_status(
+        self,
+        sandbox_id: str,
+        *,
+        status: str,
+        provisioned: bool = False,
+    ) -> dict[str, Any]:
+        now = _now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE sandbox_databases
+                SET status = ?, provisioned_at = CASE WHEN ? THEN ? ELSE provisioned_at END,
+                    updated_at = ?
+                WHERE sandbox_id = ?
+                """,
+                (status, int(provisioned), now, now, sandbox_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM sandbox_databases WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()
+        result = _row(row)
+        if result is None:
+            raise ValueError(f"sandbox {sandbox_id!r} has no database intent")
+        return result
+
+    def project(self, project_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+        return _row(row)
+
     def delete_sandbox(self, sandbox_id: str) -> None:
         """Deletes controller state after Docker resources leave the sandbox."""
         with self._connection() as connection:
@@ -639,6 +1462,10 @@ class ControllerStore:
             )
             connection.execute("DELETE FROM tasks WHERE sandbox_id = ?", (sandbox_id,))
             connection.execute("DELETE FROM events WHERE sandbox_id = ?", (sandbox_id,))
+            connection.execute(
+                "DELETE FROM agent_writer_sessions WHERE sandbox_id = ?",
+                (sandbox_id,),
+            )
             connection.execute("DELETE FROM agent_runs WHERE sandbox_id = ?", (sandbox_id,))
             connection.execute(
                 "DELETE FROM preview_runs WHERE sandbox_id = ?",
@@ -659,6 +1486,14 @@ class ControllerStore:
                     (project_key,),
                 )
                 connection.execute("DELETE FROM projects WHERE id = ?", (project_key,))
+
+    def delete_v1_sandbox_manifest(self, sandbox_id: str) -> None:
+        """Remove an unprovisioned v1 manifest while preserving its remote project."""
+        with self._connection() as connection:
+            connection.execute(
+                "DELETE FROM sandboxes WHERE id = ? AND lifecycle_version = 'v1'",
+                (sandbox_id,),
+            )
 
     def create_task(
         self,
@@ -681,6 +1516,8 @@ class ControllerStore:
         """
         now = _now()
         with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._assert_writer_admission(connection, sandbox_id)
             connection.execute(
                 """
                 INSERT INTO tasks(
@@ -712,6 +1549,39 @@ class ControllerStore:
                     "base_commit": base_commit,
                 },
             )
+
+    def complete_task_preparation(
+        self,
+        *,
+        task_id: str,
+        base_branch: str,
+        base_commit: str,
+    ) -> bool:
+        """Publish prepared base facts and open the task in one guarded write."""
+        now = _now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE tasks
+                SET base_branch = ?, base_commit = ?, status = 'open', updated_at = ?
+                WHERE id = ? AND status = 'preparing'
+                """,
+                (base_branch, base_commit, now, task_id),
+            )
+            if cursor.rowcount == 0:
+                return False
+            row = connection.execute(
+                "SELECT sandbox_id FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            self._event(
+                connection,
+                sandbox_id=str(row["sandbox_id"]) if row is not None else None,
+                run_id=task_id,
+                kind="task.status",
+                payload={"status": "open", "head_commit": None},
+            )
+        return True
 
     def set_task_base_branch(self, *, task_id: str, base_branch: str) -> None:
         """Records the branch the task was cut from, read back from git.
@@ -1032,6 +1902,11 @@ class ControllerStore:
         now = _now()
         rows = list(items)
         with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._assert_writer_admission(
+                connection,
+                str(delegation["sandbox_id"]),
+            )
             connection.execute(
                 """
                 INSERT INTO delegations(
@@ -1101,6 +1976,32 @@ class ControllerStore:
                 (sandbox_id,),
             ).fetchall()
         return [_row(row) for row in rows if row is not None]
+
+    def latest_completed_delegation_review_for_sandbox(
+        self, sandbox_id: str
+    ) -> dict[str, Any] | None:
+        """Return the newest completed review with a recorded target.
+
+        Approval stays in ``result_json`` because the review result is the
+        authoritative review artifact. Publish validates it before network Git.
+        """
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT review.*
+                FROM delegation_reviews AS review
+                JOIN delegations AS delegation ON delegation.id = review.delegation_id
+                WHERE delegation.sandbox_id = ?
+                  AND review.status = 'completed'
+                  AND review.base_branch IS NOT NULL
+                  AND review.base_commit IS NOT NULL
+                  AND review.head_commit IS NOT NULL
+                ORDER BY review.settled_at DESC, review.revision DESC
+                LIMIT 1
+                """,
+                (sandbox_id,),
+            ).fetchone()
+        return _row(row)
 
     def next_delegation_revision(self, session_id: str) -> int:
         with self._connection() as connection:
@@ -2210,6 +3111,14 @@ class ControllerStore:
             ("created", "running", "replacing", "stopping"),
         )
 
+    def agent_run(self, run_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+        return _row(row)
+
     def active_agents(self) -> list[dict[str, Any]]:
         return self._active_runs(
             "agent_runs",
@@ -2227,6 +3136,8 @@ class ControllerStore:
     ) -> None:
         created_at = _now()
         with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._assert_writer_admission(connection, sandbox_id)
             connection.execute(
                 """
                 INSERT INTO agent_runs(
@@ -2262,6 +3173,408 @@ class ControllerStore:
                 (status, container_id, finished_at, run_id),
             )
 
+    def open_agent_writer_session(
+        self,
+        *,
+        session_id: str,
+        sandbox_id: str,
+        agent_run_id: str,
+        kind: str,
+    ) -> None:
+        now = _now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._assert_writer_admission(connection, sandbox_id)
+            connection.execute(
+                """
+                INSERT INTO agent_writer_sessions(
+                    id, sandbox_id, agent_run_id, kind,
+                    started_at, ended_at, heartbeat_at
+                ) VALUES (?, ?, ?, ?, ?, NULL, ?)
+                """,
+                (session_id, sandbox_id, agent_run_id, kind, now, now),
+            )
+
+    def heartbeat_agent_writer_session(self, session_id: str) -> bool:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE agent_writer_sessions
+                SET heartbeat_at = ?
+                WHERE id = ? AND ended_at IS NULL
+                """,
+                (_now(), session_id),
+            )
+        return cursor.rowcount == 1
+
+    def close_agent_writer_session(self, session_id: str) -> bool:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE agent_writer_sessions
+                SET ended_at = ?
+                WHERE id = ? AND ended_at IS NULL
+                """,
+                (_now(), session_id),
+            )
+        return cursor.rowcount == 1
+
+    def close_open_agent_writer_sessions(self) -> int:
+        """Close sessions no websocket can still own after a backend restart."""
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE agent_writer_sessions
+                SET ended_at = ?
+                WHERE ended_at IS NULL
+                """,
+                (_now(),),
+            )
+        return cursor.rowcount
+
+    def agent_writer_session(self, session_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_writer_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+        return _row(row)
+
+    def active_writers(self, sandbox_id: str) -> list[dict[str, Any]]:
+        """Return every active writer class without treating agent existence as work."""
+        # Planning sessions are intentionally absent. Their runner mounts the
+        # workspace read-only, so they cannot participate in writer exclusion.
+        with self._connection() as connection:
+            return self._active_writers(connection, sandbox_id)
+
+    @staticmethod
+    def _active_writers(
+        connection: sqlite3.Connection,
+        sandbox_id: str,
+    ) -> list[dict[str, Any]]:
+        rows = connection.execute(
+            """
+            SELECT 'task' AS writer_class, id AS writer_id, status, NULL AS kind,
+                   NULL AS agent_run_id
+            FROM tasks
+            WHERE sandbox_id = ?
+              AND status IN ('preparing', 'open', 'reported', 'previewing', 'review')
+            UNION ALL
+            SELECT 'preview', id, status, kind, NULL
+            FROM preview_runs
+            WHERE sandbox_id = ?
+              AND status IN ('preparing', 'running', 'restarting', 'rebuilding', 'stopping')
+            UNION ALL
+            SELECT 'delegation', id, status, NULL, NULL
+            FROM delegations
+            WHERE sandbox_id = ? AND status IN ('ready', 'running', 'halted')
+            UNION ALL
+            SELECT 'agent_writer_session', id, 'open', kind, agent_run_id
+            FROM agent_writer_sessions
+            WHERE sandbox_id = ? AND ended_at IS NULL
+            """,
+            (sandbox_id, sandbox_id, sandbox_id, sandbox_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def _assert_writer_admission(
+        connection: sqlite3.Connection,
+        sandbox_id: str,
+    ) -> None:
+        sandbox = connection.execute(
+            """
+            SELECT desired_state, lifecycle_status
+            FROM sandboxes WHERE id = ?
+            """,
+            (sandbox_id,),
+        ).fetchone()
+        if sandbox is None:
+            raise ValueError(f"sandbox {sandbox_id!r} is not registered")
+        lifecycle_status = sandbox["lifecycle_status"]
+        # Legacy rows deliberately have no lifecycle state. Their established
+        # writer behavior stays independent of the v1 lease mechanism.
+        if lifecycle_status is None:
+            return
+        lease = connection.execute(
+            "SELECT * FROM sandbox_leases WHERE sandbox_id = ?",
+            (sandbox_id,),
+        ).fetchone()
+        if lease is not None:
+            raise SandboxWriterAdmissionError(sandbox_id, lease=dict(lease))
+        desired_state = sandbox["desired_state"]
+        if lifecycle_status != "ready" or desired_state != "active":
+            raise SandboxWriterAdmissionError(
+                sandbox_id,
+                lifecycle_status=str(lifecycle_status),
+                desired_state=str(desired_state),
+            )
+
+    def acquire_sandbox_lease(
+        self,
+        *,
+        sandbox_id: str,
+        operation: str,
+        operation_id: str,
+        owner: str,
+        allow_writers: bool = False,
+    ) -> dict[str, Any] | None:
+        """Atomically exclude writers and other lifecycle mutations.
+
+        A null return means the sandbox is legacy and therefore does not take
+        lifecycle leases. Destroy passes ``allow_writers=True`` and changes
+        lifecycle intent in this same admission transaction.
+        """
+        now = _now()
+        with self._connection() as connection:
+            # The read and insert must share this write-intent transaction.
+            # Separate store calls can interleave after each _connection block.
+            connection.execute("BEGIN IMMEDIATE")
+            sandbox = connection.execute(
+                """
+                SELECT desired_state, lifecycle_status
+                FROM sandboxes WHERE id = ?
+                """,
+                (sandbox_id,),
+            ).fetchone()
+            if sandbox is None:
+                raise ValueError(f"sandbox {sandbox_id!r} is not registered")
+            if sandbox["lifecycle_status"] is None:
+                return None
+            held = connection.execute(
+                "SELECT * FROM sandbox_leases WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()
+            if held is not None:
+                raise SandboxLeaseHeldError(sandbox_id, dict(held))
+            writers = self._active_writers(connection, sandbox_id)
+            if writers and not allow_writers:
+                raise SandboxLeaseBlockedByWriterError(sandbox_id, writers)
+            if allow_writers:
+                if operation != "destroy":
+                    raise ValueError(
+                        "only destroy may acquire a lease while writers exist"
+                    )
+                connection.execute(
+                    """
+                    UPDATE sandboxes
+                    SET desired_state = 'destroyed', lifecycle_status = 'draining',
+                        operation = 'destroy', operation_phase = 'draining',
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, sandbox_id),
+                )
+            connection.execute(
+                """
+                INSERT INTO sandbox_leases(
+                    sandbox_id, operation, operation_id, owner,
+                    acquired_at, heartbeat_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (sandbox_id, operation, operation_id, owner, now, now),
+            )
+            row = connection.execute(
+                "SELECT * FROM sandbox_leases WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()
+        return _row(row)
+
+    @contextmanager
+    def sandbox_lifecycle_lease(
+        self,
+        *,
+        sandbox_id: str,
+        operation: str,
+        operation_id: str,
+        owner: str,
+        allow_writers: bool = False,
+    ) -> Iterator[dict[str, Any] | None]:
+        lease = self.acquire_sandbox_lease(
+            sandbox_id=sandbox_id,
+            operation=operation,
+            operation_id=operation_id,
+            owner=owner,
+            allow_writers=allow_writers,
+        )
+        try:
+            yield lease
+        finally:
+            if lease is not None:
+                self.release_sandbox_lease(sandbox_id, operation_id)
+
+    def sandbox_lease(self, sandbox_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM sandbox_leases WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()
+        return _row(row)
+
+    def heartbeat_sandbox_lease(self, sandbox_id: str, operation_id: str) -> bool:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE sandbox_leases SET heartbeat_at = ?
+                WHERE sandbox_id = ? AND operation_id = ?
+                """,
+                (_now(), sandbox_id, operation_id),
+            )
+        return cursor.rowcount == 1
+
+    def release_sandbox_lease(self, sandbox_id: str, operation_id: str) -> bool:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM sandbox_leases
+                WHERE sandbox_id = ? AND operation_id = ?
+                """,
+                (sandbox_id, operation_id),
+            )
+        return cursor.rowcount == 1
+
+    def reclaim_sandbox_leases(self, *, stale_before: str) -> int:
+        """Reclaim leases whose lifecycle settled or heartbeat expired."""
+        settled_statuses = {
+            "awaiting_engine_confirmation",
+            "ready",
+            "database_failed",
+            "degraded",
+        }
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                """
+                SELECT lease.*, sandbox.lifecycle_status, sandbox.desired_state
+                FROM sandbox_leases AS lease
+                JOIN sandboxes AS sandbox ON sandbox.id = lease.sandbox_id
+                """
+            ).fetchall()
+            reclaimable = [
+                (str(row["sandbox_id"]), str(row["operation_id"]))
+                for row in rows
+                if str(row["heartbeat_at"]) <= stale_before
+                or row["lifecycle_status"] is None
+                or str(row["lifecycle_status"]) in settled_statuses
+            ]
+            connection.executemany(
+                """
+                DELETE FROM sandbox_leases
+                WHERE sandbox_id = ? AND operation_id = ?
+                """,
+                reclaimable,
+            )
+        return len(reclaimable)
+
+    # Lock order for callers that need both locks is: sandbox lease first,
+    # then this project mirror lock.  The transaction makes check + insert one
+    # admission operation; do not split these into separate store calls.
+    def acquire_project_mirror_lock(
+        self,
+        *,
+        project_id: str,
+        operation: str,
+        operation_id: str,
+        owner: str,
+    ) -> dict[str, Any]:
+        now = _now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            project = connection.execute(
+                "SELECT id FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+            if project is None:
+                raise ValueError(f"project {project_id!r} is not registered")
+            held = connection.execute(
+                "SELECT * FROM project_mirror_locks WHERE project_id = ?", (project_id,)
+            ).fetchone()
+            if held is not None:
+                raise SandboxLeaseHeldError(project_id, dict(held))
+            connection.execute(
+                """
+                INSERT INTO project_mirror_locks(
+                    project_id, operation, operation_id, owner, acquired_at, heartbeat_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (project_id, operation, operation_id, owner, now, now),
+            )
+            row = connection.execute(
+                "SELECT * FROM project_mirror_locks WHERE project_id = ?", (project_id,)
+            ).fetchone()
+        result = _row(row)
+        if result is None:
+            raise RuntimeError("project mirror lock did not persist")
+        return result
+
+    def project_mirror_lock(self, project_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM project_mirror_locks WHERE project_id = ?", (project_id,)
+            ).fetchone()
+        return _row(row)
+
+    def release_project_mirror_lock(self, project_id: str, operation_id: str) -> bool:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                "DELETE FROM project_mirror_locks WHERE project_id = ? AND operation_id = ?",
+                (project_id, operation_id),
+            )
+        return cursor.rowcount == 1
+
+    def reclaim_project_mirror_locks(self, *, stale_before: str) -> int:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                "DELETE FROM project_mirror_locks WHERE heartbeat_at <= ?", (stale_before,)
+            )
+        return cursor.rowcount
+
+    def record_sandbox_resource(self, sandbox_id: str, *, kind: str, name: str) -> None:
+        if kind not in {"volume", "container", "network"}:
+            raise ValueError(f"unsupported sandbox resource kind {kind!r}")
+        with self._connection() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO sandbox_resources(sandbox_id, kind, name) VALUES (?, ?, ?)",
+                (sandbox_id, kind, name),
+            )
+
+    def sandbox_resources(self, sandbox_id: str) -> list[dict[str, str]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT kind, name FROM sandbox_resources WHERE sandbox_id = ? ORDER BY kind, name",
+                (sandbox_id,),
+            ).fetchall()
+        return [{"kind": str(row["kind"]), "name": str(row["name"])} for row in rows]
+
+    def sandbox_tombstone(self, sandbox_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM sandbox_tombstones WHERE sandbox_id = ?", (sandbox_id,)
+            ).fetchone()
+        return _row(row)
+
+    def write_sandbox_tombstone(
+        self, sandbox_id: str, *, reason: str, manifest: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        now = _now()
+        payload = json.dumps(dict(manifest), sort_keys=True, default=str)
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO sandbox_tombstones(sandbox_id, destroyed_at, reason, manifest_json)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(sandbox_id) DO NOTHING
+                """,
+                (sandbox_id, now, reason, payload),
+            )
+            row = connection.execute(
+                "SELECT * FROM sandbox_tombstones WHERE sandbox_id = ?", (sandbox_id,)
+            ).fetchone()
+        result = _row(row)
+        if result is None:
+            raise RuntimeError("sandbox tombstone did not persist")
+        return result
+
     def active_preview(self, sandbox_id: str) -> dict[str, Any] | None:
         return self._active_run(
             "preview_runs",
@@ -2277,6 +3590,11 @@ class ControllerStore:
 
     def create_preview_run(self, values: Mapping[str, Any]) -> None:
         with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._assert_writer_admission(
+                connection,
+                str(values["sandbox_id"]),
+            )
             connection.execute(
                 """
                 INSERT INTO preview_runs(
@@ -2318,6 +3636,7 @@ class ControllerStore:
     def update_preview_run(self, run_id: str, **changes: Any) -> None:
         allowed = {
             "status",
+            "config_digest",
             "host_port",
             "network_name",
             "started_at",
@@ -2480,6 +3799,47 @@ class ControllerStore:
             events.append(event)
         return events
 
+    def unexpected_resources(self) -> list[dict[str, Any]]:
+        """Return the latest startup report for each discoverable orphan."""
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, payload_json, created_at
+                FROM events
+                WHERE kind = 'controller.unexpected_resource'
+                ORDER BY id DESC
+                """
+            ).fetchall()
+        resources: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            resource = payload.get("resource")
+            kind = payload.get("resource_kind")
+            name = payload.get("resource_name")
+            if (
+                not isinstance(resource, str)
+                or not isinstance(kind, str)
+                or not isinstance(name, str)
+                or resource in seen
+            ):
+                continue
+            seen.add(resource)
+            resources.append(
+                {
+                    "resource": resource,
+                    "kind": kind,
+                    "name": name,
+                    "reported_at": str(row["created_at"]),
+                }
+            )
+        return resources
+
     def set_project_secrets(self, project_id: str, values: Mapping[str, str]) -> None:
         now = _now()
         with self._connection() as connection:
@@ -2599,6 +3959,16 @@ def controller_store_for_settings(settings: ControllerSettings) -> ControllerSto
             store.initialize()
             _stores[path] = store
         return store
+
+
+def _ensure_immutable_manifest_value(
+    *,
+    field: str,
+    existing: Any,
+    requested: Any,
+) -> None:
+    if existing is not None and requested != existing:
+        raise ValueError(f"sandbox manifest field {field!r} is immutable once set")
 
 
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:

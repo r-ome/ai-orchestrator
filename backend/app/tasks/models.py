@@ -14,6 +14,7 @@ class TaskStatus(StrEnum):
     its branch, and can reopen a reported task for one focused repair.
     """
 
+    PREPARING = "preparing"
     OPEN = "open"
     REPORTED = "reported"
     PREVIEWING = "previewing"
@@ -28,6 +29,7 @@ class TaskStatus(StrEnum):
 # and this set is what the API reads back.
 OPEN_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
     {
+        TaskStatus.PREPARING,
         TaskStatus.OPEN,
         TaskStatus.REPORTED,
         TaskStatus.PREVIEWING,
@@ -47,6 +49,9 @@ DEFAULT_BASE_BRANCH = "main"
 # unreachable, because transition_task derives the guarded UPDATE's source
 # statuses from this table and never accepts them from a caller.
 TASK_TRANSITIONS: Mapping[TaskStatus, frozenset[TaskStatus]] = {
+    # Preparing is controller-only. An agent never sees the task until the
+    # baseline facts and branch have been verified.
+    TaskStatus.PREPARING: frozenset({TaskStatus.OPEN, TaskStatus.FAILED}),
     # open -> rejected exists so a coding agent that never commits cannot hold
     # its sandbox's only task slot forever. Every non-terminal status sits
     # inside one_open_task_per_sandbox, so a status with no exit is a deadlock.
@@ -82,9 +87,14 @@ TASK_TRANSITIONS: Mapping[TaskStatus, frozenset[TaskStatus]] = {
 
 
 def source_statuses(target: TaskStatus) -> frozenset[TaskStatus]:
-    return frozenset(
+    sources = frozenset(
         source for source, targets in TASK_TRANSITIONS.items() if target in targets
     )
+    if target is TaskStatus.OPEN:
+        # PREPARING -> OPEN also writes the verified base fields. The store's
+        # complete_task_preparation method owns that controller-only move.
+        return sources.difference({TaskStatus.PREPARING})
+    return sources
 
 
 class StartTaskRequest(BaseModel):

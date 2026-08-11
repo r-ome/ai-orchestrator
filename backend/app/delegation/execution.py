@@ -486,6 +486,8 @@ def _execute_run(
             verifier_settings,
             volume_name=str(sandbox["volume_name"]),
             commands=packet.verification,
+            controller_store=store,
+            sandbox_id=claim.sandbox_id,
         )
     except VerificationOperationError as error:
         _fail_run_and_cleanup(
@@ -620,6 +622,8 @@ def _execute_run(
                 verifier_settings,
                 volume_name=str(sandbox["volume_name"]),
                 commands=packet.verification,
+                controller_store=store,
+                sandbox_id=claim.sandbox_id,
             )
         except VerificationOperationError as error:
             second_verification = {

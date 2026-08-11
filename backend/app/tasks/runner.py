@@ -28,6 +28,8 @@ from app.agents.service import credential_volume
 from app.planning.runner import extract_payload
 from app.previews.service import LABEL_CONTROLLER_MANAGED, LABEL_KIND
 from app.tasks.config import CodingTurnSettings
+from app.controller.store import ControllerStore
+from app.sandboxes.database import SandboxDatabaseError, sandbox_database_runtime
 
 CODING_WORKSPACE = "/workspace"
 CODING_CREDENTIALS = "/auth"
@@ -108,6 +110,8 @@ def run_coding_turn(
     provider: AgentProvider,
     prompt: str,
     model: str | None = None,
+    controller_store: ControllerStore | None = None,
+    sandbox_id: str = "",
 ) -> CodingTurnResult:
     """Run one turn with the sandbox volume writable.
 
@@ -117,6 +121,29 @@ def run_coding_turn(
     resolved_model = model or settings.model(provider.value)
     provider_config = get_agent_settings().provider(provider)
     credential = credential_volume(docker_client, provider, settings.credential_profile)
+    try:
+        database_runtime = (
+            sandbox_database_runtime(
+                docker_client,
+                controller_store,
+                sandbox_id,
+            )
+            if controller_store is not None and sandbox_id
+            else None
+        )
+    except SandboxDatabaseError as error:
+        raise CodingTurnError(error.status_code, error.detail) from error
+    environment = _environment(
+        provider_config.credential_environment_variable,
+        prompt,
+    )
+    volumes = {
+        volume_name: {"bind": CODING_WORKSPACE, "mode": "rw"},
+        credential.name: {"bind": CODING_CREDENTIALS, "mode": "rw"},
+    }
+    if database_runtime is not None:
+        environment.update(database_runtime.environment)
+        volumes.update(database_runtime.volumes)
     container = None
     started_at = monotonic()
     try:
@@ -138,21 +165,17 @@ def run_coding_turn(
             pids_limit=settings.pids_limit,
             mem_limit=settings.memory,
             working_dir=CODING_WORKSPACE,
-            environment=_environment(
-                provider_config.credential_environment_variable,
-                prompt,
-            ),
+            environment=environment,
             labels={
                 LABEL_CONTROLLER_MANAGED: "true",
                 LABEL_KIND: "coding-turn",
                 LABEL_TASK_ID: task_id,
             },
-            volumes={
-                volume_name: {"bind": CODING_WORKSPACE, "mode": "rw"},
-                credential.name: {"bind": CODING_CREDENTIALS, "mode": "rw"},
-            },
+            volumes=volumes,
             tmpfs={"/tmp": "rw,nosuid,size=512m"},
         )
+        if database_runtime is not None and database_runtime.engine != "sqlite":
+            docker_client.networks.get(database_runtime.network_name).connect(container)
         container.start()
         timed_out = False
         exit_code: int | None = None

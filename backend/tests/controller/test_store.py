@@ -1,7 +1,660 @@
 import sqlite3
 from pathlib import Path
+from shutil import copy2
 
+import pytest
+
+import app.controller.store as store_module
 from app.controller.store import ControllerStore
+
+
+SANDBOX_LIFECYCLE_COLUMNS = {
+    "lifecycle_version": ("TEXT", 0, None),
+    "feature_key": ("TEXT", 0, None),
+    "feature_title": ("TEXT", 0, None),
+    "desired_state": ("TEXT", 0, None),
+    "lifecycle_status": ("TEXT", 0, None),
+    "operation": ("TEXT", 0, None),
+    "operation_phase": ("TEXT", 0, None),
+    "last_error": ("TEXT", 0, None),
+    "base_ref": ("TEXT", 0, None),
+    "created_base_commit": ("TEXT", 0, None),
+    "current_base_commit": ("TEXT", 0, None),
+    "pending_base_commit": ("TEXT", 0, None),
+    "feature_branch": ("TEXT", 0, None),
+    "agent_provider": ("TEXT", 0, None),
+    "network_policy": ("TEXT", 0, None),
+    "db_engine": ("TEXT", 0, None),
+    "db_name": ("TEXT", 0, None),
+    "schema_baseline_hash": ("TEXT", 0, None),
+    "db_data_volume": ("TEXT", 0, None),
+    "publish_remote": ("TEXT", 0, None),
+    "remote_branch": ("TEXT", 0, None),
+    "pr_requested": ("INTEGER", 1, "0"),
+}
+
+PROJECT_COLUMNS = {
+    "id": ("TEXT", 0, None),
+    "source_path": ("TEXT", 0, None),
+    "remote_url": ("TEXT", 0, None),
+    "default_branch": ("TEXT", 0, None),
+    "mirror_volume": ("TEXT", 0, None),
+    "mirror_fetched_at": ("TEXT", 0, None),
+    "created_at": ("TEXT", 1, None),
+}
+
+
+def _copy_controller_database(source: Path, destination: Path) -> None:
+    copy2(source, destination)
+    for suffix in ("-wal", "-shm"):
+        source_sidecar = source.with_name(f"{source.name}{suffix}")
+        if source_sidecar.exists():
+            copy2(source_sidecar, destination.with_name(f"{destination.name}{suffix}"))
+
+
+def _database_ids(database_path: Path) -> tuple[list[str], list[str]]:
+    with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True) as connection:
+        project_ids = [
+            str(row[0]) for row in connection.execute("SELECT id FROM projects ORDER BY id")
+        ]
+        sandbox_ids = [
+            str(row[0]) for row in connection.execute("SELECT id FROM sandboxes ORDER BY id")
+        ]
+    return project_ids, sandbox_ids
+
+
+def _assert_database_is_consistent(database_path: Path) -> None:
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def _sandbox_column_schema(database_path: Path) -> dict[str, tuple[str, int, str | None]]:
+    with sqlite3.connect(database_path) as connection:
+        return {
+            str(row[1]): (str(row[2]), int(row[3]), row[4])
+            for row in connection.execute("PRAGMA table_info(sandboxes)")
+        }
+
+
+def _project_schema(database_path: Path) -> dict[str, tuple[str, int, str | None]]:
+    with sqlite3.connect(database_path) as connection:
+        return {
+            str(row[1]): (str(row[2]), int(row[3]), row[4])
+            for row in connection.execute("PRAGMA table_info(projects)")
+        }
+
+
+def _project_index_sql(database_path: Path) -> dict[str, str]:
+    with sqlite3.connect(database_path) as connection:
+        return {
+            str(row[0]): str(row[1])
+            for row in connection.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type = 'index' AND tbl_name = 'projects'"
+            )
+        }
+
+
+def _create_legacy_sandbox_database(database_path: Path) -> ControllerStore:
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(store_module.INITIAL_MIGRATION)
+        connection.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (1, ?)",
+            ("2026-08-11T00:00:00+00:00",),
+        )
+        connection.execute(
+            """
+            INSERT INTO projects(id, source_path, created_at)
+            VALUES ('project-1', '/projects/sample', '2026-08-11T00:00:00+00:00')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO sandboxes(
+                id, project_id, project_name, volume_name, status, created_at, updated_at
+            ) VALUES (
+                'sandbox-1', 'project-1', 'sample', 'sample-volume', 'ready',
+                '2026-08-11T00:00:00+00:00', '2026-08-11T00:00:00+00:00'
+            )
+            """
+        )
+    return ControllerStore(database_path)
+
+
+def test_fresh_database_applies_sandbox_migrations(tmp_path: Path) -> None:
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+
+    store.initialize()
+
+    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+
+
+def test_migration_21_applies_when_22_and_23_are_already_stamped(
+    tmp_path: Path,
+) -> None:
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+    store.initialize()
+    with store._connection() as connection:
+        connection.execute("DROP TABLE sandbox_leases")
+        connection.execute("DELETE FROM schema_migrations WHERE version = 21")
+
+    store.initialize()
+
+    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+    with store._connection() as connection:
+        assert connection.execute(
+            """
+            SELECT name FROM sqlite_master
+            WHERE type = 'table' AND name = 'sandbox_leases'
+            """
+        ).fetchone() is not None
+    schema = _sandbox_column_schema(store.database_path)
+    assert {column: schema[column] for column in SANDBOX_LIFECYCLE_COLUMNS} == (
+        SANDBOX_LIFECYCLE_COLUMNS
+    )
+    assert _project_schema(store.database_path) == PROJECT_COLUMNS
+    project_indexes = _project_index_sql(store.database_path)
+    assert set(project_indexes) == {
+        "sqlite_autoindex_projects_1",
+        "projects_source_path",
+        "projects_remote_url",
+    }
+    assert "WHERE source_path IS NOT NULL" in project_indexes["projects_source_path"]
+    assert "WHERE remote_url IS NOT NULL" in project_indexes["projects_remote_url"]
+    with sqlite3.connect(store.database_path) as connection:
+        projects_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'projects'"
+        ).fetchone()[0]
+    assert "UNIQUE" not in projects_sql.upper()
+
+    store.register_sandbox(
+        sandbox_id="sandbox-1",
+        project_id="project-1",
+        project_name="sample",
+        source_path="/projects/sample",
+        volume_name="sample-volume",
+        status="ready",
+        created_at="2026-08-11T00:00:00+00:00",
+    )
+
+    assert store.sandboxes()[0]["pr_requested"] == 0
+
+
+def test_projects_partial_unique_indexes_allow_nulls_and_reject_duplicates(
+    tmp_path: Path,
+) -> None:
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+    store.initialize()
+
+    with store._connection() as connection:
+        connection.executemany(
+            "INSERT INTO projects(id, source_path, remote_url, created_at) VALUES (?, ?, ?, ?)",
+            [
+                ("null-source-1", None, None, "2026-08-11T00:00:00+00:00"),
+                ("null-source-2", None, None, "2026-08-11T00:00:00+00:00"),
+                ("source-1", "/projects/one", None, "2026-08-11T00:00:00+00:00"),
+                ("remote-1", None, "https://example.test/one", "2026-08-11T00:00:00+00:00"),
+            ],
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO projects(id, source_path, created_at) VALUES (?, ?, ?)",
+                ("source-2", "/projects/one", "2026-08-11T00:00:00+00:00"),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO projects(id, remote_url, created_at) VALUES (?, ?, ?)",
+                ("remote-2", "https://example.test/one", "2026-08-11T00:00:00+00:00"),
+            )
+
+
+def test_initialize_applies_migrations_in_order_once_and_skips_stamps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+    store.initialize()
+    calls: list[int] = []
+
+    def migration(version: int):
+        def apply(connection: sqlite3.Connection) -> None:
+            calls.append(version)
+
+        return apply
+
+    monkeypatch.setattr(
+        store_module,
+        "MIGRATIONS",
+        {101: migration(101), 102: migration(102), 103: migration(103)},
+    )
+    with store._connection() as connection:
+        connection.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (102, ?)",
+            ("2026-08-11T00:00:00+00:00",),
+        )
+
+    store.initialize()
+    store.initialize()
+
+    assert calls == [101, 103]
+    assert store.applied_versions() == [
+        1,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        101,
+        102,
+        103,
+    ]
+
+
+def test_migration_starts_after_previous_stamp_in_autocommit_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+    observations: list[tuple[bool, int]] = []
+
+    def disable_foreign_keys(connection: sqlite3.Connection) -> None:
+        observations.append((connection.in_transaction, -1))
+        connection.execute("PRAGMA foreign_keys = OFF")
+        observations[-1] = (
+            observations[-1][0],
+            int(connection.execute("PRAGMA foreign_keys").fetchone()[0]),
+        )
+
+    monkeypatch.setattr(
+        store_module,
+        "MIGRATIONS",
+        {18: lambda connection: None, 19: disable_foreign_keys},
+    )
+
+    store.initialize()
+
+    assert observations == [(False, 0)]
+
+
+def test_migration_can_rebuild_parent_table_with_foreign_key_children(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+
+    def create_parent_and_child(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE migration_projects (id TEXT PRIMARY KEY, name TEXT NOT NULL)"
+        )
+        connection.execute(
+            """
+            CREATE TABLE migration_sandboxes (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES migration_projects(id)
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO migration_projects(id, name) VALUES ('project-1', 'Before')"
+        )
+        connection.execute(
+            """
+            INSERT INTO migration_sandboxes(id, project_id)
+            VALUES ('sandbox-1', 'project-1')
+            """
+        )
+
+    def rebuild_parent(connection: sqlite3.Connection) -> None:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 0
+        connection.execute(
+            """
+            CREATE TABLE migration_projects_rebuilt (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO migration_projects_rebuilt(id, name)
+            SELECT id, name FROM migration_projects
+            """
+        )
+        connection.execute("DROP TABLE migration_projects")
+        connection.execute(
+            "ALTER TABLE migration_projects_rebuilt RENAME TO migration_projects"
+        )
+
+    monkeypatch.setattr(
+        store_module,
+        "MIGRATIONS",
+        {18: create_parent_and_child, 19: rebuild_parent},
+    )
+
+    store.initialize()
+
+    with store._connection() as connection:
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute(
+            """
+            SELECT migration_projects.id
+            FROM migration_sandboxes
+            JOIN migration_projects ON migration_projects.id = migration_sandboxes.project_id
+            WHERE migration_sandboxes.id = 'sandbox-1'
+            """
+        ).fetchone()[0] == "project-1"
+
+
+def test_failed_migration_preserves_earlier_stamps_and_retries_only_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+    calls: list[int] = []
+    failed_once = True
+
+    def succeed(connection: sqlite3.Connection) -> None:
+        calls.append(18)
+
+    def fail_once(connection: sqlite3.Connection) -> None:
+        nonlocal failed_once
+        calls.append(19)
+        if failed_once:
+            failed_once = False
+            raise RuntimeError("migration failed")
+
+    monkeypatch.setattr(store_module, "MIGRATIONS", {18: succeed, 19: fail_once})
+
+    with pytest.raises(RuntimeError, match="migration failed"):
+        store.initialize()
+
+    assert store.applied_versions() == [1, 18]
+
+    store.initialize()
+
+    assert calls == [18, 19, 19]
+    assert store.applied_versions() == [1, 18, 19]
+
+
+def test_add_column_is_idempotent_and_reraises_other_errors(tmp_path: Path) -> None:
+    database_path = tmp_path / "columns.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("CREATE TABLE example (id INTEGER PRIMARY KEY)")
+        store_module._add_column(connection, "example", "name", "TEXT")
+        store_module._add_column(connection, "example", "name", "TEXT")
+
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(example)")
+        }
+        assert columns == {"id", "name"}
+
+        with pytest.raises(sqlite3.OperationalError, match="no such table"):
+            store_module._add_column(connection, "missing", "name", "TEXT")
+
+
+@pytest.mark.parametrize(
+    ("filename", "initial_versions", "upgraded_versions"),
+    [
+        ("controller.sqlite3", [1], [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]),
+        (
+            "controller.sqlite3.backup-before-empty-reset-20260810T1721+0800",
+            list(range(1, 18)),
+            [*range(1, 29)],
+        ),
+    ],
+)
+def test_upgrade_local_controller_database_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+    initial_versions: list[int],
+    upgraded_versions: list[int],
+) -> None:
+    source = Path(__file__).resolve().parents[2] / ".controller-data" / filename
+    if not source.exists():
+        pytest.skip(f"requires local controller database at {source}")
+
+    database_copy = tmp_path / filename
+    _copy_controller_database(source, database_copy)
+    expected_ids = _database_ids(database_copy)
+    store = ControllerStore(database_copy)
+    assert store.applied_versions() == initial_versions
+
+    if initial_versions[-1] == 17:
+        rerun_calls: list[int] = []
+
+        def old_migration(version: int):
+            def apply(connection: sqlite3.Connection) -> None:
+                rerun_calls.append(version)
+
+            return apply
+
+        monkeypatch.setattr(
+            store_module,
+            "MIGRATIONS",
+            {
+                **{version: old_migration(version) for version in range(2, 18)},
+                **store_module.MIGRATIONS,
+            },
+        )
+    else:
+        rerun_calls = []
+
+    store.initialize()
+    store.initialize()
+
+    assert store.applied_versions() == upgraded_versions
+    assert _database_ids(database_copy) == expected_ids
+    assert rerun_calls == []
+    schema = _sandbox_column_schema(database_copy)
+    assert {column: schema[column] for column in SANDBOX_LIFECYCLE_COLUMNS} == (
+        SANDBOX_LIFECYCLE_COLUMNS
+    )
+    assert _project_schema(database_copy) == PROJECT_COLUMNS
+    with sqlite3.connect(database_copy) as connection:
+        assert connection.execute(
+            """
+            SELECT s.project_id
+            FROM sandboxes AS s
+            LEFT JOIN projects AS p ON p.id = s.project_id
+            WHERE p.id IS NULL
+            """
+        ).fetchall() == []
+    _assert_database_is_consistent(database_copy)
+
+
+def test_existing_sandbox_is_backfilled_as_legacy(tmp_path: Path) -> None:
+    store = _create_legacy_sandbox_database(tmp_path / "controller.sqlite3")
+
+    store.initialize()
+
+    sandbox = store.sandboxes()[0]
+    assert sandbox["lifecycle_version"] == "legacy"
+    assert sandbox["desired_state"] == "active"
+    assert sandbox["lifecycle_status"] is None
+
+
+def test_initialize_is_idempotent_and_legacy_backfill_is_guarded(tmp_path: Path) -> None:
+    store = _create_legacy_sandbox_database(tmp_path / "controller.sqlite3")
+    store.initialize()
+    with store._connection() as connection:
+        connection.execute(
+            """
+            UPDATE sandboxes
+            SET lifecycle_version = 'v1', desired_state = 'destroyed'
+            WHERE id = 'sandbox-1'
+            """
+        )
+        connection.execute("DELETE FROM schema_migrations WHERE version = 19")
+
+    store.initialize()
+    store.initialize()
+
+    sandbox = store.sandboxes()[0]
+    assert sandbox["lifecycle_version"] == "v1"
+    assert sandbox["desired_state"] == "destroyed"
+    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+
+
+def test_projects_rebuild_keeps_sandbox_foreign_key_schema_and_data(tmp_path: Path) -> None:
+    store = _create_legacy_sandbox_database(tmp_path / "controller.sqlite3")
+
+    store.initialize()
+
+    with sqlite3.connect(store.database_path) as connection:
+        sandboxes_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sandboxes'"
+        ).fetchone()[0]
+        row = connection.execute(
+            """
+            SELECT s.project_id, p.id
+            FROM sandboxes AS s
+            JOIN projects AS p ON p.id = s.project_id
+            WHERE s.id = 'sandbox-1'
+            """
+        ).fetchone()
+
+    assert "REFERENCES projects(id)" in sandboxes_sql
+    assert tuple(row) == ("project-1", "project-1")
+
+
+def test_projects_rebuild_rolls_back_when_index_creation_fails(tmp_path: Path) -> None:
+    database_path = tmp_path / "controller.sqlite3"
+    store = _create_legacy_sandbox_database(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("CREATE TABLE index_name_guard (source_path TEXT)")
+        connection.execute(
+            "CREATE INDEX projects_source_path ON index_name_guard(source_path)"
+        )
+
+    with pytest.raises(
+        sqlite3.OperationalError,
+        match="index projects_source_path already exists",
+    ):
+        store.initialize()
+
+    with sqlite3.connect(database_path) as connection:
+        projects_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'projects'"
+        ).fetchone()[0]
+        projects = connection.execute(
+            "SELECT id, source_path FROM projects ORDER BY id"
+        ).fetchall()
+        versions = [
+            int(row[0])
+            for row in connection.execute(
+                "SELECT version FROM schema_migrations ORDER BY version"
+            )
+        ]
+
+    assert "source_path TEXT NOT NULL UNIQUE" in projects_sql
+    assert projects == [("project-1", "/projects/sample")]
+    assert versions == [1, 18, 19]
+
+
+def test_register_sandbox_does_not_overwrite_lifecycle_status(tmp_path: Path) -> None:
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+    store.initialize()
+    registration = {
+        "sandbox_id": "sandbox-1",
+        "project_id": "project-1",
+        "project_name": "sample",
+        "source_path": "/projects/sample",
+        "volume_name": "sample-volume",
+        "status": "ready",
+        "created_at": "2026-08-11T00:00:00+00:00",
+    }
+    store.register_sandbox(**registration)
+    with store._connection() as connection:
+        connection.execute(
+            """
+            UPDATE sandboxes
+            SET status = 'missing', lifecycle_status = 'destroying'
+            WHERE id = 'sandbox-1'
+            """
+        )
+
+    store.register_sandbox(**registration)
+
+    sandbox = store.sandboxes()[0]
+    assert sandbox["status"] == "ready"
+    assert sandbox["lifecycle_status"] == "destroying"
+
+
+def test_register_sandbox_upserts_same_source_path_after_projects_rebuild(
+    tmp_path: Path,
+) -> None:
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+    store.initialize()
+    registration = {
+        "sandbox_id": "sandbox-1",
+        "project_id": "project-1",
+        "project_name": "sample",
+        "source_path": "/projects/sample",
+        "volume_name": "sample-volume",
+        "status": "ready",
+        "created_at": "2026-08-11T00:00:00+00:00",
+    }
+
+    store.register_sandbox(**registration)
+    store.register_sandbox(**registration)
+
+    with sqlite3.connect(store.database_path) as connection:
+        assert connection.execute("SELECT count(*) FROM projects").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM sandboxes").fetchone()[0] == 1
+
+
+def test_v1_and_legacy_registration_never_reassign_project_ids(tmp_path: Path) -> None:
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+    store.initialize()
+    store.register_sandbox(
+        sandbox_id="legacy-sandbox",
+        project_id="legacy-project",
+        project_name="sample",
+        source_path="/projects/sample",
+        volume_name="legacy-volume",
+        status="ready",
+        created_at="2026-08-11T00:00:00Z",
+    )
+    with store._connection() as connection:
+        connection.execute(
+            """
+            UPDATE projects
+            SET remote_url = 'https://github.com/owner/repo'
+            WHERE id = 'legacy-project'
+            """
+        )
+
+    v1_project = store.register_v1_project(
+        project_id="remote-project",
+        remote_url="https://github.com/owner/repo.git",
+        default_branch="main",
+        mirror_volume="mirror-volume",
+        created_at="2026-08-11T00:00:00Z",
+    )
+
+    assert v1_project["id"] == "legacy-project"
+    with pytest.raises(sqlite3.IntegrityError):
+        store.register_sandbox(
+            sandbox_id="other-sandbox",
+            project_id="other-project",
+            project_name="sample",
+            source_path="/projects/sample",
+            volume_name="other-volume",
+            status="ready",
+            created_at="2026-08-11T00:00:00Z",
+        )
+    with sqlite3.connect(store.database_path) as connection:
+        projects = connection.execute(
+            "SELECT id FROM projects ORDER BY id"
+        ).fetchall()
+
+    assert projects == [("legacy-project",)]
 
 
 def test_register_sandbox_retires_stale_volume_name_owner(tmp_path: Path) -> None:
@@ -61,7 +714,11 @@ def test_initial_migration_creates_the_current_schema_once(tmp_path: Path) -> No
                 for row in connection.execute(f"PRAGMA table_info({table})")
             }
 
-        assert {"baseline_commit", "dirty_baseline_json"} <= columns("sandboxes")
+            assert {
+            "baseline_commit",
+            "dirty_baseline_json",
+            *SANDBOX_LIFECYCLE_COLUMNS,
+        } <= columns("sandboxes")
         assert {"kind", "task_id", "commit_sha"} <= columns("preview_runs")
         assert {"base_branch", "baseline_dirty_json"} <= columns("tasks")
         assert "model" in columns("planning_messages")
@@ -74,8 +731,49 @@ def test_initial_migration_creates_the_current_schema_once(tmp_path: Path) -> No
         } <= columns("delegation_reviews")
         assert {"routing_source", "turn_finished_at"} <= columns("work_item_runs")
         assert "prompt" in columns("delegation_change_requests")
+        assert {
+            "sandbox_id",
+            "operation",
+            "operation_id",
+            "owner",
+            "acquired_at",
+            "heartbeat_at",
+        } == columns("sandbox_leases")
+        assert {
+            "sandbox_id",
+            "signals_json",
+            "proposed_engine",
+            "confirmed_engine",
+            "migrate_commands_json",
+            "seed_commands_json",
+            "commands_source",
+            "detected_at_commit",
+            "actor",
+            "confirmed_at",
+        } == columns("sandbox_engine_detections")
+        assert {
+            "sandbox_id",
+            "engine",
+            "db_name",
+            "username",
+            "password",
+            "status",
+            "provisioned_at",
+            "updated_at",
+        } == columns("sandbox_databases")
+        assert {
+            "sandbox_id",
+            "remote_branch",
+            "last_pushed_commit",
+            "remote_branch_sha",
+            "pr_number",
+            "pr_url",
+            "pr_state",
+            "last_error",
+            "updated_at",
+        } == columns("sandbox_publications")
 
-    assert versions == [1]
+    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
     assert {
         "tasks",
         "planning_sessions",
@@ -85,5 +783,12 @@ def test_initial_migration_creates_the_current_schema_once(tmp_path: Path) -> No
         "delegation_change_requests",
         "work_items",
         "work_item_runs",
+        "agent_writer_sessions",
+        "project_mirror_locks",
+        "sandbox_tombstones",
+        "sandbox_engine_detections",
+        "sandbox_databases",
+        "sandbox_publications",
+        "sandbox_resources",
     } <= tables
     assert "one_context_per_session" in indexes

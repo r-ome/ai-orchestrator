@@ -13,6 +13,7 @@ const ContainersPage = lazy(() => import('./pages/ContainersPage'))
 const ContainerDetailPage = lazy(() => import('./pages/ContainerDetailPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
+const SandboxDetailPage = lazy(() => import('./pages/SandboxDetailPage'))
 const VolumesPage = lazy(() => import('./pages/VolumesPage'))
 const ManagedVolumesPage = lazy(() => import('./pages/ManagedVolumesPage'))
 const VolumeDetailPage = lazy(() => import('./pages/VolumeDetailPage'))
@@ -215,6 +216,7 @@ function App() {
             <Routes>
             <Route path="/" element={<Navigate to="/projects" replace />} />
             <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/sandboxes/:sandboxId" element={<SandboxDetailPage />} />
             <Route
               path="/projects/:projectName"
               element={<ProjectDetailPage />}

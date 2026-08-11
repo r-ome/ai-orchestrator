@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import suppress
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import docker
@@ -22,9 +23,11 @@ from app.projects.service import (
     LABEL_SOURCE as PROJECT_SOURCE,
     project_id,
 )
+from app.sandboxes.orphans import discover_orphans
 
 
 _RESTART_REASON = "The backend restarted while this turn was running"
+LIFECYCLE_LEASE_STALE_SECONDS = 60
 
 
 def _settle_interrupted_turns(store: ControllerStore) -> tuple[int, list[str]]:
@@ -121,8 +124,23 @@ def reconcile_controller_state(store: ControllerStore) -> dict[str, int]:
         "turns": 0,
         "missing": 0,
         "unexpected": 0,
+        "orphan_resources": 0,
+        "orphan_resource_failures": 0,
         "abandoned_tasks": 0,
+        "writer_sessions": 0,
+        "leases": 0,
+        "mirror_locks": 0,
     }
+    stale_before = (
+        datetime.now(UTC) - timedelta(seconds=LIFECYCLE_LEASE_STALE_SECONDS)
+    ).isoformat().replace("+00:00", "Z")
+    counts["leases"] = store.reclaim_sandbox_leases(stale_before=stale_before)
+    counts["mirror_locks"] = store.reclaim_project_mirror_locks(
+        stale_before=stale_before
+    )
+    # A websocket cannot survive this process restart. Every open terminal
+    # writer row is therefore stale, even when its last heartbeat was recent.
+    counts["writer_sessions"] = store.close_open_agent_writer_sessions()
     for session in store.running_planning_sessions():
         if store.advance_planning_status(
             session_id=str(session["id"]),
@@ -235,6 +253,21 @@ def reconcile_controller_state(store: ControllerStore) -> dict[str, int]:
                 },
             )
             counts["unexpected"] += 1
+        orphaned, orphan_failures = discover_orphans(client, store)
+        for orphan in orphaned:
+            store.event(
+                sandbox_id=None,
+                run_id=None,
+                kind="controller.unexpected_resource",
+                payload={
+                    "resource": orphan.key,
+                    "resource_kind": orphan.kind,
+                    "resource_name": orphan.name,
+                },
+            )
+        counts["orphan_resources"] = len(orphaned)
+        counts["orphan_resource_failures"] = orphan_failures
+        counts["unexpected"] += len(orphaned)
         expire_previews(client, store)
     except DockerException:
         return counts

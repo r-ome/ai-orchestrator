@@ -1,31 +1,32 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  createProjectSandbox,
+  createSandbox,
   fetchCopyJobs,
   fetchProjects,
+  fetchSandboxes,
 } from '../api/projects'
 import CopyJobsTable from '../components/CopyJobsTable'
 import CopyLogModal from '../components/CopyLogModal'
 import CopyStatusBadge from '../components/CopyStatusBadge'
-import FolderPicker from '../components/FolderPicker'
 import { useApiResource } from '../hooks/useApiResource'
 import { formatRelativeTime, formatTimestamp } from '../utils/format'
 
 function ProjectsPage() {
   const { data, loading, error, reload } = useApiResource(fetchProjects)
   const jobs = useApiResource(fetchCopyJobs)
+  const sandboxes = useApiResource(fetchSandboxes)
 
-  const [path, setPath] = useState('')
-  const [picking, setPicking] = useState(false)
+  const [remoteUrl, setRemoteUrl] = useState('')
+  const [featureKey, setFeatureKey] = useState('')
+  const [featureTitle, setFeatureTitle] = useState('')
   const [logJobId, setLogJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const createSandboxCard = useRef<HTMLDivElement>(null)
 
-  const pathValid = path.startsWith('/')
-  const canSubmit = pathValid && !busy
+  const canSubmit = remoteUrl.trim() !== '' && featureKey.trim() !== '' && !busy
 
   const reloadJobs = jobs.reload
   const copyIsActive =
@@ -56,12 +57,15 @@ function ProjectsPage() {
     setFormError(null)
     setNotice(null)
     try {
-      const job = await createProjectSandbox(path.trim())
+      const sandbox = await createSandbox({
+        remote_url: remoteUrl.trim(),
+        feature_key: featureKey.trim(),
+        feature_title: featureTitle.trim() || undefined,
+      })
       setNotice(
-        `Started ${job.project_name}. Copy status: ${job.status}. Job: ${job.job_id}.`,
+        `Sandbox ${sandbox.sandbox_id} is ${sandbox.lifecycle_status ?? 'creating'}.`,
       )
-      reload()
-      reloadJobs()
+      sandboxes.reload()
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -100,27 +104,45 @@ function ProjectsPage() {
       </header>
 
       <p className="status">
-        Each sandbox is a one-time snapshot of a host folder, copied into a
-        dedicated Docker volume. Names use the folder name with an
-        incrementing suffix, such as
-        <span className="mono"> my-project-sandbox-1</span>. Later edits to
-        the source folder do not sync.
+        Create v1 sandboxes from a Git remote. The feature key is a stable,
+        human-supplied identifier for one feature branch.
       </p>
 
       <div ref={createSandboxCard} className="card" id="create-sandbox">
         <div className="card-header">
-          <h2>Create a project sandbox</h2>
+          <h2>Create a v1 sandbox</h2>
         </div>
         <div className="card-body">
           <form className="file-form" onSubmit={submit}>
             <label>
-              Project folder
-              <div className="picker-field">
-                <span className="mono">{path || 'No folder chosen'}</span>
-                <button type="button" onClick={() => setPicking(true)}>
-                  Browse…
-                </button>
-              </div>
+              Git remote URL
+              <input
+                type="url"
+                value={remoteUrl}
+                onChange={(event) => setRemoteUrl(event.target.value)}
+                placeholder="https://github.com/owner/repository.git"
+                required
+              />
+            </label>
+            <label>
+              Feature key
+              <input
+                type="text"
+                value={featureKey}
+                onChange={(event) => setFeatureKey(event.target.value)}
+                placeholder="add-login"
+                pattern="[a-z0-9][a-z0-9-]{0,63}"
+                required
+              />
+            </label>
+            <label>
+              Feature title
+              <input
+                type="text"
+                value={featureTitle}
+                onChange={(event) => setFeatureTitle(event.target.value)}
+                placeholder="Add login"
+              />
             </label>
 
             <button type="submit" className="primary" disabled={!canSubmit}>
@@ -136,6 +158,55 @@ function ProjectsPage() {
 
           {notice && <p className="status status-ok">{notice}</p>}
         </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <div className="card-header-title">
+            <h2>V1 sandboxes</h2>
+            {sandboxes.data && <span className="pill">{sandboxes.data.count}</span>}
+          </div>
+          <button type="button" onClick={sandboxes.reload} disabled={sandboxes.loading}>
+            {sandboxes.loading ? 'Loading…' : 'Refresh'}
+          </button>
+        </div>
+        <div className="card-body">
+          {sandboxes.error && (
+            <p className="status status-error" role="alert">
+              Failed to load sandboxes: {sandboxes.error}
+            </p>
+          )}
+          {!sandboxes.error && sandboxes.loading && <p className="status">Loading sandboxes…</p>}
+          {!sandboxes.error && !sandboxes.loading && sandboxes.data?.sandboxes.length === 0 && (
+            <p className="status">No v1 sandboxes yet.</p>
+          )}
+        </div>
+        {!sandboxes.error && !sandboxes.loading && sandboxes.data && sandboxes.data.sandboxes.length > 0 && (
+          <div className="table-wrapper">
+            <table className="chrome-table">
+              <thead>
+                <tr>
+                  <th>Feature</th>
+                  <th>Lifecycle status</th>
+                  <th>Sandbox ID</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sandboxes.data.sandboxes.map((sandbox) => (
+                  <tr key={sandbox.sandbox_id}>
+                    <td>
+                      <Link to={`/sandboxes/${encodeURIComponent(sandbox.sandbox_id)}`}>
+                        {sandbox.feature_title || sandbox.feature_key || sandbox.sandbox_id}
+                      </Link>
+                    </td>
+                    <td>{sandbox.lifecycle_status ?? 'legacy'}</td>
+                    <td className="mono">{sandbox.sandbox_id}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div className="card">
@@ -258,15 +329,6 @@ function ProjectsPage() {
         <CopyLogModal jobId={logJobId} onClose={() => setLogJobId(null)} />
       )}
 
-      {picking && (
-        <FolderPicker
-          onCancel={() => setPicking(false)}
-          onSelect={(chosen) => {
-            setPath(chosen)
-            setPicking(false)
-          }}
-        />
-      )}
     </section>
   )
 }

@@ -31,6 +31,7 @@ from app.dirty_state import (
 from app.previews.config import PreviewSettings
 from app.projects.config import ProjectSettings
 from app.projects.service import ProjectOperationError, validated_source_path
+from app.sandboxes.git import run_git
 from app.tasks.models import TaskStatus
 
 
@@ -355,11 +356,11 @@ def _sandbox_state(
         'printf "head %s\\n" "$(git rev-parse --verify HEAD)"\n'
         + snapshot_shell()
     )
-    output = _run_git(
+    output = run_git(
         docker_client,
-        git_image,
-        {volume_name: {"bind": "/project", "mode": "ro"}},
-        script,
+        image=git_image,
+        volumes={volume_name: {"bind": "/project", "mode": "ro"}},
+        script=script,
     )
     fields = _fields(output)
     dirty = parse_snapshot(output)
@@ -534,11 +535,11 @@ def _bounded_diff(
         f"git diff {arguments} {shlex.quote(target.base_commit)} "
         f"{shlex.quote(target.head_commit)} | head -c {limit}\n"
     )
-    return _run_git(
+    return run_git(
         docker_client,
-        git_image,
-        {volume_name: {"bind": "/project", "mode": "ro"}},
-        script,
+        image=git_image,
+        volumes={volume_name: {"bind": "/project", "mode": "ro"}},
+        script=script,
     )
 
 
@@ -583,14 +584,14 @@ def _merge_source(
         f"git -c core.hooksPath=/dev/null -C /source merge --ff-only --no-edit {head}\n"
         'printf "result merged\\nhead %s\\n" "$(git -C /source rev-parse HEAD)"\n'
     )
-    output = _run_git(
+    output = run_git(
         docker_client,
-        git_image,
-        {
+        image=git_image,
+        volumes={
             volume_name: {"bind": "/sandbox", "mode": "ro"},
             str(source_path): {"bind": "/source", "mode": "rw"},
         },
-        script,
+        script=script,
     )
     fields = _fields(output)
     return fields.get("result", ""), fields
@@ -664,29 +665,3 @@ def _fields(output: bytes) -> dict[str, str]:
         if separator and key in {"branch", "dirty", "head", "result"}:
             fields[key] = value.strip()
     return fields
-
-
-def _run_git(
-    docker_client: DockerClient,
-    git_image: str,
-    volumes: dict[str, dict[str, str]],
-    script: str,
-) -> bytes:
-    output = docker_client.containers.run(
-        image=git_image,
-        entrypoint=["sh", "-c"],
-        command=[script],
-        remove=True,
-        network_disabled=True,
-        read_only=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
-        environment={
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_TERMINAL_PROMPT": "0",
-            "HOME": "/tmp",
-        },
-        volumes=volumes,
-        tmpfs={"/tmp": "rw,nosuid,size=32m"},
-    )
-    return output if isinstance(output, bytes) else bytes(output)

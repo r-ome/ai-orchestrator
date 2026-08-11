@@ -1,7 +1,10 @@
 import asyncio
 import json
+import sqlite3
 from collections.abc import Callable
+from contextlib import suppress
 from typing import Annotated, Any, TypeVar
+from uuid import uuid4
 
 from docker.client import DockerClient
 from docker.errors import APIError, DockerException, NotFound
@@ -20,6 +23,8 @@ from app.agents.models import (
 )
 from app.agents.service import (
     AgentOperationError,
+    LABEL_RUN_ID,
+    LABEL_SANDBOX_ID,
     create_agent,
     detach_agent_terminal,
     get_managed_agent_container,
@@ -33,12 +38,17 @@ from app.agents.service import (
 )
 from app.docker_client import get_docker_client
 from app.docker_terminal import close_stream, read_stream, write_stream
-from app.controller.store import ControllerStore, get_controller_store
+from app.controller.store import (
+    ControllerStore,
+    SandboxWriterAdmissionError,
+    get_controller_store,
+)
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 ResponseType = TypeVar("ResponseType")
 _active_sessions: set[str] = set()
 _active_sessions_lock = asyncio.Lock()
+_WRITER_HEARTBEAT_SECONDS = 15
 
 
 def _docker_response(function: Callable[[], ResponseType]) -> ResponseType:
@@ -157,6 +167,7 @@ async def agent_terminal(
     agent_id: str,
     docker_client: Annotated[DockerClient, Depends(get_docker_client)],
     settings: Annotated[AgentSettings, Depends(get_agent_settings)],
+    controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> None:
     try:
         container = get_managed_agent_container(docker_client, agent_id)
@@ -177,9 +188,41 @@ async def agent_terminal(
     stream: Any | None = None
     terminal_started = False
     accepted = False
+    writer_session_id = uuid4().hex
+    writer_session_open = False
+    heartbeat_task: asyncio.Task[None] | None = None
     try:
+        labels = (container.attrs.get("Config") or {}).get("Labels") or {}
+        sandbox_id = str(labels.get(LABEL_SANDBOX_ID) or "")
+        agent_run_id = str(labels.get(LABEL_RUN_ID) or "")
+        if not sandbox_id or not agent_run_id:
+            await websocket.close(
+                code=4500,
+                reason="Agent controller labels are incomplete",
+            )
+            return
+        try:
+            # A writable attached terminal counts for its whole lifetime. The
+            # controller cannot observe whether a human is idle or typing.
+            controller_store.open_agent_writer_session(
+                session_id=writer_session_id,
+                sandbox_id=sandbox_id,
+                agent_run_id=agent_run_id,
+                kind="terminal",
+            )
+        except SandboxWriterAdmissionError as error:
+            await websocket.close(code=4409, reason=str(error))
+            return
+        except sqlite3.IntegrityError:
+            await websocket.close(code=4409, reason="Agent already has a terminal")
+            return
+        writer_session_open = True
+
         await websocket.accept()
         accepted = True
+        heartbeat_task = asyncio.create_task(
+            _heartbeat_writer_session(controller_store, writer_session_id)
+        )
         exec_id, stream = await asyncio.to_thread(
             start_agent_exec,
             docker_client,
@@ -224,16 +267,36 @@ async def agent_terminal(
                 {"type": "error", "detail": "Docker daemon is unavailable"}
             )
     finally:
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
         if terminal_started:
             try:
                 await asyncio.to_thread(detach_agent_terminal, container)
             except DockerException:
                 pass
         close_stream(stream)
+        if writer_session_open:
+            with suppress(Exception):
+                controller_store.close_agent_writer_session(writer_session_id)
         async with _active_sessions_lock:
             _active_sessions.discard(canonical_id)
         if accepted and websocket.client_state == WebSocketState.CONNECTED:
             await websocket.close(code=1000)
+
+
+async def _heartbeat_writer_session(
+    controller_store: ControllerStore,
+    session_id: str,
+) -> None:
+    while True:
+        await asyncio.sleep(_WRITER_HEARTBEAT_SECONDS)
+        open_session = await asyncio.to_thread(
+            controller_store.heartbeat_agent_writer_session,
+            session_id,
+        )
+        if not open_session:
+            return
 
 
 async def _forward_agent_output(

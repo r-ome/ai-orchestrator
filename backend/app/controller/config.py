@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 DEFAULT_CONTROLLER_DATA_DIRECTORY = Path(__file__).resolve().parents[2] / ".controller-data"
+DEFAULT_GIT_SECRET_DIRECTORY = Path.home() / ".orchestrator" / "run-secrets"
 
 
 @dataclass(frozen=True)
@@ -12,6 +13,7 @@ class ControllerSettings:
     data_directory: Path
     preview_expiry_seconds: int
     expiry_poll_seconds: int
+    git_secret_directory: Path = DEFAULT_GIT_SECRET_DIRECTORY
 
     @property
     def database_path(self) -> Path:
@@ -33,6 +35,14 @@ def get_controller_settings() -> ControllerSettings:
             os.environ.get("PREVIEW_EXPIRY_POLL_SECONDS"),
             default=15,
         ),
+        git_secret_directory=Path(
+            os.environ.get(
+                "CONTROLLER_GIT_SECRET_DIRECTORY",
+                DEFAULT_GIT_SECRET_DIRECTORY,
+            )
+        )
+        .expanduser()
+        .resolve(),
     )
 
 

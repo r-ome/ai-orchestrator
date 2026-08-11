@@ -108,13 +108,21 @@ def list_sessions(
     project_name: str,
 ) -> PlanningSessionsResponse:
     try:
-        project = inspect_registered_project(docker_client, project_name)
+        project = inspect_registered_project(
+            docker_client,
+            project_name,
+            controller_store,
+        )
     except ProjectOperationError as error:
         raise PlanningOperationError(error.status_code, error.detail) from error
     sessions = [
         _session_model(session)
         for session in controller_store.planning_sessions_for_project(
-            project_id(project.source_path)
+            (
+                project.source_path.removeprefix("managed:")
+                if project.source_path.startswith("managed:")
+                else project_id(project.source_path)
+            )
         )
     ]
     return PlanningSessionsResponse(count=len(sessions), sessions=sessions)

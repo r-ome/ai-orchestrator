@@ -15,6 +15,7 @@ from app.implementation_context.router import router as implementation_context_r
 from app.planning.router import router as planning_router
 from app.projects.router import router as projects_router
 from app.previews.router import router as previews_router
+from app.sandboxes.router import router as sandboxes_router
 from app.tasks.router import router as tasks_router
 from app.turns.router import router as turns_router
 from app.volumes.router import router as volumes_router
@@ -42,6 +43,7 @@ app.include_router(implementation_context_router)
 app.include_router(planning_router)
 app.include_router(projects_router)
 app.include_router(previews_router)
+app.include_router(sandboxes_router)
 app.include_router(tasks_router)
 app.include_router(turns_router)
 app.include_router(volumes_router)

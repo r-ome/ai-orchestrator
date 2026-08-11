@@ -8,7 +8,7 @@ from uuid import uuid4
 from docker.client import DockerClient
 
 from app.agents.models import AgentProvider
-from app.controller.store import ControllerStore
+from app.controller.store import ControllerStore, SandboxWriterAdmissionError
 from app.delegation import graph, prompts
 from app.delegation.config import (
     DelegatorSettings,
@@ -122,6 +122,8 @@ def create_revision(
             },
             rows,
         )
+    except SandboxWriterAdmissionError as error:
+        raise DelegationOperationError(409, str(error)) from error
     except sqlite3.IntegrityError as error:
         raise DelegationOperationError(
             409,

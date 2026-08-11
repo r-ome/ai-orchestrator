@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import docker
 import pytest
-from docker.errors import NotFound
+from docker.errors import ContainerError, NotFound
 
 from app.agents.config import AgentSettings
 from app.agents.models import AgentProvider, CreateAgentRequest
@@ -35,6 +35,7 @@ def test_folder_without_git_becomes_a_repository_with_a_baseline_commit() -> Non
             command=["printf 'hello' > /project/index.html"],
             remove=True,
             volumes={volume.name: {"bind": "/project", "mode": "rw"}},
+            tmpfs={"/git": "rw,nosuid,size=1m"},
         )
 
         baseline_commit = ensure_git_baseline(client, GIT_IMAGE, volume.name)
@@ -47,6 +48,7 @@ def test_folder_without_git_becomes_a_repository_with_a_baseline_commit() -> Non
             command=["cd /project && git log --format=%s"],
             remove=True,
             volumes={volume.name: {"bind": "/project", "mode": "ro"}},
+            tmpfs={"/git": "rw,nosuid,size=1m"},
         )
         assert log.decode().strip() == "sandbox baseline"
     finally:
@@ -75,6 +77,7 @@ def test_folder_already_a_git_repository_keeps_its_history() -> None:
             ],
             remove=True,
             volumes={volume.name: {"bind": "/project", "mode": "rw"}},
+            tmpfs={"/git": "rw,nosuid,size=1m"},
         )
         existing_commit = existing_commit.decode().strip()
 
@@ -88,8 +91,72 @@ def test_folder_already_a_git_repository_keeps_its_history() -> None:
             command=["cd /project && git log --format=%s"],
             remove=True,
             volumes={volume.name: {"bind": "/project", "mode": "ro"}},
+            tmpfs={"/git": "rw,nosuid,size=1m"},
         )
         assert log.decode().strip() == "agent work"
+    finally:
+        volume.remove(force=True)
+
+
+@requires_docker
+def test_linked_worktree_or_submodule_gets_a_named_baseline_refusal() -> None:
+    client = docker.from_env()
+    run_id = uuid4().hex
+    volume = client.volumes.create(name=f"orchestrator-git-baseline-test-{run_id[:12]}")
+    try:
+        client.containers.run(
+            GIT_IMAGE,
+            entrypoint=["sh", "-c"],
+            command=["printf 'gitdir: /host/path/that-is-not-mounted\\n' > /project/.git"],
+            remove=True,
+            volumes={volume.name: {"bind": "/project", "mode": "rw"}},
+            tmpfs={"/git": "rw,nosuid,size=1m"},
+        )
+
+        with pytest.raises(ContainerError) as raised:
+            ensure_git_baseline(client, GIT_IMAGE, volume.name)
+
+        output = (raised.value.stderr or b"").decode()
+        assert "linked worktree or submodule" in output
+        assert "fatal: not a git repository" not in output
+    finally:
+        volume.remove(force=True)
+
+
+@requires_docker
+def test_git_baseline_does_not_run_a_project_pre_commit_hook() -> None:
+    client = docker.from_env()
+    run_id = uuid4().hex
+    volume = client.volumes.create(name=f"orchestrator-git-baseline-test-{run_id[:12]}")
+    try:
+        client.containers.run(
+            GIT_IMAGE,
+            entrypoint=["sh", "-c"],
+            command=[
+                "set -eu\n"
+                "cd /project\n"
+                "git init -q -b main\n"
+                "mkdir -p .git/hooks\n"
+                "printf '#!/bin/sh\\ntouch /project/hook-ran\\n' > .git/hooks/pre-commit\n"
+                "chmod +x .git/hooks/pre-commit\n"
+                "printf 'work' > work.txt\n"
+            ],
+            remove=True,
+            volumes={volume.name: {"bind": "/project", "mode": "rw"}},
+            tmpfs={"/git": "rw,nosuid,size=1m"},
+        )
+
+        ensure_git_baseline(client, GIT_IMAGE, volume.name)
+
+        marker = client.containers.run(
+            GIT_IMAGE,
+            entrypoint=["sh", "-c"],
+            command=["test ! -e /project/hook-ran && printf absent"],
+            remove=True,
+            volumes={volume.name: {"bind": "/project", "mode": "ro"}},
+            tmpfs={"/git": "rw,nosuid,size=1m"},
+        )
+        assert marker == b"absent"
     finally:
         volume.remove(force=True)
 
@@ -253,6 +320,120 @@ def test_agent_creation_gives_a_baseline_to_a_sandbox_missing_one(
     assert baseline_calls == ["orchestrator-project-sample"]
 
 
+def test_agent_run_is_recorded_before_git_and_dependency_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docker_client = _StubDockerClient()
+    controller_store = ControllerStore(tmp_path / "controller.sqlite3")
+    controller_store.initialize()
+    project = SimpleNamespace(
+        name="Sample Project",
+        volume_name="orchestrator-project-sample",
+        ready=True,
+    )
+    monkeypatch.setattr(
+        "app.agents.service.inspect_registered_project",
+        lambda *_: project,
+    )
+    order: list[str] = []
+
+    def assert_claimed(step: str) -> None:
+        active = controller_store.active_agents()
+        assert len(active) == 1
+        assert active[0]["status"] == "created"
+        assert active[0]["container_id"] is None
+        order.append(step)
+
+    def baseline(*_: Any) -> str:
+        assert_claimed("git")
+        return "c" * 40
+
+    def dependency(*_: Any, **__: Any) -> _StubVolume:
+        assert_claimed("dependency")
+        return _StubVolume("dependency-volume", {})
+
+    monkeypatch.setattr("app.agents.service.ensure_git_baseline", baseline)
+    monkeypatch.setattr("app.agents.service._agent_dependency_volume", dependency)
+
+    create_agent(
+        docker_client,
+        AgentSettings(
+            claude_image="test-claude:latest",
+            codex_image="test-codex:latest",
+        ),
+        CreateAgentRequest(
+            project_name="Sample Project",
+            provider=AgentProvider.CLAUDE,
+        ),
+        controller_store,
+    )
+
+    assert order == ["git", "dependency"]
+
+
+def test_agent_preparation_failure_marks_the_row_and_removes_its_container(
+    tmp_path: Path,
+    fake_docker_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from docker.errors import DockerException
+
+    controller_store = ControllerStore(tmp_path / "controller.sqlite3")
+    controller_store.initialize()
+    project = SimpleNamespace(
+        name="Sample Project",
+        volume_name="orchestrator-project-sample",
+        ready=True,
+    )
+    monkeypatch.setattr(
+        "app.agents.service.inspect_registered_project",
+        lambda *_: project,
+    )
+    monkeypatch.setattr(
+        "app.agents.service.ensure_git_baseline",
+        lambda *_: "c" * 40,
+    )
+
+    def dependency(*_: Any, **__: Any) -> Any:
+        return fake_docker_client.volumes.create(
+            name="dependency-volume",
+            labels={},
+        )
+
+    monkeypatch.setattr("app.agents.service._agent_dependency_volume", dependency)
+    fake_docker_client.inject_failure(
+        "container.start",
+        DockerException("start failed"),
+    )
+
+    with pytest.raises(DockerException, match="start failed"):
+        create_agent(
+            fake_docker_client,
+            AgentSettings(
+                claude_image="test-claude:latest",
+                codex_image="test-codex:latest",
+            ),
+            CreateAgentRequest(
+                project_name="Sample Project",
+                provider=AgentProvider.CLAUDE,
+            ),
+            controller_store,
+        )
+
+    with controller_store._connection() as connection:
+        rows = connection.execute("SELECT * FROM agent_runs").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "failed"
+    agent_containers = [
+        resource
+        for resource in fake_docker_client.created
+        if getattr(resource, "_kind", "") == "containers"
+    ]
+    assert len(agent_containers) == 1
+    assert agent_containers[0].removed
+
+
 @requires_docker
 def test_controller_scaffolding_is_excluded_from_the_sandbox_repository() -> None:
     """`.agent/` and friends are the sandbox's, not the project's.
@@ -288,6 +469,7 @@ def test_controller_scaffolding_is_excluded_from_the_sandbox_repository() -> Non
             ],
             remove=True,
             volumes={volume.name: {"bind": "/project", "mode": "rw"}},
+            tmpfs={"/git": "rw,nosuid,size=1m"},
         )
 
         ensure_git_baseline(client, GIT_IMAGE, volume.name)
@@ -301,6 +483,7 @@ def test_controller_scaffolding_is_excluded_from_the_sandbox_repository() -> Non
             command=["cd /project && git status --porcelain"],
             remove=True,
             volumes={volume.name: {"bind": "/project", "mode": "ro"}},
+            tmpfs={"/git": "rw,nosuid,size=1m"},
         )
         exclude = client.containers.run(
             GIT_IMAGE,
@@ -308,6 +491,7 @@ def test_controller_scaffolding_is_excluded_from_the_sandbox_repository() -> Non
             command=["cd /project && cat .git/info/exclude"],
             remove=True,
             volumes={volume.name: {"bind": "/project", "mode": "ro"}},
+            tmpfs={"/git": "rw,nosuid,size=1m"},
         )
     finally:
         volume.remove(force=True)

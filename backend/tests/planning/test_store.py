@@ -62,7 +62,7 @@ def test_initial_migration_creates_planning_tables(
         "planning_findings",
         "planning_plan_revisions",
     } <= table_names
-    assert versions == {1}
+    assert versions == {1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28}
 
 
 def test_initialize_twice_is_a_no_op(tmp_path: Path) -> None:
@@ -78,7 +78,7 @@ def test_initialize_twice_is_a_no_op(tmp_path: Path) -> None:
             )
         ]
 
-    assert versions == [1]
+    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
 
 
 def test_creating_session_for_unregistered_sandbox_raises_integrity_error(

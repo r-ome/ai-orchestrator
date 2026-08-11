@@ -511,8 +511,14 @@ def _native_dependencies(
     PreviewInitialization,
     dict[str, PreviewEnvironmentSource],
 ]:
-    database_schema = _mysql_prisma_schema(files)
-    if not database_schema:
+    prisma = _prisma_schema_provider(files)
+    if prisma is None:
+        return None, {}, PreviewInitialization(), {}
+    database_schema, provider = prisma
+    # Preview databases remain MySQL-only until Phase 6c.  The generalized
+    # detector is also used by sandbox lifecycle discovery, which can propose
+    # the other providers without changing preview behaviour.
+    if provider != "mysql":
         return None, {}, PreviewInitialization(), {}
     commands = ["npx prisma migrate deploy"]
     if _has_package_script(files, "db:seed:preview"):
@@ -536,7 +542,9 @@ def _native_dependencies(
     )
 
 
-def _mysql_prisma_schema(files: dict[str, bytes]) -> str | None:
+def prisma_schema_providers(files: dict[str, bytes]) -> list[tuple[str, str]]:
+    """Return every Prisma datasource provider without choosing an engine."""
+    found: list[tuple[str, str]] = []
     for path, content in sorted(files.items()):
         if PurePosixPath(path).name != "schema.prisma":
             continue
@@ -544,13 +552,21 @@ def _mysql_prisma_schema(files: dict[str, bytes]) -> str | None:
             schema = content.decode("utf-8")
         except UnicodeDecodeError:
             continue
-        if re.search(
-            r"(?s)\bdatasource\s+[A-Za-z_][A-Za-z0-9_]*\s*\{.*?"
-            r"\bprovider\s*=\s*[\"']mysql[\"']",
-            schema,
+        for block in re.finditer(
+            r"(?s)\bdatasource\s+[A-Za-z_][A-Za-z0-9_]*\s*\{(.*?)\}", schema
         ):
-            return path
-    return None
+            provider = re.search(
+                r"\bprovider\s*=\s*[\"']([^\"']+)[\"']", block.group(1)
+            )
+            if provider is not None:
+                found.append((path, provider.group(1).strip().lower()))
+    return found
+
+
+def _prisma_schema_provider(files: dict[str, bytes]) -> tuple[str, str] | None:
+    """Return the first Prisma provider for preview compatibility callers."""
+    providers = prisma_schema_providers(files)
+    return providers[0] if providers else None
 
 
 def _has_package_script(files: dict[str, bytes], name: str) -> bool:

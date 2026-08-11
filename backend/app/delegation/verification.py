@@ -10,6 +10,12 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import ReadTimeout
 
 from app.delegation.packet import ResolvedVerification
+from app.controller.store import ControllerStore
+from app.sandboxes.database import (
+    SandboxDatabaseError,
+    SandboxDatabaseRuntime,
+    sandbox_database_runtime,
+)
 
 
 @dataclass(frozen=True)
@@ -34,8 +40,22 @@ def run_verification(
     *,
     volume_name: str,
     commands: list[ResolvedVerification],
+    controller_store: ControllerStore | None = None,
+    sandbox_id: str = "",
 ) -> dict[str, Any]:
     """Run each confirmed command once and stop at the first failure."""
+    try:
+        database_runtime = (
+            sandbox_database_runtime(
+                docker_client,
+                controller_store,
+                sandbox_id,
+            )
+            if controller_store is not None and sandbox_id
+            else None
+        )
+    except SandboxDatabaseError as error:
+        raise VerificationOperationError(error.status_code, error.detail) from error
     results: list[dict[str, Any]] = []
     for entry in commands:
         result = _run_command(
@@ -43,6 +63,7 @@ def run_verification(
             settings,
             volume_name=volume_name,
             entry=entry,
+            database_runtime=database_runtime,
         )
         results.append(result)
         if not result["passed"]:
@@ -59,6 +80,7 @@ def _run_command(
     *,
     volume_name: str,
     entry: ResolvedVerification,
+    database_runtime: SandboxDatabaseRuntime | None = None,
 ) -> dict[str, Any]:
     try:
         command = shlex.split(entry.command)
@@ -76,6 +98,14 @@ def _run_command(
     exit_code: int | None = None
     output = ""
     try:
+        environment = {"HOME": "/tmp/home", "TERM": "dumb"}
+        volumes = {volume_name: {"bind": "/workspace", "mode": "rw"}}
+        network_arguments: dict[str, Any] = {"network_mode": "none"}
+        if database_runtime is not None:
+            environment.update(database_runtime.environment)
+            volumes.update(database_runtime.volumes)
+            if database_runtime.engine != "sqlite":
+                network_arguments = {"network": database_runtime.network_name}
         container = docker_client.containers.create(
             image=settings.image,
             command=command,
@@ -85,24 +115,20 @@ def _run_command(
             read_only=True,
             cap_drop=["ALL"],
             security_opt=["no-new-privileges:true"],
-            # `network_mode="none"` rather than `network_disabled=True`. Both
-            # deny external connectivity, but `network_disabled` leaves the
-            # container with an empty /etc/hosts and /etc/resolv.conf, so even
-            # `localhost` fails to resolve. A build that resolves any hostname
-            # then dies with `getaddrinfo EAI_AGAIN localhost` — and the run is
-            # failed for a fault in the sandbox, not in the code under test.
-            # This container is the only one that runs the project's own
-            # commands, which is why it is the only one that needs the change.
-            network_mode="none",
+            # Legacy and SQLite verification uses `network_mode="none"` rather
+            # than `network_disabled=True`, so localhost still resolves. A
+            # server-backed sandbox replaces this with its internal database
+            # network. Neither mode has egress.
+            **network_arguments,
             pids_limit=settings.pids_limit,
             mem_limit=settings.memory,
             working_dir="/workspace",
-            environment={"HOME": "/tmp/home", "TERM": "dumb"},
+            environment=environment,
             labels={
                 "orchestrator.managed": "true",
                 "orchestrator.kind": "delegation-verification",
             },
-            volumes={volume_name: {"bind": "/workspace", "mode": "rw"}},
+            volumes=volumes,
             tmpfs={"/tmp": "rw,nosuid,size=256m"},
         )
         container.start()

@@ -2,9 +2,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.controller.lifecycle import _settle_interrupted_turns
+import pytest
+
+from app.controller.lifecycle import _settle_interrupted_turns, reconcile_controller_state
 from app.controller.store import ControllerStore
 from app.delegation import service as delegation_service
+from app.sandboxes.naming import ownership_labels
+from docker.errors import DockerException
+from conftest import FakeDockerClient
 
 
 PLAN = {
@@ -218,3 +223,285 @@ def test_a_run_awaiting_a_decision_survives_a_restart(tmp_path: Path) -> None:
     task = store.task("task-1")
     assert task is not None
     assert task["status"] == "review"
+
+
+def test_startup_closes_every_open_agent_writer_session(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = _store(tmp_path)
+    store.start_agent_run(
+        run_id="agent-1",
+        sandbox_id="sandbox-1",
+        provider="claude",
+        container_id="container-1",
+        status="running",
+    )
+    store.open_agent_writer_session(
+        session_id="writer-1",
+        sandbox_id="sandbox-1",
+        agent_run_id="agent-1",
+        kind="terminal",
+    )
+
+    class UnavailableDocker:
+        @staticmethod
+        def from_env():
+            from docker.errors import DockerException
+
+            raise DockerException("unavailable")
+
+    monkeypatch.setattr("app.controller.lifecycle.docker", UnavailableDocker)
+
+    counts = reconcile_controller_state(store)
+
+    assert counts["writer_sessions"] == 1
+    session = store.agent_writer_session("writer-1")
+    assert session is not None
+    assert session["ended_at"] is not None
+    assert store.active_writers("sandbox-1") == []
+
+
+def test_startup_reclaims_a_lease_for_a_settled_operation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = _store(tmp_path)
+    with store._connection() as connection:
+        connection.execute(
+            """
+            UPDATE sandboxes
+            SET lifecycle_version = 'v1', desired_state = 'active',
+                lifecycle_status = 'ready', operation = 'sync'
+            WHERE id = 'sandbox-1'
+            """
+        )
+    store.acquire_sandbox_lease(
+        sandbox_id="sandbox-1",
+        operation="sync",
+        operation_id="sync-1",
+        owner="dead-process",
+    )
+
+    class UnavailableDocker:
+        @staticmethod
+        def from_env():
+            from docker.errors import DockerException
+
+            raise DockerException("unavailable")
+
+    monkeypatch.setattr("app.controller.lifecycle.docker", UnavailableDocker)
+
+    counts = reconcile_controller_state(store)
+
+    assert counts["leases"] == 1
+    assert store.sandbox_lease("sandbox-1") is None
+    store.create_task(
+        task_id="task-after-reclaim",
+        sandbox_id="sandbox-1",
+        agent_run_id=None,
+        branch="task/after-reclaim",
+        base_branch="",
+        base_commit="",
+        title="usable",
+        status="preparing",
+    )
+
+
+def test_startup_reclaims_a_stale_unsettled_lease(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = _store(tmp_path)
+    with store._connection() as connection:
+        connection.execute(
+            """
+            UPDATE sandboxes
+            SET lifecycle_version = 'v1', desired_state = 'active',
+                lifecycle_status = 'ready', operation = 'sync'
+            WHERE id = 'sandbox-1'
+            """
+        )
+    store.acquire_sandbox_lease(
+        sandbox_id="sandbox-1",
+        operation="sync",
+        operation_id="sync-1",
+        owner="dead-process",
+    )
+    with store._connection() as connection:
+        connection.execute(
+            """
+            UPDATE sandboxes SET lifecycle_status = 'syncing'
+            WHERE id = 'sandbox-1'
+            """
+        )
+        connection.execute(
+            """
+            UPDATE sandbox_leases SET heartbeat_at = '2020-01-01T00:00:00Z'
+            WHERE sandbox_id = 'sandbox-1'
+            """
+        )
+
+    class UnavailableDocker:
+        @staticmethod
+        def from_env():
+            from docker.errors import DockerException
+
+            raise DockerException("unavailable")
+
+    monkeypatch.setattr("app.controller.lifecycle.docker", UnavailableDocker)
+
+    counts = reconcile_controller_state(store)
+
+    assert counts["leases"] == 1
+    assert store.sandbox_lease("sandbox-1") is None
+    with store._connection() as connection:
+        connection.execute(
+            "UPDATE sandboxes SET lifecycle_status = 'ready' WHERE id = 'sandbox-1'"
+        )
+    store.start_agent_run(
+        run_id="agent-after-reclaim",
+        sandbox_id="sandbox-1",
+        provider="claude",
+        status="created",
+    )
+
+
+def test_startup_reports_each_unclaimed_sbx_resource_without_removing_it(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = _store(tmp_path)
+    docker_client = FakeDockerClient()
+    orphan_id = "a" * 32
+    labels = ownership_labels(sandbox_id=orphan_id, project_id="orphan-project")
+    volume = docker_client.volumes.create(name="sbx-aaaaaaaaaaaa-volume", labels=labels)
+    container = docker_client.containers.create(
+        name="sbx-aaaaaaaaaaaa-container", image="test", labels=labels
+    )
+    network = docker_client.networks.create("sbx-aaaaaaaaaaaa-network", labels=labels)
+
+    monkeypatch.setattr(
+        "app.controller.lifecycle.docker.from_env", lambda: docker_client
+    )
+    monkeypatch.setattr(
+        store,
+        "acquire_sandbox_lease",
+        lambda **_kwargs: pytest.fail("orphan reporting must not acquire a lifecycle lease"),
+    )
+    monkeypatch.setattr(
+        store,
+        "acquire_project_mirror_lock",
+        lambda **_kwargs: pytest.fail("orphan reporting must not acquire a mirror lock"),
+    )
+    counts = reconcile_controller_state(store)
+
+    assert counts["orphan_resources"] == 3
+    assert volume.removed is container.removed is network.removed is False
+    assert {resource["resource"] for resource in store.unexpected_resources()} == {
+        "volume:sbx-aaaaaaaaaaaa-volume",
+        "container:sbx-aaaaaaaaaaaa-container",
+        "network:sbx-aaaaaaaaaaaa-network",
+    }
+
+
+def test_startup_orphan_reporting_skips_manifest_claims_and_shared_infrastructure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = _store(tmp_path)
+    docker_client = FakeDockerClient()
+    claimed = docker_client.volumes.create(
+        name="sbx-claimed-volume",
+        labels=ownership_labels(sandbox_id="b" * 32, project_id="project-1"),
+    )
+    store.record_sandbox_resource("sandbox-1", kind="volume", name=claimed.name)
+    mirror = docker_client.volumes.create(
+        name="sbx-mirror-looking",
+        labels={"orchestrator.project.mirror": "true"},
+    )
+    shared_database = docker_client.containers.create(
+        name="sbx-shared-database-looking",
+        image="test",
+        labels={"orchestrator.shared-database": "true"},
+    )
+    shared_data = docker_client.volumes.create(
+        name="sbx-shared-database-data-looking",
+        labels={"orchestrator.shared-database": "true"},
+    )
+    shared_credentials = docker_client.volumes.create(
+        name="sbx-shared-database-credentials-looking",
+        labels={"orchestrator.shared-database": "true"},
+    )
+    shared_network = docker_client.networks.create(
+        "sbx-shared-database-network-looking",
+        labels={"orchestrator.shared-database": "true"},
+    )
+    dependency = docker_client.volumes.create(
+        name="sbx-dependency-looking",
+        labels={
+            "orchestrator.preview.data-managed": "true",
+            "orchestrator.preview.persistent": "true",
+        },
+    )
+
+    monkeypatch.setattr(
+        "app.controller.lifecycle.docker.from_env", lambda: docker_client
+    )
+    counts = reconcile_controller_state(store)
+
+    assert counts["orphan_resources"] == 0
+    assert store.unexpected_resources() == []
+    assert (
+        claimed.removed
+        is mirror.removed
+        is shared_database.removed
+        is shared_data.removed
+        is shared_credentials.removed
+        is shared_network.removed
+        is dependency.removed
+        is False
+    )
+
+
+def test_startup_orphan_reporting_degrades_when_docker_is_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = _store(tmp_path)
+
+    class UnavailableDocker:
+        @staticmethod
+        def from_env():
+            from docker.errors import DockerException
+
+            raise DockerException("unavailable")
+
+    monkeypatch.setattr("app.controller.lifecycle.docker", UnavailableDocker)
+
+    counts = reconcile_controller_state(store)
+
+    assert counts["orphan_resources"] == 0
+    assert counts["orphan_resource_failures"] == 0
+
+
+def test_startup_orphan_reporting_keeps_partial_findings_after_a_docker_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = _store(tmp_path)
+    docker_client = FakeDockerClient()
+    labels = ownership_labels(sandbox_id="c" * 32, project_id="orphan-project")
+    docker_client.volumes.create(name="sbx-cccccccccccc-volume", labels=labels)
+    docker_client.containers.create(
+        name="sbx-cccccccccccc-container", image="test", labels=labels
+    )
+    docker_client.inject_failure("networks.list", DockerException("unavailable"))
+    monkeypatch.setattr(
+        "app.controller.lifecycle.docker.from_env", lambda: docker_client
+    )
+
+    counts = reconcile_controller_state(store)
+
+    assert counts["orphan_resources"] == 2
+    assert counts["orphan_resource_failures"] == 1

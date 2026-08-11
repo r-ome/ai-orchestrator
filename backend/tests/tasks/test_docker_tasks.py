@@ -38,6 +38,10 @@ def _run(client: Any, volume_name: str, script: str) -> str:
         cap_drop=["ALL"],
         security_opt=["no-new-privileges:true"],
         volumes={volume_name: {"bind": "/project", "mode": "rw"}},
+        # alpine/git declares VOLUME /git, so every run without a mount there
+        # creates an empty anonymous volume that --rm does not reap. Measured:
+        # this helper alone leaked 64 volumes per run of this file.
+        tmpfs={"/git": "rw,nosuid,size=1m"},
     )
     return output.decode().strip()
 

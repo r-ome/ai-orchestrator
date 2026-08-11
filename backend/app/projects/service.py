@@ -24,6 +24,8 @@ from app.projects.models import (
     ProjectRegistration,
     ProjectRegistrationsResponse,
 )
+from app.sandboxes.git import run_git
+from app.sandboxes.naming import validate_ownership
 
 LABEL_MANAGED = "orchestrator.project.managed"
 LABEL_NAME = "orchestrator.project.name"
@@ -133,6 +135,10 @@ SANDBOX_SCAFFOLDING = (".agent", ".claude", ".orchestrator")
 GIT_BASELINE_SCRIPT = (
     "set -eu\n"
     "cd /project\n"
+    "if [ -f .git ]; then\n"
+    "  echo 'Cannot create a sandbox baseline from a linked worktree or submodule: .git is a gitdir pointer.' >&2\n"
+    "  exit 42\n"
+    "fi\n"
     "if [ ! -d .git ]; then\n"
     "  git init -q -b main\n"
     "fi\n"
@@ -271,11 +277,45 @@ def list_registered_projects(
 def inspect_registered_project(
     docker_client: DockerClient,
     project_name: str,
+    controller_store: ControllerStore | None = None,
 ) -> ProjectRegistration:
     for volume in _registered_volumes(docker_client):
         labels = volume.attrs.get("Labels") or {}
         if labels.get(LABEL_NAME, "").casefold() == project_name.casefold():
             return _project_from_volume(docker_client, volume)
+    if controller_store is not None:
+        sandbox = controller_store.sandbox(project_name)
+        if sandbox is not None and sandbox.get("lifecycle_version") == "v1":
+            try:
+                volume = docker_client.volumes.get(str(sandbox["volume_name"]))
+            except NotFound as error:
+                raise ProjectOperationError(
+                    409,
+                    f"Managed sandbox '{project_name}' workspace is missing",
+                ) from error
+            try:
+                validate_ownership(volume, sandbox_id=project_name)
+            except ValueError as error:
+                raise ProjectOperationError(409, str(error)) from error
+            lifecycle_status = str(sandbox.get("lifecycle_status") or "creating")
+            attrs = volume.attrs or {}
+            return ProjectRegistration(
+                sandbox_id=project_name,
+                name=project_name,
+                source_path=f"managed:{sandbox['project_id']}",
+                volume_name=str(sandbox["volume_name"]),
+                created_at=str(sandbox.get("created_at") or ""),
+                copy_mode="managed-v1",
+                file_count=0,
+                copied_bytes=0,
+                copied_size="0 B",
+                driver=str(attrs.get("Driver") or "local"),
+                mountpoint=str(attrs.get("Mountpoint") or ""),
+                copy_job_id="",
+                copy_status=lifecycle_status,
+                ready=lifecycle_status == "ready",
+                excluded_directories=[],
+            )
     raise ProjectOperationError(404, f"Project '{project_name}' is not registered")
 
 
@@ -287,13 +327,20 @@ def ensure_sandbox_registered(
     project: ProjectRegistration | None = None,
 ) -> tuple[str, str, ProjectRegistration]:
     """Returns (sandbox_id, project_id, project), registering the sandbox row."""
-    project = project or inspect_registered_project(docker_client, project_name)
+    project = project or inspect_registered_project(
+        docker_client,
+        project_name,
+        controller_store,
+    )
     if not project.ready:
         raise ProjectOperationError(409, f"Project '{project_name}' is not ready")
 
     sandbox_id = getattr(project, "sandbox_id", "") or hashlib.sha256(
         f"sandbox:{project.volume_name}".encode()
     ).hexdigest()[:32]
+    existing = controller_store.sandbox(sandbox_id)
+    if existing is not None and existing.get("lifecycle_version") == "v1":
+        return sandbox_id, str(existing["project_id"]), project
     source_path = getattr(project, "source_path", "") or f"legacy:{project.name}"
     created_at = getattr(project, "created_at", "")
     project_key = project_id(source_path)
@@ -916,26 +963,14 @@ def ensure_git_baseline(
     A sandbox that already has commits keeps them; only the branch pointer
     and git identity are ensured. Returns the resulting HEAD commit hash.
     """
-    _ensure_git_image(docker_client, git_image)
-    output = docker_client.containers.run(
+    output = run_git(
+        docker_client,
         image=git_image,
-        entrypoint=["sh", "-c"],
-        command=[GIT_BASELINE_SCRIPT],
-        remove=True,
-        network_disabled=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
         volumes={volume_name: {"bind": "/project", "mode": "rw"}},
-        tmpfs={"/tmp": "rw,nosuid,size=32m"},
+        script=GIT_BASELINE_SCRIPT,
+        ensure_image=True,
     )
     return output.decode().strip().splitlines()[-1]
-
-
-def _ensure_git_image(docker_client: DockerClient, image: str) -> None:
-    try:
-        docker_client.images.get(image)
-    except ImageNotFound:
-        docker_client.images.pull(image)
 
 
 def _integer(value: Any) -> int:

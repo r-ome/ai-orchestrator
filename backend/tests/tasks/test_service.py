@@ -139,6 +139,64 @@ def test_starting_a_task_creates_a_branch_from_the_current_head(
     assert f'if [ "$head" != "{BASE_COMMIT}" ]' in branch_script
 
 
+def test_task_row_precedes_git_baseline_and_opens_with_verified_base(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def baseline(*_: Any) -> str:
+        rows = controller_store.tasks_for_sandbox("sandbox-1")
+        assert len(rows) == 1
+        assert rows[0]["status"] == TaskStatus.PREPARING.value
+        assert rows[0]["base_commit"] == ""
+        return BASE_COMMIT
+
+    monkeypatch.setattr("app.tasks.service.ensure_git_baseline", baseline)
+
+    task = _start(docker_client, controller_store)
+
+    assert task.status is TaskStatus.OPEN
+    assert task.base_commit == BASE_COMMIT
+    assert task.base_branch == "main"
+
+
+def test_baseline_failure_leaves_failed_row_and_allows_retry(
+    docker_client: _StubDockerClient,
+    controller_store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def baseline(*_: Any) -> str:
+        nonlocal calls
+        calls += 1
+        preparing = [
+            row
+            for row in controller_store.tasks_for_sandbox("sandbox-1")
+            if row["status"] == TaskStatus.PREPARING.value
+        ]
+        assert len(preparing) == 1
+        assert preparing[0]["base_commit"] == ""
+        if calls == 1:
+            raise APIError("baseline failed")
+        return BASE_COMMIT
+
+    monkeypatch.setattr("app.tasks.service.ensure_git_baseline", baseline)
+
+    with pytest.raises(APIError, match="baseline failed"):
+        _start(docker_client, controller_store)
+
+    failed = controller_store.tasks_for_sandbox("sandbox-1")
+    assert len(failed) == 1
+    assert failed[0]["status"] == TaskStatus.FAILED.value
+    assert failed[0]["base_commit"] == ""
+
+    retry = _start(docker_client, controller_store)
+
+    assert retry.status is TaskStatus.OPEN
+    assert calls == 2
+
+
 def test_a_second_open_task_on_one_sandbox_is_rejected(
     docker_client: _StubDockerClient,
     controller_store: ControllerStore,
@@ -448,7 +506,7 @@ def test_initial_migration_creates_task_constraints(tmp_path: Path) -> None:
     finally:
         connection.close()
 
-    assert versions == [1]
+    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
     assert sandbox_rows[0] == 1
 
 
