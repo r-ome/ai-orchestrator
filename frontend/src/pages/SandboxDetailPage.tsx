@@ -4,10 +4,12 @@ import {
   confirmSandboxEngine,
   fetchSandbox,
   fetchSandboxEngine,
+  projectLabel,
   publishSandbox,
   removeSandbox,
   resetSandboxDatabase,
   resumeSandbox,
+  sandboxLabel,
   syncSandbox,
   type EngineDetection,
   type PublishSandboxResult,
@@ -180,14 +182,27 @@ function SandboxDetailPage() {
     <section>
       <header className="page-header">
         <div>
+          {/* Three levels, because a sandbox is meaningless without the
+              project it was copied from. */}
           <p className="breadcrumb">
             <Link to="/projects">Projects</Link>
             <span className="breadcrumb-separator" aria-hidden="true">/</span>
+            {data && (
+              <>
+                <Link to="/projects">{projectLabel(data.remote_url)}</Link>
+                <span className="breadcrumb-separator" aria-hidden="true">/</span>
+              </>
+            )}
             <span className="breadcrumb-current" aria-current="page">
-              {data?.feature_title || data?.feature_key || sandboxId}
+              {data ? sandboxLabel(data) : sandboxId}
             </span>
           </p>
-          <h1>{data?.feature_title || data?.feature_key || 'Sandbox'}</h1>
+          <h1>{data ? sandboxLabel(data) : 'Sandbox'}</h1>
+          {data && (
+            <p className="page-subtitle">
+              Sandbox of <strong>{projectLabel(data.remote_url)}</strong>
+            </p>
+          )}
         </div>
         <div className="button-row">
           <button type="button" onClick={reload} disabled={loading || busy}>
@@ -212,6 +227,7 @@ function SandboxDetailPage() {
           <div className="card">
             <div className="card-header"><h2>Lifecycle</h2></div>
             <dl className="detail-grid">
+              <dt>Project</dt><dd>{projectLabel(data.remote_url)}</dd>
               <dt>Feature key</dt><dd>{data.feature_key || '—'}</dd>
               <dt>Remote</dt><dd className="mono">{data.remote_url || '—'}</dd>
               {/* A bare "none" here would read as "not confirmed yet". Those are
@@ -304,7 +320,7 @@ function SandboxDetailPage() {
 
       {removeOpen && data && (
         <ConfirmDialog
-          title={`Remove ${data.feature_title || data.feature_key || data.sandbox_id}?`}
+          title={`Remove ${sandboxLabel(data)}?`}
           confirmPhrase={`REMOVE ${data.feature_key || data.sandbox_id}`}
           confirmLabel="Remove sandbox"
           busy={busyAction === 'remove'}
@@ -312,6 +328,12 @@ function SandboxDetailPage() {
           onCancel={() => setRemoveOpen(false)}
           onConfirm={confirmRemove}
         >
+          {/* Name the project too. Two sandboxes of different projects can
+              share a feature key, and this dialog is not reversible. */}
+          <p>
+            Sandbox <strong>{sandboxLabel(data)}</strong> of project{' '}
+            <strong>{projectLabel(data.remote_url)}</strong>.
+          </p>
           <p>This removes only resources the sandbox manifest owns. The sandbox database and its data are destroyed with it.</p>
         </ConfirmDialog>
       )}

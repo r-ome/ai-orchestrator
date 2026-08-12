@@ -21,6 +21,7 @@ const StorageStatusPage = lazy(() => import('./pages/StorageStatusPage'))
 const ProjectTerminalDock = lazy(() => import('./components/ProjectTerminalDock'))
 import { fetchAgents } from './api/agents'
 import { fetchProject } from './api/projects'
+import { fetchSandbox, projectLabel, sandboxLabel } from './api/sandboxes'
 import { useApiResource } from './hooks/useApiResource'
 import { useTheme } from './hooks/useTheme'
 import type { ThemeChoice } from './theme'
@@ -95,7 +96,40 @@ function RailIcon({ variant }: { variant: 'square' | 'bars' | 'circle' }) {
   return <span className="rail-icon rail-icon-square" aria-hidden="true" />
 }
 
-// Loads the current sandbox summary for project detail and agent-terminal
+// Loads the current sandbox summary for managed sandbox routes. Names both
+// the sandbox and the project it was copied from, because the sandbox ID
+// alone never says which repository you are working in.
+function CurrentSandboxSummary({ sandboxId }: { sandboxId: string }) {
+  const fetcher = useCallback(
+    (signal: AbortSignal) => fetchSandbox(sandboxId, signal),
+    [sandboxId],
+  )
+  const sandbox = useApiResource(fetcher, [sandboxId])
+  return (
+    <div className="rail-current">
+      <div className="rail-current-label">Current project</div>
+      <div className="rail-current-name">
+        {sandbox.data ? projectLabel(sandbox.data.remote_url) : '—'}
+      </div>
+      <div className="rail-current-label">Sandbox</div>
+      <div className="rail-current-name">
+        {sandbox.data ? sandboxLabel(sandbox.data) : sandboxId}
+      </div>
+      <div className="rail-current-stats">
+        <div>
+          <span>status</span>
+          <strong>{sandbox.data?.lifecycle_status ?? '—'}</strong>
+        </div>
+        <div>
+          <span>engine</span>
+          <strong>{sandbox.data?.db_engine ?? 'unconfirmed'}</strong>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Loads the current summary for legacy local-copy detail and agent-terminal
 // routes. The project endpoint supplies file and size counts; the agent list
 // supplies the live-agent count shown in the reference rail.
 function CurrentProjectSummary() {
@@ -127,7 +161,7 @@ function CurrentProjectSummary() {
 
   return (
     <div className="rail-current">
-      <div className="rail-current-label">Current sandbox</div>
+      <div className="rail-current-label">Current local copy</div>
       <div className="rail-current-name">
         {project.data?.name ?? projectName}
       </div>
@@ -154,10 +188,15 @@ function CurrentProjectSummary() {
 function App() {
   const location = useLocation()
   const projectMatch = location.pathname.match(/^\/projects\/([^/]+)/)
-  const currentSandboxPath = projectMatch
-    ? `/projects/${projectMatch[1]}`
-    : '/projects'
-  const hasCurrentSandbox = Boolean(projectMatch)
+  const sandboxMatch = location.pathname.match(/^\/sandboxes\/([^/]+)/)
+  // A managed sandbox wins over a legacy local copy: it is the route an
+  // operator actually works in.
+  const currentSandboxPath = sandboxMatch
+    ? `/sandboxes/${sandboxMatch[1]}`
+    : projectMatch
+      ? `/projects/${projectMatch[1]}`
+      : '/projects'
+  const hasCurrentSandbox = Boolean(sandboxMatch ?? projectMatch)
   const isTerminal = location.pathname.includes('/agents/')
   const isProjectDetail =
     hasCurrentSandbox &&
@@ -175,7 +214,13 @@ function App() {
           <div className="app-rail-wordmark">Orchestrator</div>
         </div>
 
-        <CurrentProjectSummary />
+        {sandboxMatch ? (
+          <CurrentSandboxSummary
+            sandboxId={decodeURIComponent(sandboxMatch[1])}
+          />
+        ) : (
+          <CurrentProjectSummary />
+        )}
 
         <div className="app-rail-nav">
           <NavLink to="/projects" end>

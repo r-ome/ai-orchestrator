@@ -12,7 +12,12 @@ import {
   type PlanningSessionDetail,
   type PlanningStatus,
 } from '../api/planning'
-import { fetchSandbox, type Sandbox } from '../api/sandboxes'
+import {
+  fetchSandbox,
+  projectLabel,
+  sandboxLabel,
+  type Sandbox,
+} from '../api/sandboxes'
 import { ApiError } from '../api/client'
 import CollapsibleCard from '../components/CollapsibleCard'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -176,7 +181,8 @@ function PlanningSessionPage() {
   const projectPath = sandbox
     ? `/sandboxes/${encodeURIComponent(sandbox.sandbox_id)}`
     : `/projects/${encodeURIComponent(projectName)}`
-  const projectLabel = sandbox?.feature_title || sandbox?.feature_key || projectName
+  const sandboxCrumb = sandbox ? sandboxLabel(sandbox) : projectName
+  const projectCrumb = sandbox ? projectLabel(sandbox.remote_url) : null
   const fetcher = useCallback(
     (signal: AbortSignal) => fetchPlanningSession(projectName, sessionId, signal),
     [projectName, sessionId],
@@ -327,7 +333,15 @@ function PlanningSessionPage() {
             <span className="breadcrumb-separator" aria-hidden="true">
               /
             </span>
-            <Link to={projectPath}>{projectLabel}</Link>
+            {projectCrumb && (
+              <>
+                <Link to="/projects">{projectCrumb}</Link>
+                <span className="breadcrumb-separator" aria-hidden="true">
+                  /
+                </span>
+              </>
+            )}
+            <Link to={projectPath}>{sandboxCrumb}</Link>
             <span className="breadcrumb-separator" aria-hidden="true">
               /
             </span>

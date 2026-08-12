@@ -194,6 +194,11 @@
   text-overflow: ellipsis;
 }
 
+/* The sandbox rail stacks two labelled names, project then sandbox. */
+.rail-current-name + .rail-current-label {
+  margin-top: 0.65rem;
+}
+
 .rail-current-stats {
   display: flex;
   flex-direction: column;
@@ -430,6 +435,14 @@
    than each page choosing its own. */
 .page-header .breadcrumb {
   padding-bottom: 10px;
+}
+
+/* Repeats the project under the title. The breadcrumb already carries it, but
+   the title is where the eye lands, and that is where the question is asked. */
+.page-subtitle {
+  margin: 6px 0 0;
+  font-size: 0.95rem;
+  color: var(--muted);
 }
 
 /* --- Buttons ----------------------------------------------------------
@@ -1137,6 +1150,26 @@
 
 .table-wrapper {
   overflow-x: auto;
+}
+
+/* Names the project a group of sandboxes belongs to. Sticky so the answer to
+   "which repository is this?" survives a long list. */
+.table-caption {
+  position: sticky;
+  left: 0;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0;
+  padding: 0.85rem 1.15rem 0.35rem;
+  font-size: 0.95rem;
+  color: var(--text-h);
+}
+
+.table-caption + .status {
+  margin: 0;
+  padding: 0 1.15rem 0.6rem;
+  font-size: 12.1px;
 }
 
 .volumes-table {

@@ -246,3 +246,66 @@ export function removeOrphanResource(
     `/sandboxes/orphans/${encodeURIComponent(resource)}/remove`,
   )
 }
+
+// A project is a Git repository. A sandbox is one feature branch workspace
+// copied from it. The controller identifies a project by an opaque
+// `project_id`, which tells an operator nothing, so every surface shows the
+// `owner/repository` derived from the remote instead.
+
+/** Human name for a project: `owner/repository`, from its Git remote. */
+export function projectLabel(remoteUrl: string | null | undefined): string {
+  if (!remoteUrl?.trim()) return 'Unknown project'
+  const trimmed = remoteUrl.trim().replace(/\/+$/, '').replace(/\.git$/, '')
+  // `git@github.com:owner/repository` has no scheme and uses a colon.
+  const scpLike = /^[^/]+@[^:/]+:(.+)$/.exec(trimmed)
+  const path = scpLike
+    ? scpLike[1]
+    : trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+\/?/i, '')
+  const parts = path.split('/').filter(Boolean)
+  if (parts.length === 0) return trimmed
+  return parts.slice(-2).join('/')
+}
+
+/** A project and every sandbox that belongs to it. */
+export interface SandboxProject {
+  projectId: string
+  label: string
+  remoteUrl: string | null
+  sandboxes: Sandbox[]
+}
+
+/** Group sandboxes by the project they were created from, projects sorted by
+ *  name and each project's sandboxes by feature. */
+export function groupByProject(sandboxes: Sandbox[]): SandboxProject[] {
+  const byProject = new Map<string, SandboxProject>()
+  for (const sandbox of sandboxes) {
+    let project = byProject.get(sandbox.project_id)
+    if (!project) {
+      project = {
+        projectId: sandbox.project_id,
+        label: '',
+        remoteUrl: null,
+        sandboxes: [],
+      }
+      byProject.set(sandbox.project_id, project)
+    }
+    // A project keeps the first remote it is seen with; sandboxes of one
+    // project share a remote, so a later null must not erase it. The label is
+    // derived after the loop, so a null on the first sandbox does not stick.
+    project.remoteUrl ??= sandbox.remote_url
+    project.sandboxes.push(sandbox)
+  }
+  const projects = [...byProject.values()]
+  for (const project of projects) {
+    project.label = projectLabel(project.remoteUrl)
+    project.sandboxes.sort((a, b) =>
+      sandboxLabel(a).localeCompare(sandboxLabel(b)),
+    )
+  }
+  return projects.sort((a, b) => a.label.localeCompare(b.label))
+}
+
+/** Human name for a sandbox, falling back until something is displayable. */
+export function sandboxLabel(sandbox: Sandbox): string {
+  return sandbox.feature_title || sandbox.feature_key || sandbox.sandbox_id
+}
