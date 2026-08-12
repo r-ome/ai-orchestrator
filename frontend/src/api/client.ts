@@ -1,8 +1,59 @@
 const API_BASE = import.meta.env.VITE_API_BASE ?? '/api'
 
+/** Carries the HTTP status so callers can tell "absent" (404) from "broken". */
+export class ApiError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 function formatErrorDetail(detail: unknown): string | null {
   if (typeof detail === 'string') return detail
-  if (!Array.isArray(detail)) return null
+  if (!Array.isArray(detail)) {
+    if (!detail || typeof detail !== 'object') return null
+
+    const message =
+      'message' in detail && typeof detail.message === 'string'
+        ? detail.message
+        : null
+    if (!message) return null
+
+    if ('blocking_writer' in detail) {
+      const blockingWriter = detail.blocking_writer
+      if (
+        !blockingWriter ||
+        typeof blockingWriter !== 'object' ||
+        !('class' in blockingWriter) ||
+        typeof blockingWriter.class !== 'string' ||
+        !('id' in blockingWriter) ||
+        typeof blockingWriter.id !== 'string'
+      ) {
+        return message
+      }
+      return `${message} (blocked by ${blockingWriter.class} ${blockingWriter.id})`
+    }
+
+    if ('blocking_lease' in detail) {
+      const blockingLease = detail.blocking_lease
+      if (
+        !blockingLease ||
+        typeof blockingLease !== 'object' ||
+        !('operation' in blockingLease) ||
+        typeof blockingLease.operation !== 'string' ||
+        !('operation_id' in blockingLease) ||
+        typeof blockingLease.operation_id !== 'string'
+      ) {
+        return message
+      }
+      return `${message} (${blockingLease.operation} in progress, operation ${blockingLease.operation_id})`
+    }
+
+    return message
+  }
 
   const messages = detail.flatMap((error) => {
     if (!error || typeof error !== 'object') return []
@@ -31,7 +82,7 @@ async function request<T>(
     } catch {
       // Response body was not JSON; keep the status-based message.
     }
-    throw new Error(detail)
+    throw new ApiError(detail, response.status)
   }
 
   return (await response.json()) as T
