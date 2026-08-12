@@ -2627,30 +2627,70 @@ details[open] > summary > * > .collapsible-caret {
   margin: 0.25rem 0 0;
 }
 
+/* One collapsible row per file. The rows share one outer border so the list
+   still reads as a single unit when every file is closed. */
 .feature-diff-files {
   margin: 0.75rem 0;
-  padding: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  list-style: none;
   overflow: hidden;
 }
 
-.feature-diff-files li {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.45rem 0.65rem;
-  background: var(--panel2);
+.feature-diff-file + .feature-diff-file {
+  border-top: 1px solid var(--line);
 }
 
-.feature-diff-files li + li {
-  border-top: 1px solid var(--line);
+.feature-diff-file-toggle {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border: 0;
+  background: var(--panel2);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.feature-diff-file-toggle[aria-disabled='true'] {
+  cursor: default;
+}
+
+button.feature-diff-file-toggle:hover {
+  background: var(--panel);
+}
+
+.feature-diff-file-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.feature-diff-file-caret {
+  flex-shrink: 0;
+  width: 0.9em;
+  color: var(--muted);
+}
+
+.feature-diff-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .feature-diff-file-tally {
   flex-shrink: 0;
   color: var(--muted);
+}
+
+/* Nested inside a file row, so it loses the outer margin and border the
+   standalone patch block used to carry. */
+.feature-diff-file .feature-diff-patch {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
 }
 
 .feature-diff-patch {

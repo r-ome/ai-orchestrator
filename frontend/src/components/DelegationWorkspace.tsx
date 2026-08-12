@@ -112,6 +112,118 @@ function patchLineClass(line: string): string {
   return 'feature-diff-context'
 }
 
+/** One file's slice of a unified patch. */
+interface PatchFile {
+  path: string
+  lines: string[]
+}
+
+/**
+ * Splits a unified patch into one entry per file.
+ *
+ * The backend returns every file in a single patch string, so the reader had
+ * to scroll one blob to find a file. Git starts each file with `diff --git`,
+ * which is the only reliable boundary: a `+++ b/…` line can be `/dev/null`
+ * for a deletion, and content lines can look like anything.
+ */
+function splitPatchByFile(patch: string): PatchFile[] {
+  if (!patch) return []
+  const files: PatchFile[] = []
+  let current: PatchFile | null = null
+
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      current = { path: gitHeaderPath(line), lines: [line] }
+      files.push(current)
+      continue
+    }
+    // Anything before the first header belongs to no file; keep it visible
+    // rather than dropping it, so a malformed patch is still readable.
+    if (current === null) {
+      current = { path: '', lines: [] }
+      files.push(current)
+    }
+    current.lines.push(line)
+  }
+  return files
+}
+
+/**
+ * The path from a `diff --git a/x b/x` line.
+ *
+ * Takes the b-side, which is the path after the change, and falls back to the
+ * a-side for a deletion. Paths containing spaces make the split ambiguous, so
+ * the halves are matched against each other before trusting either.
+ */
+function gitHeaderPath(line: string): string {
+  const rest = line.slice('diff --git '.length)
+  const parts = rest.split(' ')
+  const half = Math.floor(parts.length / 2)
+  const left = parts.slice(0, half).join(' ')
+  const right = parts.slice(half).join(' ')
+  const strip = (value: string) => value.replace(/^[ab]\//, '')
+  if (parts.length % 2 === 0 && strip(left) === strip(right)) return strip(left)
+  return strip(right) || strip(left) || rest
+}
+
+/** A file's line tally, read from the patch when numstat did not name it. */
+function tallyLines(lines: string[]): { additions: number; deletions: number } {
+  let additions = 0
+  let deletions = 0
+  for (const line of lines) {
+    if (line.startsWith('+') && !line.startsWith('+++')) additions += 1
+    else if (line.startsWith('-') && !line.startsWith('---')) deletions += 1
+  }
+  return { additions, deletions }
+}
+
+/** One file in the diff, collapsed until the reader opens it. */
+function PatchFileView({
+  file,
+  additions,
+  deletions,
+  binary,
+  defaultOpen,
+}: {
+  file: PatchFile
+  additions: number
+  deletions: number
+  binary: boolean
+  defaultOpen: boolean
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="feature-diff-file">
+      <button
+        type="button"
+        className="feature-diff-file-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="feature-diff-file-caret" aria-hidden="true">
+          {open ? '▾' : '▸'}
+        </span>
+        <span className="mono feature-diff-file-path">{file.path || 'Patch'}</span>
+        <span className="mono feature-diff-file-tally">
+          {binary ? 'binary' : `+${additions} / −${deletions}`}
+        </span>
+      </button>
+      {open && (
+        <pre
+          className="feature-diff-patch"
+          aria-label={`Diff for ${file.path || 'the patch'}`}
+        >
+          {file.lines.map((line, index) => (
+            <span key={index} className={patchLineClass(line)}>
+              {`${line}\n`}
+            </span>
+          ))}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 function FeatureCodeDiff({
   projectName,
   sessionId,
@@ -145,7 +257,26 @@ function FeatureCodeDiff({
     revisionKey,
   ])
   const [mergeOpen, setMergeOpen] = useState(false)
-  const lines = useMemo(() => diff.data?.patch.split('\n') ?? [], [diff.data?.patch])
+  const patchFiles = useMemo(
+    () => splitPatchByFile(diff.data?.patch ?? ''),
+    [diff.data?.patch],
+  )
+  // numstat is the authority on totals; the patch is the authority on content.
+  // A binary file appears in numstat with no hunks, so the two lists differ.
+  const tallyByPath = useMemo(() => {
+    const map = new Map<string, { additions: number; deletions: number; binary: boolean }>()
+    for (const file of diff.data?.files ?? []) {
+      map.set(file.path, {
+        additions: file.additions ?? 0,
+        deletions: file.deletions ?? 0,
+        binary: file.binary,
+      })
+    }
+    return map
+  }, [diff.data?.files])
+  // Open a single file by default. Opening all of them reproduces the wall of
+  // text this replaced.
+  const singleFile = patchFiles.length === 1
   const approved = review?.status === 'completed' && review.approved === true
   const pinned = approved && diff.data?.review_id === review.id
   const merged = Boolean(review?.source_merged_at)
@@ -188,32 +319,48 @@ function FeatureCodeDiff({
 
       {diff.data && (
         <>
-          {diff.data.files.length > 0 ? (
-            <ul className="feature-diff-files">
-              {diff.data.files.map((file) => (
-                <li key={file.path}>
-                  <span className="mono">{file.path}</span>
+          {diff.data.files.length === 0 && (
+            <p className="status">The accepted feature commits contain no file changes.</p>
+          )}
+
+          {/* One collapsible section per file, so a 158-line file no longer
+              buries the two-line one below it. */}
+          {patchFiles.length > 0 && (
+            <div className="feature-diff-files">
+              {patchFiles.map((file, index) => {
+                const known = tallyByPath.get(file.path)
+                const counted = known ?? tallyLines(file.lines)
+                return (
+                  <PatchFileView
+                    key={`${file.path}-${index}`}
+                    file={file}
+                    additions={counted.additions}
+                    deletions={counted.deletions}
+                    binary={known?.binary ?? false}
+                    defaultOpen={singleFile}
+                  />
+                )
+              })}
+            </div>
+          )}
+
+          {/* A file numstat counted but the patch never described: a binary
+              file, or one cut off by the size limit. */}
+          {diff.data.files
+            .filter((file) => !patchFiles.some((entry) => entry.path === file.path))
+            .map((file) => (
+              <div className="feature-diff-file" key={`absent-${file.path}`}>
+                <div className="feature-diff-file-toggle" aria-disabled="true">
+                  <span className="feature-diff-file-caret" aria-hidden="true" />
+                  <span className="mono feature-diff-file-path">{file.path}</span>
                   <span className="mono feature-diff-file-tally">
                     {file.binary
                       ? 'binary'
                       : `+${file.additions ?? 0} / −${file.deletions ?? 0}`}
                   </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="status">The accepted feature commits contain no file changes.</p>
-          )}
-
-          {diff.data.patch && (
-            <pre className="feature-diff-patch" aria-label="Unified code diff">
-              {lines.map((line, index) => (
-                <span key={index} className={patchLineClass(line)}>
-                  {`${line}\n`}
-                </span>
-              ))}
-            </pre>
-          )}
+                </div>
+              </div>
+            ))}
 
           {diff.data.truncated && (
             <p className="status status-warning">
