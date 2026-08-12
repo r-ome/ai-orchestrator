@@ -122,6 +122,369 @@ def _create_legacy_sandbox_database(database_path: Path) -> ControllerStore:
     return ControllerStore(database_path)
 
 
+def _store_with_sandbox(
+    tmp_path: Path,
+    *,
+    sandbox_id: str,
+    project_id: str,
+    lifecycle_version: str,
+) -> ControllerStore:
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+    store.initialize()
+    if lifecycle_version == "v1":
+        store.register_v1_project(
+            project_id=project_id,
+            remote_url=f"https://example.test/{project_id}.git",
+            default_branch="main",
+            mirror_volume=f"{project_id}-mirror",
+            created_at="2026-08-12T00:00:00Z",
+        )
+        store.register_v1_sandbox(
+            sandbox_id=sandbox_id,
+            project_id=project_id,
+            project_name=project_id,
+            volume_name=f"{sandbox_id}-volume",
+            created_at="2026-08-12T00:00:00Z",
+        )
+    else:
+        store.register_sandbox(
+            sandbox_id=sandbox_id,
+            project_id=project_id,
+            project_name=project_id,
+            source_path=f"/projects/{project_id}",
+            volume_name=f"{sandbox_id}-volume",
+            status="ready",
+            created_at="2026-08-12T00:00:00Z",
+        )
+    return store
+
+
+def _seed_planning_delegation_tree(
+    store: ControllerStore,
+    *,
+    sandbox_id: str,
+    project_id: str,
+) -> None:
+    """Create every non-cascading planning and delegation child for one sandbox."""
+    prefix = sandbox_id
+    now = "2026-08-12T00:00:00Z"
+    session_id = f"{prefix}-session"
+    context_id = f"{prefix}-context"
+    delegation_id = f"{prefix}-delegation"
+    task_id = f"{prefix}-task"
+    work_item_id = f"{prefix}-work-item"
+    with store._connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO planning_sessions(
+                id, project_id, sandbox_id, project_name, title, status,
+                clarifier_provider, planner_provider, reviewer_provider,
+                credential_profile, max_review_turns, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'Plan', 'plan_ready', 'test', 'test', 'test',
+                      'default', 1, ?, ?)
+            """,
+            (session_id, project_id, sandbox_id, project_id, now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO planning_messages(session_id, sequence, role, text, created_at)
+            VALUES (?, 1, 'user', 'Plan this work', ?)
+            """,
+            (session_id, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO planning_findings(
+                session_id, finding_id, severity, text, status,
+                raised_in_round, last_seen_round, updated_at
+            ) VALUES (?, 'finding-1', 'warning', 'Check this', 'open', 1, 1, ?)
+            """,
+            (session_id, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO planning_plan_revisions(
+                session_id, revision, plan_json, plan_markdown, created_at
+            ) VALUES (?, 1, '{}', 'Plan', ?)
+            """,
+            (session_id, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO implementation_contexts(
+                id, session_id, sandbox_id, status, created_at, updated_at
+            ) VALUES (?, ?, ?, 'ready', ?, ?)
+            """,
+            (context_id, session_id, sandbox_id, now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO tasks(
+                id, sandbox_id, branch, base_commit, status, created_at, updated_at
+            ) VALUES (?, ?, 'task/branch', '0000000000000000000000000000000000000000',
+                      'failed', ?, ?)
+            """,
+            (task_id, sandbox_id, now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO delegations(
+                id, session_id, sandbox_id, context_id, revision, status, created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, 1, 'completed', ?, ?)
+            """,
+            (delegation_id, session_id, sandbox_id, context_id, now, now),
+        )
+        connection.execute(
+            """
+                INSERT INTO work_items(
+                    id, delegation_id, key, position, title, objective, scope,
+                    dependencies_json, files_json, symbols_json, write_scope_json,
+                    acceptance_criteria_json, verification_json, complexity,
+                    architecture_json, risks_json, created_at
+                ) VALUES (?, ?, 'item-1', 1, 'Item', 'Do the work', 'src', '[]', '[]',
+                          '[]', '[]', '[]', '[]', 'small', '[]', '[]', ?)
+            """,
+            (work_item_id, delegation_id, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO work_item_routing(work_item_id, provider, model, actor, updated_at)
+            VALUES (?, 'test', 'test-model', 'tester', ?)
+            """,
+            (work_item_id, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO work_item_runs(
+                id, work_item_id, delegation_id, attempt, status, task_id, created_at,
+                updated_at
+            ) VALUES (?, ?, ?, 1, 'completed', ?, ?, ?)
+            """,
+            (f"{prefix}-work-item-run", work_item_id, delegation_id, task_id, now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO delegation_reviews(
+                id, delegation_id, revision, status, created_at, updated_at
+            ) VALUES (?, ?, 1, 'completed', ?, ?)
+            """,
+            (f"{prefix}-delegation-review", delegation_id, now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO delegation_change_requests(
+                id, delegation_id, revision, status, instructions, provider, model,
+                task_id, created_at, updated_at
+            ) VALUES (?, ?, 1, 'completed', 'Make a change', 'test', 'test-model', ?, ?, ?)
+            """,
+            (f"{prefix}-change-request", delegation_id, task_id, now, now),
+        )
+
+
+def _planning_delegation_counts(
+    store: ControllerStore,
+    sandbox_id: str,
+) -> dict[str, int]:
+    with store._connection() as connection:
+        return {
+            "planning_sessions": connection.execute(
+                "SELECT count(*) FROM planning_sessions WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()[0],
+            "planning_messages": connection.execute(
+                """
+                SELECT count(*) FROM planning_messages WHERE session_id IN (
+                    SELECT id FROM planning_sessions WHERE sandbox_id = ?
+                )
+                """,
+                (sandbox_id,),
+            ).fetchone()[0],
+            "planning_findings": connection.execute(
+                """
+                SELECT count(*) FROM planning_findings WHERE session_id IN (
+                    SELECT id FROM planning_sessions WHERE sandbox_id = ?
+                )
+                """,
+                (sandbox_id,),
+            ).fetchone()[0],
+            "planning_plan_revisions": connection.execute(
+                """
+                SELECT count(*) FROM planning_plan_revisions WHERE session_id IN (
+                    SELECT id FROM planning_sessions WHERE sandbox_id = ?
+                )
+                """,
+                (sandbox_id,),
+            ).fetchone()[0],
+            "implementation_contexts": connection.execute(
+                "SELECT count(*) FROM implementation_contexts WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()[0],
+            "delegations": connection.execute(
+                "SELECT count(*) FROM delegations WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()[0],
+            "delegation_reviews": connection.execute(
+                """
+                SELECT count(*) FROM delegation_reviews WHERE delegation_id IN (
+                    SELECT id FROM delegations WHERE sandbox_id = ?
+                )
+                """,
+                (sandbox_id,),
+            ).fetchone()[0],
+            "delegation_change_requests": connection.execute(
+                """
+                SELECT count(*) FROM delegation_change_requests WHERE delegation_id IN (
+                    SELECT id FROM delegations WHERE sandbox_id = ?
+                )
+                """,
+                (sandbox_id,),
+            ).fetchone()[0],
+            "work_items": connection.execute(
+                """
+                SELECT count(*) FROM work_items WHERE delegation_id IN (
+                    SELECT id FROM delegations WHERE sandbox_id = ?
+                )
+                """,
+                (sandbox_id,),
+            ).fetchone()[0],
+            "work_item_runs": connection.execute(
+                """
+                SELECT count(*) FROM work_item_runs WHERE delegation_id IN (
+                    SELECT id FROM delegations WHERE sandbox_id = ?
+                )
+                """,
+                (sandbox_id,),
+            ).fetchone()[0],
+            "work_item_routing": connection.execute(
+                """
+                SELECT count(*) FROM work_item_routing WHERE work_item_id IN (
+                    SELECT id FROM work_items WHERE delegation_id IN (
+                        SELECT id FROM delegations WHERE sandbox_id = ?
+                    )
+                )
+                """,
+                (sandbox_id,),
+            ).fetchone()[0],
+            "tasks": connection.execute(
+                "SELECT count(*) FROM tasks WHERE sandbox_id = ?",
+                (sandbox_id,),
+            ).fetchone()[0],
+        }
+
+
+def test_delete_v1_sandbox_manifest_deletes_planning_and_delegation_children(
+    tmp_path: Path,
+) -> None:
+    store = _store_with_sandbox(
+        tmp_path,
+        sandbox_id="v1-sandbox",
+        project_id="v1-project",
+        lifecycle_version="v1",
+    )
+    _seed_planning_delegation_tree(
+        store,
+        sandbox_id="v1-sandbox",
+        project_id="v1-project",
+    )
+    assert set(_planning_delegation_counts(store, "v1-sandbox").values()) == {1}
+
+    store.delete_v1_sandbox_manifest("v1-sandbox")
+
+    assert set(_planning_delegation_counts(store, "v1-sandbox").values()) == {0}
+    assert store.sandbox("v1-sandbox") is None
+    assert store.project("v1-project") is not None
+    _assert_database_is_consistent(store.database_path)
+
+
+def test_delete_sandbox_deletes_legacy_planning_and_delegation_children(
+    tmp_path: Path,
+) -> None:
+    store = _store_with_sandbox(
+        tmp_path,
+        sandbox_id="legacy-sandbox",
+        project_id="legacy-project",
+        lifecycle_version="legacy",
+    )
+    _seed_planning_delegation_tree(
+        store,
+        sandbox_id="legacy-sandbox",
+        project_id="legacy-project",
+    )
+    assert set(_planning_delegation_counts(store, "legacy-sandbox").values()) == {1}
+
+    store.delete_sandbox("legacy-sandbox")
+
+    assert set(_planning_delegation_counts(store, "legacy-sandbox").values()) == {0}
+    assert store.sandbox("legacy-sandbox") is None
+    assert store.project("legacy-project") is None
+    _assert_database_is_consistent(store.database_path)
+
+
+def test_deleting_a_sandbox_keeps_another_sandbox_planning_tree_intact(
+    tmp_path: Path,
+) -> None:
+    store = _store_with_sandbox(
+        tmp_path,
+        sandbox_id="first-sandbox",
+        project_id="first-project",
+        lifecycle_version="legacy",
+    )
+    store.register_sandbox(
+        sandbox_id="second-sandbox",
+        project_id="second-project",
+        project_name="second-project",
+        source_path="/projects/second-project",
+        volume_name="second-sandbox-volume",
+        status="ready",
+        created_at="2026-08-12T00:00:00Z",
+    )
+    _seed_planning_delegation_tree(
+        store,
+        sandbox_id="first-sandbox",
+        project_id="first-project",
+    )
+    _seed_planning_delegation_tree(
+        store,
+        sandbox_id="second-sandbox",
+        project_id="second-project",
+    )
+    expected_second_tree = _planning_delegation_counts(store, "second-sandbox")
+
+    store.delete_sandbox("first-sandbox")
+
+    assert set(_planning_delegation_counts(store, "first-sandbox").values()) == {0}
+    assert _planning_delegation_counts(store, "second-sandbox") == expected_second_tree
+    assert store.sandbox("second-sandbox") is not None
+    _assert_database_is_consistent(store.database_path)
+
+
+def test_v1_destroy_preserves_its_project_and_legacy_destroy_removes_its_last_project(
+    tmp_path: Path,
+) -> None:
+    store = _store_with_sandbox(
+        tmp_path,
+        sandbox_id="v1-sandbox",
+        project_id="v1-project",
+        lifecycle_version="v1",
+    )
+    store.register_sandbox(
+        sandbox_id="legacy-sandbox",
+        project_id="legacy-project",
+        project_name="legacy-project",
+        source_path="/projects/legacy-project",
+        volume_name="legacy-sandbox-volume",
+        status="ready",
+        created_at="2026-08-12T00:00:00Z",
+    )
+
+    store.delete_v1_sandbox_manifest("v1-sandbox")
+    store.delete_sandbox("legacy-sandbox")
+
+    assert store.project("v1-project") is not None
+    assert store.project("legacy-project") is None
+
+
 def test_fresh_database_applies_sandbox_migrations(tmp_path: Path) -> None:
     store = ControllerStore(tmp_path / "controller.sqlite3")
 

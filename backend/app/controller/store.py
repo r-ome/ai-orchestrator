@@ -1436,6 +1436,132 @@ class ControllerStore:
             ).fetchone()
         return _row(row)
 
+    def _delete_sandbox_children(
+        self,
+        connection: sqlite3.Connection,
+        sandbox_id: str,
+    ) -> None:
+        """Delete non-cascading sandbox children before their parents."""
+        connection.execute(
+            """
+            DELETE FROM work_item_routing WHERE work_item_id IN (
+                SELECT id FROM work_items WHERE delegation_id IN (
+                    SELECT id FROM delegations WHERE sandbox_id = ?
+                )
+            )
+            """,
+            (sandbox_id,),
+        )
+        connection.execute(
+            """
+            DELETE FROM work_item_runs
+            WHERE work_item_id IN (
+                SELECT id FROM work_items WHERE delegation_id IN (
+                    SELECT id FROM delegations WHERE sandbox_id = ?
+                )
+            )
+            OR delegation_id IN (
+                SELECT id FROM delegations WHERE sandbox_id = ?
+            )
+            OR task_id IN (SELECT id FROM tasks WHERE sandbox_id = ?)
+            """,
+            (sandbox_id, sandbox_id, sandbox_id),
+        )
+        connection.execute(
+            """
+            DELETE FROM work_items WHERE delegation_id IN (
+                SELECT id FROM delegations WHERE sandbox_id = ?
+            )
+            """,
+            (sandbox_id,),
+        )
+        connection.execute(
+            """
+            DELETE FROM delegation_change_requests
+            WHERE delegation_id IN (
+                SELECT id FROM delegations WHERE sandbox_id = ?
+            )
+            OR task_id IN (SELECT id FROM tasks WHERE sandbox_id = ?)
+            """,
+            (sandbox_id, sandbox_id),
+        )
+        connection.execute(
+            """
+            DELETE FROM delegation_reviews WHERE delegation_id IN (
+                SELECT id FROM delegations WHERE sandbox_id = ?
+            )
+            """,
+            (sandbox_id,),
+        )
+        connection.execute(
+            "DELETE FROM delegations WHERE sandbox_id = ?", (sandbox_id,)
+        )
+        connection.execute(
+            "DELETE FROM implementation_contexts WHERE sandbox_id = ?",
+            (sandbox_id,),
+        )
+        connection.execute(
+            """
+            DELETE FROM planning_plan_revisions WHERE session_id IN (
+                SELECT id FROM planning_sessions WHERE sandbox_id = ?
+            )
+            """,
+            (sandbox_id,),
+        )
+        connection.execute(
+            """
+            DELETE FROM planning_findings WHERE session_id IN (
+                SELECT id FROM planning_sessions WHERE sandbox_id = ?
+            )
+            """,
+            (sandbox_id,),
+        )
+        connection.execute(
+            """
+            DELETE FROM planning_messages WHERE session_id IN (
+                SELECT id FROM planning_sessions WHERE sandbox_id = ?
+            )
+            """,
+            (sandbox_id,),
+        )
+        connection.execute(
+            "DELETE FROM planning_sessions WHERE sandbox_id = ?", (sandbox_id,)
+        )
+        connection.execute(
+            """
+            DELETE FROM assigned_ports WHERE preview_run_id IN (
+                SELECT id FROM preview_runs WHERE sandbox_id = ?
+            )
+            """,
+            (sandbox_id,),
+        )
+        connection.execute(
+            "DELETE FROM protected_file_baselines WHERE sandbox_id = ?",
+            (sandbox_id,),
+        )
+        connection.execute("DELETE FROM approvals WHERE sandbox_id = ?", (sandbox_id,))
+        connection.execute(
+            "DELETE FROM review_rounds WHERE sandbox_id = ?", (sandbox_id,)
+        )
+        connection.execute("DELETE FROM tasks WHERE sandbox_id = ?", (sandbox_id,))
+        connection.execute(
+            "DELETE FROM preview_runs WHERE sandbox_id = ?", (sandbox_id,)
+        )
+        connection.execute(
+            """
+            DELETE FROM agent_writer_sessions
+            WHERE sandbox_id = ?
+            OR agent_run_id IN (SELECT id FROM agent_runs WHERE sandbox_id = ?)
+            """,
+            (sandbox_id, sandbox_id),
+        )
+        connection.execute("DELETE FROM agent_runs WHERE sandbox_id = ?", (sandbox_id,))
+        connection.execute(
+            "DELETE FROM shared_database_schemas WHERE sandbox_id = ?",
+            (sandbox_id,),
+        )
+        connection.execute("DELETE FROM events WHERE sandbox_id = ?", (sandbox_id,))
+
     def delete_sandbox(self, sandbox_id: str) -> None:
         """Deletes controller state after Docker resources leave the sandbox."""
         with self._connection() as connection:
@@ -1446,35 +1572,7 @@ class ControllerStore:
             if row is None:
                 return
             project_key = str(row["project_id"])
-            connection.execute(
-                "DELETE FROM assigned_ports WHERE preview_run_id IN "
-                "(SELECT id FROM preview_runs WHERE sandbox_id = ?)",
-                (sandbox_id,),
-            )
-            connection.execute(
-                "DELETE FROM protected_file_baselines WHERE sandbox_id = ?",
-                (sandbox_id,),
-            )
-            connection.execute("DELETE FROM approvals WHERE sandbox_id = ?", (sandbox_id,))
-            connection.execute(
-                "DELETE FROM review_rounds WHERE sandbox_id = ?",
-                (sandbox_id,),
-            )
-            connection.execute("DELETE FROM tasks WHERE sandbox_id = ?", (sandbox_id,))
-            connection.execute("DELETE FROM events WHERE sandbox_id = ?", (sandbox_id,))
-            connection.execute(
-                "DELETE FROM agent_writer_sessions WHERE sandbox_id = ?",
-                (sandbox_id,),
-            )
-            connection.execute("DELETE FROM agent_runs WHERE sandbox_id = ?", (sandbox_id,))
-            connection.execute(
-                "DELETE FROM preview_runs WHERE sandbox_id = ?",
-                (sandbox_id,),
-            )
-            connection.execute(
-                "DELETE FROM shared_database_schemas WHERE sandbox_id = ?",
-                (sandbox_id,),
-            )
+            self._delete_sandbox_children(connection, sandbox_id)
             connection.execute("DELETE FROM sandboxes WHERE id = ?", (sandbox_id,))
             remaining = connection.execute(
                 "SELECT 1 FROM sandboxes WHERE project_id = ? LIMIT 1",
