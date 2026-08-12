@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import docker
 import pytest
 from fastapi.testclient import TestClient
-from docker.errors import APIError, NotFound
+from docker.errors import APIError, ContainerError, NotFound
 
 from app.agents.models import AgentProvider
 from app.controller.store import get_controller_store
@@ -1178,6 +1178,50 @@ def test_publish_failure_records_a_retryable_checkpoint(
     assert manifest is not None
     assert manifest.lifecycle_status == "ready"
     assert manifest.operation_phase == "pushing"
+
+
+def test_publish_push_failure_stores_a_safe_message(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created = _create(
+        client,
+        engine_confirmation={
+            "engine": "sqlite",
+            "migrate_commands": ["make migrate"],
+            "commands_source": {"migrate": "makefile"},
+            "actor": "jerome",
+        },
+    ).json()
+    stderr = (
+        b"remote: Permission to r-ome/personal-blog.git denied to r-ome.\n"
+        b"fatal: unable to access 'https://github.com/r-ome/personal-blog/': "
+        b"The requested URL returned error: 403\n"
+    )
+    error = ContainerError(
+        container="git-push",
+        exit_status=128,
+        command="set -eu\ngit -C /mirror push origin",
+        image="alpine/git:latest",
+        stderr=stderr,
+    )
+    monkeypatch.setattr(
+        sandbox_router,
+        "publish_reviewed_feature",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+    )
+
+    response = client.post(f"/sandboxes/{created['sandbox_id']}/publish")
+
+    publication = get_controller_store().sandbox_publication(created["sandbox_id"])
+    assert response.status_code == 424
+    assert publication is not None
+    assert publication["last_error"] == (
+        "GitHub rejected the write token for r-ome/personal-blog: "
+        "Permission to r-ome/personal-blog.git denied to r-ome. "
+        "The token usually needs the repo scope (classic) or Contents write "
+        "permission (fine-grained)."
+    )
+    assert "/run/secrets/github_write_token" not in response.json()["detail"]
 
 
 def test_publish_pr_failure_keeps_the_pushed_commit_and_retry_creates_one_pr(

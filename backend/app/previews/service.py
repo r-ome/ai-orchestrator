@@ -2195,7 +2195,7 @@ def _stop_idle_shared_server(
         server = _existing_shared_server(docker_client, names["container"])
         if server is not None:
             try:
-                server.remove(force=True)
+                server.remove(force=True, v=True)
             except DockerException:
                 return
         for network in docker_client.networks.list(names=[names["network"]]):
@@ -2608,7 +2608,7 @@ def _run_prepare(
     finally:
         if container is not None:
             try:
-                container.remove(force=True)
+                container.remove(force=True, v=True)
             except DockerException:
                 pass
 
@@ -3443,7 +3443,7 @@ def _gateway_proxy(
     except Exception:
         if gateway is not None:
             try:
-                gateway.remove(force=True)
+                gateway.remove(force=True, v=True)
             except DockerException:
                 pass
         try:
@@ -3651,7 +3651,8 @@ def _remove_resources(
                 continue
     for container in resources.get("containers") or []:
         try:
-            container.remove(force=True)
+            # Docker removes anonymous volumes only; named sandbox and mirror volumes survive.
+            container.remove(force=True, v=True)
             counts["containers"] += 1
         except NotFound:
             counts["containers"] += 1

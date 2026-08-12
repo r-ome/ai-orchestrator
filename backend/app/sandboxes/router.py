@@ -48,6 +48,7 @@ from app.sandboxes.mirror import (
 from app.sandboxes.git import (
     count_mirror_staleness,
     create_workspace_safety_ref,
+    describe_git_failure,
     fetch_canonical_mirror,
     mirror_base_commit,
     require_clean_workspace,
@@ -842,13 +843,14 @@ def publish_sandbox(
                         remote_branch=remote_branch,
                     )
             except Exception as error:
+                failure_message = describe_git_failure(error)
                 prior = controller_store.sandbox_publication(sandbox_id) or {}
                 controller_store.record_sandbox_publication(
                     sandbox_id=sandbox_id,
                     remote_branch=remote_branch,
                     last_pushed_commit=_optional_string(prior.get("last_pushed_commit")),
                     remote_branch_sha=_optional_string(prior.get("remote_branch_sha")),
-                    last_error=str(error),
+                    last_error=failure_message,
                 )
                 failed = read_manifest(controller_store, sandbox_id)
                 if failed is not None:
@@ -859,7 +861,7 @@ def publish_sandbox(
                             lifecycle_status="ready",
                             operation="publish",
                             operation_phase="pushing",
-                            last_error=str(error),
+                            last_error=failure_message,
                         ),
                     )
                 raise
@@ -968,7 +970,7 @@ def publish_sandbox(
     except PublishError as error:
         raise HTTPException(error.status_code, error.detail) from error
     except (DockerException, RuntimeError, ValueError) as error:
-        raise HTTPException(status.HTTP_424_FAILED_DEPENDENCY, str(error)) from error
+        raise HTTPException(status.HTTP_424_FAILED_DEPENDENCY, describe_git_failure(error)) from error
 
 
 @router.get("/{sandbox_id}/publication", response_model=SandboxPublicationResponse)

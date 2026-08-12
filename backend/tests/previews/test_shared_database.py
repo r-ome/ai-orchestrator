@@ -92,8 +92,9 @@ class _FakeDocker:
         def reload(self) -> None:
             return None
 
-        def remove(self, force: bool = False) -> None:
+        def remove(self, force: bool = False, v: bool = False) -> None:
             del force
+            del v
 
     class _Containers:
         def __init__(self, outer: "_FakeDocker") -> None:

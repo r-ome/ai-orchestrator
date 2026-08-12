@@ -1,6 +1,7 @@
 """Hardened execution for controller-launched Git containers."""
 
 import os
+import re
 import shutil
 import tempfile
 from contextlib import contextmanager
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import Any, Iterator, Protocol
 
 from docker.client import DockerClient
-from docker.errors import ImageNotFound
+from docker.errors import ContainerError, ImageNotFound
 
 from app.controller.config import get_controller_settings
 
@@ -41,6 +42,79 @@ GITHUB_READ_TOKEN_ENVIRONMENT_VARIABLE = "ORCHESTRATOR_GITHUB_READ_TOKEN"
 GITHUB_READ_TOKEN_PATH = "/run/secrets/github_read_token"
 GITHUB_WRITE_TOKEN_ENVIRONMENT_VARIABLE = "ORCHESTRATOR_GITHUB_WRITE_TOKEN"
 GITHUB_WRITE_TOKEN_PATH = "/run/secrets/github_write_token"
+
+
+def describe_git_failure(error: Exception) -> str:
+    """Return a safe, operator-facing summary of a Git container failure."""
+    if not isinstance(error, ContainerError):
+        try:
+            return str(error)
+        except Exception:
+            return type(error).__name__
+
+    try:
+        stderr = error.stderr
+        if isinstance(stderr, bytes):
+            output = stderr.decode(errors="replace")
+        elif isinstance(stderr, str):
+            output = stderr
+        else:
+            output = ""
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        if not lines:
+            return f"Git failed with exit status {_container_error_exit_status(error)}"
+        lowered_output = output.lower()
+        if "denied to" in lowered_output or "the requested url returned error: 403" in lowered_output:
+            repository = _github_repository_from_stderr(output)
+            target = f" for {repository}" if repository else ""
+            # Quote what GitHub actually said. A 403 is usually a missing scope,
+            # but SSO enforcement and branch protection land here too, and each
+            # needs a different remedy. Naming only the likeliest one sends an
+            # operator down the wrong path.
+            reason = _denial_reason(lines)
+            return (
+                f"GitHub rejected the write token{target}: {reason} "
+                "The token usually needs the repo scope (classic) or Contents write "
+                "permission (fine-grained)."
+            )
+        return "; ".join(_without_remote_prefix(line) for line in lines[-3:])[:500]
+    except Exception:
+        return f"Git failed with exit status {_container_error_exit_status(error)}"
+
+
+def _container_error_exit_status(error: ContainerError) -> str:
+    try:
+        return str(error.exit_status)
+    except Exception:
+        return "unknown"
+
+
+def _denial_reason(lines: list[str]) -> str:
+    """Pick the line that says why, preferring GitHub's own wording."""
+    for line in lines:
+        stripped = _without_remote_prefix(line)
+        if "denied" in stripped.lower():
+            return stripped if stripped.endswith(".") else f"{stripped}."
+    return "the push was refused."
+
+
+def _without_remote_prefix(line: str) -> str:
+    if line.startswith("remote:"):
+        return line.removeprefix("remote:").lstrip()
+    return line
+
+
+def _github_repository_from_stderr(stderr: str) -> str | None:
+    patterns = (
+        r"Permission to ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+) denied",
+        r"github\.com[/:]([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, stderr, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).removesuffix(".git")
+    return None
+
 
 _GITHUB_READ_CREDENTIAL_HELPER = (
     "!f() { "
