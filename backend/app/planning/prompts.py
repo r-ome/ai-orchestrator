@@ -181,11 +181,23 @@ def feature_brief(
 
 
 def _render_messages(messages: Sequence[Mapping[str, Any]]) -> str:
-    if not messages:
+    """Render one conversation, excluding operator diagnostics.
+
+    System entries are written for the person reading the session: a failed
+    turn's raw container log, and retry notices. They are not conversation, and
+    a raw log carries an echo of an earlier prompt, so feeding them back would
+    put stale instructions inside the next turn's prompt.
+    """
+    conversation = [
+        message
+        for message in messages
+        if str(message.get("role", "")).lower() != "system"
+    ]
+    if not conversation:
         return "(none)"
     return "\n".join(
         f"{str(message.get('role', 'unknown')).upper()}: {message.get('text', '')}"
-        for message in messages
+        for message in conversation
     )
 
 

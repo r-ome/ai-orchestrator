@@ -94,3 +94,37 @@ def test_turn_model_names_the_model_each_provider_runs() -> None:
     # Codex carries its reasoning effort: the same model at a different effort
     # is a different run and costs differently.
     assert turn_model(AgentProvider.CODEX, settings) == "gpt-5.6-terra (high effort)"
+
+
+def test_conversation_prompts_exclude_operator_system_messages() -> None:
+    """A failed turn's raw log is written for the reader, not for the next turn.
+
+    That log contains an echo of an earlier prompt, so rendering it back would
+    put stale instructions inside the next turn's own prompt.
+    """
+    messages = [
+        {"role": "user", "text": "Add an article action bar."},
+        {"role": "clarifier", "text": "Which pages should it appear on?"},
+        {
+            "role": "system",
+            "text": "reviewer turn exited with status 1: Review ledger: [] "
+            "Prior findings are context. ERROR: Selected model is at capacity.",
+        },
+    ]
+
+    prompt = clarifier_prompt(title="action bar", messages=messages)
+
+    assert "Which pages should it appear on?" in prompt
+    assert "at capacity" not in prompt
+    # An echoed instruction from the reviewer's prompt, which the clarifier's
+    # own boilerplate never contains.
+    assert "Review ledger:" not in prompt
+
+
+def test_conversation_prompt_reports_no_conversation_when_only_system_remains() -> None:
+    prompt = clarifier_prompt(
+        title="action bar",
+        messages=[{"role": "system", "text": "turn exited with status 1"}],
+    )
+
+    assert "Conversation, oldest first:\n(none)" in prompt

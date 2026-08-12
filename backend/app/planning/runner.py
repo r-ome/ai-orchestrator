@@ -1,4 +1,5 @@
 import json
+import re
 import shlex
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -18,6 +19,17 @@ PLANNING_CREDENTIALS = "/auth"
 PROMPT_VARIABLE = "PLANNING_PROMPT"
 LABEL_SESSION_ID = "orchestrator.planning.session-id"
 LABEL_ROLE = "orchestrator.planning.role"
+
+#: A line announcing a failure, as opposed to a line merely discussing one. The
+#: word must open the line or carry a colon, so prompt text such as "expected
+#: behaviour including errors and edge cases" does not qualify.
+_ERROR_LINE = re.compile(
+    r"^(error|fatal|panic|exception|traceback)\b|\b(error|exception):",
+    re.IGNORECASE,
+)
+_SUMMARY_SCAN_LINES = 40
+_SUMMARY_LINES = 5
+_SUMMARY_LIMIT = 600
 
 
 @dataclass(frozen=True)
@@ -105,10 +117,10 @@ def run_planning_turn(
         raw_output = _text(container.logs())
         exit_code = _exit_code(status)
         if exit_code != 0:
-            tail = raw_output[-2000:]
             raise PlanningTurnError(
                 502,
-                f"{request.role.value} turn exited with status {exit_code}: {tail}",
+                f"{request.role.value} turn exited with status {exit_code}: "
+                f"{_failure_summary(raw_output)}",
                 raw_output=raw_output,
             )
         return TurnResult(
@@ -118,6 +130,27 @@ def run_planning_turn(
         )
     finally:
         _remove_container(container)
+
+
+def _failure_summary(raw_output: str) -> str:
+    """Pick the part of a failed turn's log that explains the failure.
+
+    A provider CLI echoes its whole prompt, so a plain tail buries the reason
+    under several hundred words of instructions -- and that prompt embeds the
+    plan under review, which is longer still. Prefer lines that announce an
+    error, and fall back to the final lines when none does.
+
+    Everything is taken from the end, because a process reports why it is
+    exiting immediately before it exits.
+    """
+    lines = [line.strip() for line in raw_output.splitlines() if line.strip()]
+    if not lines:
+        return "the turn produced no output"
+    tail = lines[-_SUMMARY_SCAN_LINES:]
+    flagged = [line for line in tail if _ERROR_LINE.search(line)]
+    # A provider often prints the same error twice. The reader needs it once.
+    chosen = list(dict.fromkeys(flagged or tail))[-_SUMMARY_LINES:]
+    return " ".join(chosen)[-_SUMMARY_LIMIT:]
 
 
 def _remove_container(container: Any) -> None:

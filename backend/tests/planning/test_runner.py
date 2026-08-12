@@ -285,3 +285,45 @@ def test_container_is_removed_when_payload_parsing_raises(settings: PlanningSett
         run_planning_turn(docker_client, settings, _request())
 
     assert container.removed is True
+
+
+def test_failure_detail_leads_with_the_provider_error_not_the_prompt_echo(
+    settings: PlanningSettings,
+) -> None:
+    """The CLI echoes its prompt, so a plain tail buries the reason."""
+    output = "\n".join(
+        [
+            "Verify the plan against the project at /workspace. It is read-only.",
+            "Cover expected behaviour including errors and edge cases.",
+            "Review ledger: [] Prior findings are context, not truth.",
+            "ERROR: Selected model is at capacity. Please try a different model.",
+            "ERROR: Selected model is at capacity. Please try a different model.",
+        ]
+    ).encode()
+    docker_client = _StubDockerClient([_StubContainer(output=output, status=1)])
+
+    with pytest.raises(PlanningTurnError) as error:
+        run_planning_turn(docker_client, settings, _request())
+
+    detail = error.value.detail
+    assert detail.endswith(
+        "ERROR: Selected model is at capacity. Please try a different model."
+    )
+    # Prompt text is dropped, including a line that merely discusses errors.
+    assert "Review ledger" not in detail
+    assert "edge cases" not in detail
+    # The provider printed the error twice; the reader needs it once.
+    assert detail.count("at capacity") == 1
+    # The untouched log stays on the exception for diagnosis.
+    assert "Review ledger" in error.value.raw_output
+
+
+def test_failure_detail_reports_an_empty_log_plainly(
+    settings: PlanningSettings,
+) -> None:
+    docker_client = _StubDockerClient([_StubContainer(output=b"   \n\n", status=9)])
+
+    with pytest.raises(PlanningTurnError) as error:
+        run_planning_turn(docker_client, settings, _request())
+
+    assert error.value.detail.endswith("the turn produced no output")
