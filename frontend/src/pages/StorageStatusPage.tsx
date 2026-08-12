@@ -1,7 +1,14 @@
+import { useState } from 'react'
+import {
+  fetchOrphanResources,
+  removeOrphanResource,
+  type OrphanResource,
+} from '../api/sandboxes'
 import { fetchStorageStatus, type StorageUsage } from '../api/volumes'
+import ConfirmDialog from '../components/ConfirmDialog'
 import StorageBar from '../components/StorageBar'
 import { useApiResource } from '../hooks/useApiResource'
-import { formatBytes } from '../utils/format'
+import { formatBytes, formatRelativeTime } from '../utils/format'
 
 const CATEGORY_LABELS = {
   images: 'Images',
@@ -11,7 +18,37 @@ const CATEGORY_LABELS = {
 } as const
 
 function StorageStatusPage() {
-  const { data, loading, error, reload } = useApiResource(fetchStorageStatus)
+  const { data, loading, error, reload: reloadStorage } = useApiResource(fetchStorageStatus)
+  const orphans = useApiResource(fetchOrphanResources)
+  const [pendingRemoval, setPendingRemoval] = useState<OrphanResource | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [removalStatus, setRemovalStatus] = useState<string | null>(null)
+
+  const reload = () => {
+    reloadStorage()
+    orphans.reload()
+  }
+
+  const confirmRemove = async () => {
+    if (!pendingRemoval || busy) return
+    setBusy(true)
+    setActionError(null)
+    try {
+      const result = await removeOrphanResource(pendingRemoval.resource)
+      setRemovalStatus(
+        result.removed
+          ? `Removed ${pendingRemoval.name}.`
+          : 'This resource is now claimed and was not removed.',
+      )
+      setPendingRemoval(null)
+      orphans.reload()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const rows: Array<[string, StorageUsage]> = data
     ? (
@@ -135,6 +172,69 @@ function StorageStatusPage() {
             </div>
           </div>
         </>
+      )}
+
+      {/* Independent of the storage figures above. A failing `docker system df`
+          must not hide unclaimed resources, which is when they matter most. */}
+      <div className="card">
+        <div className="card-header"><h2>Unclaimed sandbox resources</h2></div>
+        <div className="card-body">
+          <p className="status">
+            These resources are reported, never deleted automatically. Do not use docker volume prune to clean them up because it also deletes live sandbox and agent credential volumes.
+          </p>
+          {orphans.loading && <p className="status">Loading unclaimed sandbox resources…</p>}
+          {orphans.error && <p className="status status-error" role="alert">Failed to load unclaimed sandbox resources: {orphans.error}</p>}
+          {!orphans.loading && !orphans.error && orphans.data?.resources.length === 0 && (
+            <p className="status status-ok">No unclaimed sandbox resources.</p>
+          )}
+          {orphans.data && orphans.data.resources.length > 0 && (
+            <div className="table-wrapper">
+              <table className="chrome-table">
+                <thead>
+                  <tr>
+                    <th>Resource</th>
+                    <th>Kind</th>
+                    <th>Name</th>
+                    <th>Reported</th>
+                    <th aria-label="Actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {orphans.data.resources.map((resource) => (
+                    <tr key={resource.resource}>
+                      <td className="mono">{resource.resource}</td>
+                      <td>{resource.kind}</td>
+                      <td className="mono">{resource.name}</td>
+                      <td>{formatRelativeTime(resource.reported_at)}</td>
+                      <td>
+                        <button type="button" className="danger" onClick={() => setPendingRemoval(resource)} disabled={busy}>
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {removalStatus && <p className="status">{removalStatus}</p>}
+        </div>
+      </div>
+
+      {pendingRemoval && (
+        <ConfirmDialog
+          title={`Remove ${pendingRemoval.name}?`}
+          confirmPhrase={pendingRemoval.name}
+          confirmLabel="Remove resource"
+          busy={busy}
+          error={actionError}
+          onCancel={() => setPendingRemoval(null)}
+          onConfirm={confirmRemove}
+        >
+          <p>
+            This permanently removes the unclaimed <span className="mono">{pendingRemoval.resource}</span> resource. Docker cannot undo this.
+          </p>
+        </ConfirmDialog>
       )}
     </section>
   )

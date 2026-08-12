@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  createSandbox,
   fetchCopyJobs,
   fetchProjects,
-  fetchSandboxes,
 } from '../api/projects'
+import { createSandbox, fetchSandboxes } from '../api/sandboxes'
 import CopyJobsTable from '../components/CopyJobsTable'
 import CopyLogModal from '../components/CopyLogModal'
 import CopyStatusBadge from '../components/CopyStatusBadge'

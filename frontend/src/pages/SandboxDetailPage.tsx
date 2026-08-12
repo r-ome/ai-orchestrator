@@ -1,16 +1,40 @@
-import { useCallback, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   confirmSandboxEngine,
   fetchSandbox,
   fetchSandboxEngine,
+  publishSandbox,
   removeSandbox,
+  resetSandboxDatabase,
+  resumeSandbox,
+  syncSandbox,
   type EngineDetection,
-} from '../api/projects'
+  type PublishSandboxResult,
+  type SyncSandboxResult,
+} from '../api/sandboxes'
 import ConfirmDialog from '../components/ConfirmDialog'
+import ProjectPlanningSection from '../components/ProjectPlanningSection'
+import SandboxPublicationSection from '../components/SandboxPublicationSection'
+import SandboxRecoverySection from '../components/SandboxRecoverySection'
+import SandboxStalenessSection from '../components/SandboxStalenessSection'
 import { useApiResource } from '../hooks/useApiResource'
 
-const ENGINES = ['mysql', 'postgres', 'sqlite'] as const
+const ENGINES = ['mysql', 'postgres', 'sqlite', 'none'] as const
+const ENGINE_LABELS: Record<(typeof ENGINES)[number], string> = {
+  mysql: 'mysql',
+  postgres: 'postgres',
+  sqlite: 'sqlite',
+  none: 'none — this project has no database',
+}
+
+export type SandboxAction =
+  | 'confirm-engine'
+  | 'sync'
+  | 'publish'
+  | 'reset-db'
+  | 'resume'
+  | 'remove'
 
 function SandboxDetailPage() {
   const { sandboxId = '' } = useParams()
@@ -29,8 +53,23 @@ function SandboxDetailPage() {
   )
   const engine = useApiResource(engineFetcher, [engineFetcher])
   const [selectedEngine, setSelectedEngine] = useState<(typeof ENGINES)[number]>('sqlite')
+  const selectedEngineInitialized = useRef(false)
+  useEffect(() => {
+    selectedEngineInitialized.current = false
+    setSelectedEngine('sqlite')
+  }, [sandboxId])
+  useEffect(() => {
+    if (!engine.data || selectedEngineInitialized.current) return
+    selectedEngineInitialized.current = true
+    setSelectedEngine(engine.data.proposed_engine ?? 'sqlite')
+  }, [engine.data])
   const [actor, setActor] = useState('operator')
-  const [busy, setBusy] = useState(false)
+  // The backend holds one lease per sandbox, so only one lifecycle operation may
+  // be in flight. Naming it also keeps each button's progress label truthful.
+  const [busyAction, setBusyAction] = useState<SandboxAction | null>(null)
+  const busy = busyAction !== null
+  const setBusy = (running: boolean, action: SandboxAction) =>
+    setBusyAction(running ? action : null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [removeOpen, setRemoveOpen] = useState(false)
 
@@ -38,7 +77,7 @@ function SandboxDetailPage() {
     event.preventDefault()
     if (!data || busy) return
     const detection: EngineDetection | null = engine.data
-    setBusy(true)
+    setBusy(true, 'confirm-engine')
     setActionError(null)
     try {
       await confirmSandboxEngine(data.sandbox_id, {
@@ -52,20 +91,88 @@ function SandboxDetailPage() {
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
-      setBusy(false)
+      setBusy(false, 'confirm-engine')
     }
   }
 
   const confirmRemove = async () => {
-    if (!data) return
-    setBusy(true)
+    if (!data || busy) return
+    setBusy(true, 'remove')
     setActionError(null)
     try {
       await removeSandbox(data.sandbox_id)
       navigate('/projects', { replace: true })
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Unknown error')
-      setBusy(false)
+      setBusy(false, 'remove')
+    }
+  }
+
+  const sync = async (stopBlockingPreview: boolean): Promise<SyncSandboxResult | null> => {
+    if (!data || busy) return null
+    setBusy(true, 'sync')
+    setActionError(null)
+    try {
+      const result = await syncSandbox(data.sandbox_id, {
+        stop_blocking_preview: stopBlockingPreview,
+      })
+      reload()
+      return result
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unknown error')
+      return null
+    } finally {
+      setBusy(false, 'sync')
+    }
+  }
+
+  const publish = async (): Promise<PublishSandboxResult | null> => {
+    if (!data || busy) return null
+    setBusy(true, 'publish')
+    setActionError(null)
+    try {
+      const result = await publishSandbox(data.sandbox_id)
+      reload()
+      return result
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unknown error')
+      return null
+    } finally {
+      setBusy(false, 'publish')
+    }
+  }
+
+  const resetDatabase = async (stopBlockingPreview: boolean): Promise<boolean> => {
+    if (!data || busy) return false
+    setBusy(true, 'reset-db')
+    setActionError(null)
+    try {
+      await resetSandboxDatabase(data.sandbox_id, {
+        stop_blocking_preview: stopBlockingPreview,
+      })
+      reload()
+      return true
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unknown error')
+      return false
+    } finally {
+      setBusy(false, 'reset-db')
+    }
+  }
+
+  const resume = async (): Promise<boolean> => {
+    if (!data || busy) return false
+    setBusy(true, 'resume')
+    setActionError(null)
+    try {
+      await resumeSandbox(data.sandbox_id)
+      reload()
+      return true
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unknown error')
+      return false
+    } finally {
+      setBusy(false, 'resume')
     }
   }
 
@@ -107,7 +214,14 @@ function SandboxDetailPage() {
             <dl className="detail-grid">
               <dt>Feature key</dt><dd>{data.feature_key || '—'}</dd>
               <dt>Remote</dt><dd className="mono">{data.remote_url || '—'}</dd>
-              <dt>Database engine</dt><dd>{data.db_engine || 'Not confirmed'}</dd>
+              {/* A bare "none" here would read as "not confirmed yet". Those are
+                  different states, and only one of them needs operator action. */}
+              <dt>Database engine</dt>
+              <dd>
+                {data.db_engine === 'none'
+                  ? 'none — no database'
+                  : data.db_engine || 'Not confirmed'}
+              </dd>
               <dt>Feature branch</dt><dd className="mono">{data.feature_branch || '—'}</dd>
             </dl>
           </div>
@@ -124,8 +238,15 @@ function SandboxDetailPage() {
                 <form className="file-form" onSubmit={confirmEngine}>
                   <label>
                     Database engine
-                    <select value={selectedEngine} onChange={(event) => setSelectedEngine(event.target.value as (typeof ENGINES)[number])} disabled={busy}>
-                      {ENGINES.map((value) => <option key={value} value={value}>{value}</option>)}
+                    <select
+                      value={selectedEngine}
+                      onChange={(event) => {
+                        selectedEngineInitialized.current = true
+                        setSelectedEngine(event.target.value as (typeof ENGINES)[number])
+                      }}
+                      disabled={busy}
+                    >
+                      {ENGINES.map((value) => <option key={value} value={value}>{ENGINE_LABELS[value]}</option>)}
                     </select>
                   </label>
                   <label>
@@ -139,6 +260,45 @@ function SandboxDetailPage() {
               </div>
             </div>
           )}
+
+          {data.lifecycle_status === 'ready' && (
+            // Project planning uses the v1 sandbox ID as the project name.
+            <ProjectPlanningSection
+              projectName={data.sandbox_id}
+              projectReady={data.lifecycle_status === 'ready'}
+            />
+          )}
+
+          {data.lifecycle_status === 'ready' && (
+            <SandboxStalenessSection
+              sandbox={data}
+              busy={busy}
+              pending={busyAction === 'sync'}
+              onSync={sync}
+            />
+          )}
+
+          {data.lifecycle_status === 'ready' && (
+            <SandboxPublicationSection
+              sandbox={data}
+              busy={busy}
+              pending={busyAction === 'publish'}
+              actionError={actionError}
+              onPublish={publish}
+            />
+          )}
+
+          {['ready', 'database_failed', 'degraded'].includes(data.lifecycle_status ?? '') && (
+            <SandboxRecoverySection
+              sandbox={data}
+              busy={busy}
+              resetPending={busyAction === 'reset-db'}
+              resumePending={busyAction === 'resume'}
+              actionError={actionError}
+              onResetDatabase={resetDatabase}
+              onResume={resume}
+            />
+          )}
         </>
       )}
 
@@ -147,12 +307,12 @@ function SandboxDetailPage() {
           title={`Remove ${data.feature_title || data.feature_key || data.sandbox_id}?`}
           confirmPhrase={`REMOVE ${data.feature_key || data.sandbox_id}`}
           confirmLabel="Remove sandbox"
-          busy={busy}
+          busy={busyAction === 'remove'}
           error={actionError}
           onCancel={() => setRemoveOpen(false)}
           onConfirm={confirmRemove}
         >
-          <p>This removes only resources the sandbox manifest owns.</p>
+          <p>This removes only resources the sandbox manifest owns. The sandbox database and its data are destroyed with it.</p>
         </ConfirmDialog>
       )}
     </section>

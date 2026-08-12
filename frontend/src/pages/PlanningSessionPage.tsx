@@ -12,6 +12,8 @@ import {
   type PlanningSessionDetail,
   type PlanningStatus,
 } from '../api/planning'
+import { fetchSandbox, type Sandbox } from '../api/sandboxes'
+import { ApiError } from '../api/client'
 import CollapsibleCard from '../components/CollapsibleCard'
 import ConfirmDialog from '../components/ConfirmDialog'
 import {
@@ -168,7 +170,13 @@ function providerFor(
 
 function PlanningSessionPage() {
   const { projectName = '', sessionId = '' } = useParams()
-  const projectPath = `/projects/${encodeURIComponent(projectName)}`
+  // The planning route calls this projectName, but v1 passes a sandbox ID so
+  // inspect_registered_project can find the managed sandbox.
+  const [sandbox, setSandbox] = useState<Sandbox | null>(null)
+  const projectPath = sandbox
+    ? `/sandboxes/${encodeURIComponent(sandbox.sandbox_id)}`
+    : `/projects/${encodeURIComponent(projectName)}`
+  const projectLabel = sandbox?.feature_title || sandbox?.feature_key || projectName
   const fetcher = useCallback(
     (signal: AbortSignal) => fetchPlanningSession(projectName, sessionId, signal),
     [projectName, sessionId],
@@ -229,6 +237,24 @@ function PlanningSessionPage() {
     const timer = window.setInterval(reload, 2_000)
     return () => window.clearInterval(timer)
   }, [data, reload])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    setSandbox(null)
+
+    void fetchSandbox(projectName, controller.signal)
+      .then(setSandbox)
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        if (err instanceof ApiError && err.status === 404) {
+          setSandbox(null)
+          return
+        }
+        setSandbox(null)
+      })
+
+    return () => controller.abort()
+  }, [projectName])
 
   useEffect(() => {
     setAddingClarification(false)
@@ -301,7 +327,7 @@ function PlanningSessionPage() {
             <span className="breadcrumb-separator" aria-hidden="true">
               /
             </span>
-            <Link to={projectPath}>{projectName}</Link>
+            <Link to={projectPath}>{projectLabel}</Link>
             <span className="breadcrumb-separator" aria-hidden="true">
               /
             </span>
