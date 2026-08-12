@@ -271,6 +271,13 @@ class ItemRouting(BaseModel):
     override_provider: AgentProvider | None = None
     override_model: str | None = None
     warning: str | None = None
+    #: Every model each provider serves, best first. The model override is
+    #: chosen from the entry for the selected provider, because a model name
+    #: only means anything to the provider that serves it.
+    models_by_provider: dict[str, list[str]] = Field(default_factory=dict)
+    #: What each provider would recommend for this item's complexity, so the
+    #: form can show the recommendation before the override is saved.
+    recommended_by_provider: dict[str, str] = Field(default_factory=dict)
 
 
 class WorkItemView(BaseModel):

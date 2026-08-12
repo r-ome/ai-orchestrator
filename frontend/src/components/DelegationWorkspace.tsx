@@ -290,6 +290,31 @@ function RoutingControls({
     routing.override_provider ?? '',
   )
   const [model, setModel] = useState(routing.override_model ?? '')
+  // 'Custom…' keeps an unlisted model reachable. Without it the dropdown would
+  // be a hard gate on a catalogue this deployment may simply not know yet.
+  const [custom, setCustom] = useState(false)
+
+  // Which provider's catalogue applies: the override if set, otherwise the one
+  // routing already resolved.
+  const effectiveProvider = provider || routing.provider
+  const models = routing.models_by_provider?.[effectiveProvider] ?? []
+  const recommended =
+    routing.recommended_by_provider?.[effectiveProvider] ??
+    routing.recommended_model
+  const listed = models.includes(model)
+  const showCustomField = custom || (model !== '' && !listed)
+
+  // A model belongs to one provider, so changing provider drops a model that
+  // provider cannot run rather than saving a mismatch.
+  const changeProvider = (next: AgentProvider | '') => {
+    setProvider(next)
+    const nextProvider = next || routing.provider
+    const nextModels = routing.models_by_provider?.[nextProvider] ?? []
+    if (model && listed && !nextModels.includes(model)) {
+      setModel('')
+      setCustom(false)
+    }
+  }
 
   return (
     <div className="delegation-routing">
@@ -297,7 +322,9 @@ function RoutingControls({
         Provider override
         <select
           value={provider}
-          onChange={(event) => setProvider(event.target.value as AgentProvider | '')}
+          onChange={(event) =>
+            changeProvider(event.target.value as AgentProvider | '')
+          }
           disabled={disabled}
         >
           <option value="">Automatic</option>
@@ -307,13 +334,42 @@ function RoutingControls({
       </label>
       <label>
         Model override
-        <input
-          value={model}
-          maxLength={100}
-          placeholder={routing.recommended_model}
-          onChange={(event) => setModel(event.target.value)}
+        <select
+          value={showCustomField ? '__custom__' : model}
+          onChange={(event) => {
+            const next = event.target.value
+            if (next === '__custom__') {
+              setCustom(true)
+              return
+            }
+            setCustom(false)
+            setModel(next)
+          }}
           disabled={disabled}
-        />
+        >
+          <option value="">
+            Recommended{recommended ? ` (${recommended})` : ''}
+          </option>
+          {models.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+          <option value="__custom__">Custom…</option>
+        </select>
+        {/* Nested inside the label rather than added as a fourth grid child,
+            which would take the button column and push the buttons to a row
+            of their own. */}
+        {showCustomField && (
+          <input
+            aria-label="Custom model"
+            value={model}
+            maxLength={100}
+            placeholder={recommended}
+            onChange={(event) => setModel(event.target.value)}
+            disabled={disabled}
+          />
+        )}
       </label>
       <div className="button-row">
         <button

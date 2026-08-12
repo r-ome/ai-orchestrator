@@ -16,7 +16,7 @@ from app.delegation.models import (
     WorkItemState,
     SetRoutingRequest,
 )
-from app.delegation.routing import RoutingSettings
+from app.delegation.routing import ProviderModels, RoutingSettings
 from app.implementation_context.models import ContextStatus
 from app.planning.models import PlanningStatus
 
@@ -362,7 +362,18 @@ def test_routing_override_is_separate_revisable_state(
     monkeypatch.setattr(
         service,
         "get_routing_settings",
-        lambda: RoutingSettings("small", "standard", "strong", "standard"),
+        lambda: RoutingSettings(
+            claude=ProviderModels(
+                "small", "standard", "strong", "standard", ("strong", "standard", "small")
+            ),
+            codex=ProviderModels(
+                "gpt-small",
+                "gpt-standard",
+                "gpt-strong",
+                "gpt-standard",
+                ("gpt-strong", "gpt-standard", "gpt-small"),
+            ),
+        ),
     )
     created = service.create_revision(store, "session-1", [_item("a", complexity="high")])
 

@@ -646,6 +646,16 @@ def _routing(
         override_provider=override_provider,
         override_model=override.get("model"),
         warning=decision.warning,
+        models_by_provider={
+            provider: list(models)
+            for provider, models in settings.catalogue().items()
+        },
+        recommended_by_provider={
+            provider.value: settings.for_provider(provider).for_complexity(
+                item.complexity
+            )
+            for provider in AgentProvider
+        },
     )
 
 

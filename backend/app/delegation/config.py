@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 
-from app.delegation.routing import RoutingSettings
+from app.delegation.routing import ProviderModels, RoutingSettings
 from app.delegation.verification import VerificationSettings
 
 
@@ -16,15 +16,64 @@ class IntegrationReviewSettings:
     model: str
 
 
+# Each provider serves its own models, so the catalogues never overlap. Order
+# is best first; it is the order the model override dropdown shows.
+DEFAULT_CLAUDE_MODELS = (
+    "claude-fable-5",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-haiku-4-5-20251001",
+)
+DEFAULT_CODEX_MODELS = (
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+)
+
+
 @lru_cache
 def get_routing_settings() -> RoutingSettings:
-    default = os.getenv("ROUTING_DEFAULT_MODEL", "claude-sonnet-5")
+    claude_default = os.getenv("ROUTING_CLAUDE_DEFAULT_MODEL", "claude-sonnet-5")
+    codex_default = os.getenv("ROUTING_CODEX_DEFAULT_MODEL", "gpt-5.6-terra")
     return RoutingSettings(
-        low_model=os.getenv("ROUTING_LOW_MODEL", "claude-haiku-4-5-20251001"),
-        medium_model=os.getenv("ROUTING_MEDIUM_MODEL", "claude-sonnet-5"),
-        high_model=os.getenv("ROUTING_HIGH_MODEL", "claude-opus-5"),
-        default_model=default,
+        claude=ProviderModels(
+            # ROUTING_LOW/MEDIUM/HIGH_MODEL named Claude models but applied to
+            # both providers, so choosing Codex asked it for a Claude model.
+            # They are read here as the Claude fallback, so an existing
+            # deployment keeps its configured tiers.
+            low_model=os.getenv(
+                "ROUTING_CLAUDE_LOW_MODEL",
+                os.getenv("ROUTING_LOW_MODEL", "claude-haiku-4-5-20251001"),
+            ),
+            medium_model=os.getenv(
+                "ROUTING_CLAUDE_MEDIUM_MODEL",
+                os.getenv("ROUTING_MEDIUM_MODEL", "claude-sonnet-5"),
+            ),
+            high_model=os.getenv(
+                "ROUTING_CLAUDE_HIGH_MODEL",
+                os.getenv("ROUTING_HIGH_MODEL", "claude-opus-5"),
+            ),
+            default_model=claude_default,
+            catalogue=_catalogue("ROUTING_CLAUDE_MODELS", DEFAULT_CLAUDE_MODELS),
+        ),
+        codex=ProviderModels(
+            low_model=os.getenv("ROUTING_CODEX_LOW_MODEL", "gpt-5.6-luna"),
+            medium_model=os.getenv("ROUTING_CODEX_MEDIUM_MODEL", "gpt-5.6-terra"),
+            high_model=os.getenv("ROUTING_CODEX_HIGH_MODEL", "gpt-5.6-sol"),
+            default_model=codex_default,
+            catalogue=_catalogue("ROUTING_CODEX_MODELS", DEFAULT_CODEX_MODELS),
+        ),
     )
+
+
+def _catalogue(variable: str, fallback: tuple[str, ...]) -> tuple[str, ...]:
+    """Read a comma-separated model list, keeping order and dropping blanks."""
+    raw = os.getenv(variable)
+    if raw is None:
+        return fallback
+    models = tuple(dict.fromkeys(part.strip() for part in raw.split(",") if part.strip()))
+    return models or fallback
 
 
 @lru_cache

@@ -104,6 +104,12 @@ export interface ItemRouting {
   override_provider: AgentProvider | null
   override_model: string | null
   warning: string | null
+  /** Every model each provider serves, best first. A model name only means
+   *  anything to the provider that serves it, so the model override is chosen
+   *  from the entry for the selected provider. */
+  models_by_provider: Record<string, string[]>
+  /** What each provider recommends for this item's complexity. */
+  recommended_by_provider: Record<string, string>
 }
 
 export interface WorkItemView {
