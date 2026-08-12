@@ -17,6 +17,7 @@ import {
 } from '../api/sandboxes'
 import ConfirmDialog from '../components/ConfirmDialog'
 import ProjectPlanningSection from '../components/ProjectPlanningSection'
+import SandboxPreviewSection from '../components/SandboxPreviewSection'
 import SandboxPublicationSection from '../components/SandboxPublicationSection'
 import SandboxRecoverySection from '../components/SandboxRecoverySection'
 import SandboxStalenessSection from '../components/SandboxStalenessSection'
@@ -296,6 +297,12 @@ function SandboxDetailPage() {
               subject="sandbox"
               basePath={`/sandboxes/${encodeURIComponent(data.sandbox_id)}`}
             />
+          )}
+
+          {/* Above sync and publish, because a running preview is what makes
+              those two ask for consent. */}
+          {data.lifecycle_status === 'ready' && (
+            <SandboxPreviewSection sandboxId={data.sandbox_id} busy={busy} />
           )}
 
           {data.lifecycle_status === 'ready' && (
