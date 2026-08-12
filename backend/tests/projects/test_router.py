@@ -5,6 +5,7 @@ from typing import Any
 from docker.errors import ImageNotFound, NotFound
 from fastapi.testclient import TestClient
 
+from app.controller.store import ControllerStore, get_controller_store
 from app.docker_client import get_docker_client
 from app.main import app
 from app.projects.config import ProjectSettings, get_project_settings
@@ -29,6 +30,7 @@ from app.projects.service import (
     LABEL_STATUS_STORAGE,
     STATUS_STORAGE_CONTROLLER_VOLUME,
 )
+from app.sandboxes.naming import ownership_labels, workspace_volume
 
 client = TestClient(app)
 
@@ -252,6 +254,64 @@ def _register(
 ) -> Any:
     _set_overrides(docker_client, projects_root)
     return client.post("/projects", json={"path": str(source)})
+
+
+def test_get_project_registration_resolves_a_ready_v1_sandbox(tmp_path: Path) -> None:
+    sandbox_id = "a" * 32
+    project_id = "b" * 32
+    workspace = workspace_volume(sandbox_id)
+    docker_client = StubDockerClient()
+    docker_client.volumes.items.append(
+        StubVolume(
+            workspace,
+            ownership_labels(sandbox_id=sandbox_id, project_id=project_id),
+        )
+    )
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+    store.initialize()
+    store.register_v1_project(
+        project_id=project_id,
+        remote_url="https://example.test/managed.git",
+        default_branch="main",
+        mirror_volume="managed-mirror",
+        created_at="2026-08-12T00:00:00Z",
+    )
+    store.register_v1_sandbox(
+        sandbox_id=sandbox_id,
+        project_id=project_id,
+        project_name="managed",
+        volume_name=workspace,
+        created_at="2026-08-12T00:00:00Z",
+    )
+    with store._connection() as connection:
+        connection.execute(
+            "UPDATE sandboxes SET lifecycle_status = 'ready' WHERE id = ?",
+            (sandbox_id,),
+        )
+    _set_overrides(docker_client, tmp_path)
+    app.dependency_overrides[get_controller_store] = lambda: store
+    try:
+        response = client.get(f"/projects/{sandbox_id}")
+        with store._connection() as connection:
+            connection.execute(
+                """
+                UPDATE sandboxes
+                SET lifecycle_status = 'awaiting_engine_confirmation'
+                WHERE id = ?
+                """,
+                (sandbox_id,),
+            )
+        not_ready = client.get(f"/projects/{sandbox_id}")
+        unknown = client.get("/projects/not-registered")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["copy_mode"] == "managed-v1"
+    assert response.json()["ready"] is True
+    assert not_ready.status_code == 200
+    assert not_ready.json()["ready"] is False
+    assert unknown.status_code == 404
 
 
 def test_register_and_observe_copy_lifecycle(tmp_path: Path) -> None:

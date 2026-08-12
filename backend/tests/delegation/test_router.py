@@ -128,6 +128,28 @@ def test_invalid_graph_returns_unprocessable_entity(store: ControllerStore) -> N
     assert "ghost" in response.json()["detail"]
 
 
+def test_engine_confirmation_blocks_delegation_with_an_operator_action(
+    store: ControllerStore,
+) -> None:
+    with store._connection() as connection:
+        connection.execute(
+            """
+            UPDATE sandboxes
+            SET lifecycle_version = 'v1', desired_state = 'active',
+                lifecycle_status = 'awaiting_engine_confirmation'
+            WHERE id = 'sandbox-1'
+            """
+        )
+    client, path = _client(store)
+    try:
+        response = client.post(path, json={"items": [_item("a")]})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert "confirm the database engine" in response.json()["detail"]
+
+
 def test_lifecycle_routes_move_delegation(store: ControllerStore) -> None:
     client, path = _client(store)
     try:

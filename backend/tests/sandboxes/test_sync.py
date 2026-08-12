@@ -248,6 +248,45 @@ def test_sync_preview_requires_opt_in_and_names_the_preview(
     assert proceeded.status_code == 202
 
 
+def test_sync_refuses_an_active_delegation(
+    client: TestClient, fake_docker_client: Any
+) -> None:
+    _register(fake_docker_client=fake_docker_client)
+    store = get_controller_store()
+    store.create_planning_session(
+        session_id="planning-1",
+        project_id=PROJECT_ID,
+        sandbox_id=SANDBOX_ID,
+        project_name="sync repository",
+        title="plan",
+        status="plan_ready",
+        clarifier_provider="claude",
+        planner_provider="claude",
+        reviewer_provider="codex",
+        credential_profile="default",
+        max_review_turns=3,
+    )
+    store.create_delegation_revision(
+        {
+            "id": "delegation-1",
+            "session_id": "planning-1",
+            "sandbox_id": SANDBOX_ID,
+            "context_id": None,
+            "revision": 1,
+            "status": "ready",
+        },
+        [],
+    )
+
+    response = client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={})
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["blocking_writer"] == {
+        "class": "delegation",
+        "id": "delegation-1",
+    }
+
+
 def test_sync_allows_idle_agent_but_refuses_open_agent_writer_session(
     client: TestClient, fake_docker_client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

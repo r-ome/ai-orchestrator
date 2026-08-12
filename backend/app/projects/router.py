@@ -164,7 +164,12 @@ def delete_project(
 def get_project_registration(
     project_name: str,
     docker_client: Annotated[DockerClient, Depends(get_docker_client)],
+    controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> ProjectRegistration:
     return _docker_response(
-        lambda: inspect_registered_project(docker_client, project_name)
+        lambda: inspect_registered_project(
+            docker_client,
+            project_name,
+            controller_store,
+        )
     )

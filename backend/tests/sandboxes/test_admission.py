@@ -340,6 +340,88 @@ def test_lease_blocks_every_writer_start_transaction(tmp_path: Path) -> None:
     assert store.active_writers("sandbox-1") == []
 
 
+def test_engine_confirmation_names_the_action_that_unblocks_delegation(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    store.create_planning_session(
+        session_id="planning-1",
+        project_id="project-1",
+        sandbox_id="sandbox-1",
+        project_name="sample",
+        title="plan",
+        status="plan_ready",
+        clarifier_provider="claude",
+        planner_provider="claude",
+        reviewer_provider="codex",
+        credential_profile="default",
+        max_review_turns=3,
+    )
+    with store._connection() as connection:
+        connection.execute(
+            """
+            UPDATE sandboxes
+            SET lifecycle_version = 'v1', desired_state = 'active',
+                lifecycle_status = 'awaiting_engine_confirmation'
+            WHERE id = 'sandbox-1'
+            """
+        )
+
+    with pytest.raises(SandboxWriterAdmissionError) as caught:
+        store.create_delegation_revision(
+            {
+                "id": "delegation-1",
+                "session_id": "planning-1",
+                "sandbox_id": "sandbox-1",
+                "context_id": None,
+                "revision": 1,
+                "status": "ready",
+            },
+            [],
+        )
+
+    assert "confirm the database engine" in str(caught.value)
+
+
+def test_lifecycle_lease_refuses_a_new_delegation(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _managed_ready(store)
+    store.create_planning_session(
+        session_id="planning-1",
+        project_id="project-1",
+        sandbox_id="sandbox-1",
+        project_name="sample",
+        title="plan",
+        status="plan_ready",
+        clarifier_provider="claude",
+        planner_provider="claude",
+        reviewer_provider="codex",
+        credential_profile="default",
+        max_review_turns=3,
+    )
+    store.acquire_sandbox_lease(
+        sandbox_id="sandbox-1",
+        operation="sync",
+        operation_id="sync-1",
+        owner="test",
+    )
+
+    with pytest.raises(SandboxWriterAdmissionError) as caught:
+        store.create_delegation_revision(
+            {
+                "id": "delegation-1",
+                "session_id": "planning-1",
+                "sandbox_id": "sandbox-1",
+                "context_id": None,
+                "revision": 1,
+                "status": "ready",
+            },
+            [],
+        )
+
+    assert "lifecycle operation sync 'sync-1'" in str(caught.value)
+
+
 def test_two_concurrent_lifecycle_starts_have_exactly_one_winner(
     tmp_path: Path,
 ) -> None:

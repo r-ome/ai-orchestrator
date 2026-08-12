@@ -1,9 +1,11 @@
 import base64
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import docker
 import pytest
@@ -21,6 +23,10 @@ from app.delegation.models import (
 from app.dirty_state import DirtyEntry, serialize_snapshot
 from app.previews.config import PreviewSettings
 from app.projects.config import ProjectSettings
+from app.sandboxes import router as sandbox_router
+from app.sandboxes.engine_detection import EngineDetection, NO_DATABASE
+from app.sandboxes.manifest import SandboxManifest, read_manifest, write_manifest
+from app.sandboxes.naming import ownership_labels, workspace_volume
 
 
 BASE = "1" * 40
@@ -619,4 +625,247 @@ def test_source_merge_script_fast_forwards_a_real_git_repository() -> None:
     finally:
         sandbox_volume.remove(force=True)
         source_volume.remove(force=True)
+        client.close()
+
+
+@requires_docker
+def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise v1 branch delivery without starting an agent or model."""
+    from fastapi import HTTPException
+
+    from app.controller.store import get_controller_store
+
+    client = docker.from_env()
+    run_id = uuid4().hex[:12]
+    sandbox_id = uuid4().hex
+    project_id = uuid4().hex
+    feature_key = f"delivery-{run_id}"
+    branch = f"feature/{feature_key}"
+    workspace = workspace_volume(sandbox_id)
+    target = f"delivery-target-{run_id}"
+    workspace_volume_handle = target_volume_handle = None
+
+    def git(script: str, volumes: dict[str, dict[str, str]]) -> bytes:
+        return client.containers.run(
+            PREVIEW_SETTINGS.git_image,
+            entrypoint=["sh", "-c"],
+            command=[script],
+            remove=True,
+            volumes=volumes,
+            tmpfs={"/git": "rw,nosuid,size=1m"},
+        )
+
+    try:
+        target_volume_handle = client.volumes.create(name=target)
+        workspace_volume_handle = client.volumes.create(
+            name=workspace,
+            labels=ownership_labels(sandbox_id=sandbox_id, project_id=project_id),
+        )
+        base = git(
+            "set -eu\n"
+            f"git init -q -b {branch} /target\n"
+            "git -C /target config user.name tester\n"
+            "git -C /target config user.email tester@example.invalid\n"
+            "printf base > /target/app.txt\n"
+            "git -C /target add app.txt\n"
+            "git -C /target commit -qm base\n"
+            "git -C /target rev-parse HEAD\n",
+            {target: {"bind": "/target", "mode": "rw"}},
+        ).decode().strip()
+        head = git(
+            "set -eu\n"
+            "git clone -q /target /workspace\n"
+            "git -C /workspace remote remove origin\n"
+            "git -C /workspace config user.name tester\n"
+            "git -C /workspace config user.email tester@example.invalid\n"
+            "printf feature >> /workspace/app.txt\n"
+            "git -C /workspace add app.txt\n"
+            "git -C /workspace commit -qm feature\n"
+            "git -C /workspace rev-parse HEAD\n",
+            {
+                target: {"bind": "/target", "mode": "ro"},
+                workspace: {"bind": "/workspace", "mode": "rw"},
+            },
+        ).decode().strip()
+
+        store = get_controller_store()
+        store.register_v1_project(
+            project_id=project_id,
+            remote_url=f"https://example.test/{run_id}.git",
+            default_branch="main",
+            mirror_volume=f"delivery-mirror-{run_id}",
+            created_at="",
+        )
+        store.register_v1_sandbox(
+            sandbox_id=sandbox_id,
+            project_id=project_id,
+            project_name="delivery test",
+            volume_name=workspace,
+            created_at="",
+        )
+        store.record_sandbox_resource(sandbox_id, kind="volume", name=workspace)
+        write_manifest(
+            store,
+            SandboxManifest(
+                sandbox_id=sandbox_id,
+                lifecycle_version="v1",
+                feature_key=feature_key,
+                desired_state="active",
+                lifecycle_status="ready",
+                feature_branch=branch,
+                base_ref="refs/heads/main",
+                created_base_commit=base,
+                current_base_commit=base,
+                db_engine=NO_DATABASE,
+            ),
+        )
+        store.record_sandbox_engine_detection(
+            sandbox_id=sandbox_id,
+            signals=[],
+            proposed_engine=NO_DATABASE,
+            migrate_commands=[],
+            seed_commands=[],
+            commands_source={},
+            detected_at_commit=base,
+        )
+        store.confirm_sandbox_engine_detection(
+            sandbox_id=sandbox_id,
+            engine=NO_DATABASE,
+            migrate_commands=[],
+            seed_commands=[],
+            commands_source={},
+            actor="tester",
+        )
+        store.create_planning_session(
+            session_id="planning-1",
+            project_id=project_id,
+            sandbox_id=sandbox_id,
+            project_name=sandbox_id,
+            title="delivery",
+            status="plan_ready",
+            clarifier_provider="claude",
+            planner_provider="claude",
+            reviewer_provider="codex",
+            credential_profile="default",
+            max_review_turns=3,
+        )
+        store.create_delegation_revision(
+            {
+                "id": "delegation-active",
+                "session_id": "planning-1",
+                "sandbox_id": sandbox_id,
+                "context_id": None,
+                "revision": 1,
+                "status": "ready",
+            },
+            [],
+        )
+
+        with pytest.raises(HTTPException) as blocked:
+            sandbox_router.sync_sandbox(
+                sandbox_id,
+                sandbox_router.SyncSandboxRequest(),
+                client,
+                store,
+            )
+        assert blocked.value.status_code == 409
+        assert blocked.value.detail["blocking_writer"] == {
+            "class": "delegation",
+            "id": "delegation-active",
+        }
+
+        delivered, fields = delivery._merge_source(
+            client,
+            PREVIEW_SETTINGS.git_image,
+            workspace,
+            Path(target),
+            delivery.FeatureTarget(branch, base, head),
+        )
+        assert delivered == "merged", fields
+        assert git(
+            "git -C /target branch --show-current && git -C /target rev-parse HEAD",
+            {target: {"bind": "/target", "mode": "ro"}},
+        ).decode() == f"{branch}\n{head}\n"
+
+        assert store.transition_delegation(
+            "delegation-active",
+            to_status="completed",
+            from_statuses=("ready",),
+            terminal=True,
+        ) is not None
+
+        def complete_sync(*_args: object, **_kwargs: object) -> None:
+            manifest = read_manifest(store, sandbox_id)
+            assert manifest is not None
+            write_manifest(
+                store,
+                replace(
+                    manifest,
+                    lifecycle_status="ready",
+                    operation="sync",
+                    operation_phase="ready",
+                    current_base_commit=manifest.pending_base_commit,
+                    pending_base_commit=None,
+                ),
+            )
+
+        monkeypatch.setattr(sandbox_router, "fetch_canonical_mirror", lambda *_a, **_k: None)
+        monkeypatch.setattr(sandbox_router, "mirror_base_commit", lambda *_a, **_k: base)
+        monkeypatch.setattr(sandbox_router, "sync_workspace_from_mirror", lambda *_a, **_k: None)
+        monkeypatch.setattr(sandbox_router, "_complete_database_provision", complete_sync)
+        monkeypatch.setattr(
+            sandbox_router,
+            "discover_engine",
+            lambda *_a, **_k: EngineDetection(
+                signals=(),
+                proposed_engine=NO_DATABASE,
+                migrate_commands=(),
+                seed_commands=(),
+                commands_source={},
+            ),
+        )
+        synced = sandbox_router.sync_sandbox(
+            sandbox_id,
+            sandbox_router.SyncSandboxRequest(),
+            client,
+            store,
+        )
+        assert synced.lifecycle_status == "ready"
+
+        store.create_delegation_revision(
+            {
+                "id": "delegation-drained",
+                "session_id": "planning-1",
+                "sandbox_id": sandbox_id,
+                "context_id": None,
+                "revision": 2,
+                "status": "ready",
+            },
+            [],
+        )
+        assert store.delegation("delegation-drained")["status"] == "ready"
+        sandbox_router.delete_sandbox(sandbox_id, client, store)
+
+        # Destroy drains writers before it deletes their rows: drain stops the
+        # running work, the tombstone preserves the manifest, and the row itself
+        # goes because delegations reference sandboxes without ON DELETE CASCADE.
+        assert store.delegation("delegation-drained") is None
+        assert client.volumes.list(filters={"name": f"sbx-{sandbox_id[:12]}"}) == []
+        assert client.containers.list(
+            all=True,
+            filters={"name": f"sbx-{sandbox_id[:12]}"},
+        ) == []
+    finally:
+        if workspace_volume_handle is not None:
+            try:
+                workspace_volume_handle.remove(force=True)
+            except docker.errors.NotFound:
+                pass
+        if target_volume_handle is not None:
+            try:
+                target_volume_handle.remove(force=True)
+            except docker.errors.NotFound:
+                pass
         client.close()

@@ -514,6 +514,8 @@ class SandboxWriterAdmissionError(SandboxAdmissionError):
                 f"Sandbox '{sandbox_id}' does not admit writers while lifecycle status "
                 f"is '{lifecycle_status}' and desired state is '{desired_state}'"
             )
+            if lifecycle_status == "awaiting_engine_confirmation":
+                detail += "; confirm the database engine to unblock it"
         super().__init__(detail)
 
 
@@ -1588,6 +1590,13 @@ class ControllerStore:
     def delete_v1_sandbox_manifest(self, sandbox_id: str) -> None:
         """Remove an unprovisioned v1 manifest while preserving its remote project."""
         with self._connection() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM sandboxes WHERE id = ? AND lifecycle_version = 'v1'",
+                (sandbox_id,),
+            ).fetchone()
+            if row is None:
+                return
+            self._delete_sandbox_children(connection, sandbox_id)
             connection.execute(
                 "DELETE FROM sandboxes WHERE id = ? AND lifecycle_version = 'v1'",
                 (sandbox_id,),
