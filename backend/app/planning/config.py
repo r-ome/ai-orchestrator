@@ -17,6 +17,8 @@ class PlanningSettings:
     claude_model: str
     codex_model: str
     codex_reasoning_effort: str
+    turn_retries: int = 2
+    turn_retry_backoff_seconds: int = 5
 
 
 @lru_cache
@@ -28,6 +30,8 @@ def get_planning_settings() -> PlanningSettings:
         credential_profile=os.getenv("PLANNING_CREDENTIAL_PROFILE", "default"),
         max_review_turns=_integer("PLANNING_MAX_REVIEW_TURNS", 3),
         turn_timeout_seconds=_integer("PLANNING_TURN_TIMEOUT_SECONDS", 600),
+        turn_retries=_integer("PLANNING_TURN_RETRIES", 2),
+        turn_retry_backoff_seconds=_integer("PLANNING_TURN_RETRY_BACKOFF_SECONDS", 5),
         planning_memory=os.getenv("PLANNING_MEMORY", "2g"),
         claude_model=os.getenv("PLANNING_CLAUDE_MODEL", "opus"),
         codex_model=os.getenv("PLANNING_CODEX_MODEL", "gpt-5.6-terra"),

@@ -61,6 +61,16 @@ _ACTIVE_FINDING_STATUSES = {
     FindingStatus.ANSWERED.value,
     FindingStatus.REJECTED.value,
 }
+_TRANSIENT_SCAN_LINES = 5
+_TRANSIENT_TURN_FAILURE_PHRASES = (
+    "at capacity",
+    "try a different model",
+    "rate limit",
+    "rate_limit",
+    "overloaded",
+    "temporarily unavailable",
+    "service unavailable",
+)
 
 
 def create_session(
@@ -303,23 +313,8 @@ async def _run_turn(
             return
         if kind is TurnKind.REVIEWER and session["status"] != PlanningStatus.UNDER_REVIEW.value:
             return
-        try:
-            result = await asyncio.to_thread(
-                _run_model_turn,
-                controller_store,
-                settings,
-                session_id,
-                kind,
-            )
-        except PlanningTurnError as error:
-            _record_turn_error(controller_store, session_id, error)
-            return
-        except Exception as error:
-            _record_turn_error(
-                controller_store,
-                session_id,
-                PlanningTurnError(502, f"{kind.value} turn failed: {error}"),
-            )
+        result = await _run_turn_with_retries(controller_store, settings, session_id, kind)
+        if result is None:
             return
 
         session = _required_session(controller_store, session_id)
@@ -334,6 +329,91 @@ async def _run_turn(
             _apply_reviewer_result(controller_store, settings, session, result)
     finally:
         controller_store.release_planning_turn(session_id)
+
+
+async def _run_turn_with_retries(
+    controller_store: ControllerStore,
+    settings: PlanningSettings,
+    session_id: str,
+    kind: TurnKind,
+) -> TurnResult | None:
+    max_attempts = settings.turn_retries + 1
+    for attempt in range(1, max_attempts + 1):
+        if attempt > 1:
+            session = _required_session(controller_store, session_id)
+            if _is_terminal(session):
+                return None
+        try:
+            return await asyncio.to_thread(
+                _run_model_turn,
+                controller_store,
+                settings,
+                session_id,
+                kind,
+            )
+        except PlanningTurnError as error:
+            if not _is_transient_turn_failure(error):
+                _record_turn_error(controller_store, session_id, error)
+                return None
+            if attempt == max_attempts:
+                _record_turn_error(
+                    controller_store,
+                    session_id,
+                    PlanningTurnError(
+                        error.status_code,
+                        f"{error.detail} (after {attempt} attempts)",
+                        error.raw_output,
+                    ),
+                )
+                return None
+
+            session = _required_session(controller_store, session_id)
+            if _is_terminal(session):
+                _append_raw_system_message(controller_store, session_id, error.raw_output)
+                return None
+            delay = settings.turn_retry_backoff_seconds * 2 ** (attempt - 1)
+            _append_raw_system_message(
+                controller_store,
+                session_id,
+                (
+                    f"The {kind.value} turn hit a temporary upstream failure. "
+                    f"Retrying attempt {attempt + 1} of {max_attempts} in {delay} seconds: "
+                    f"{error.detail}"
+                ),
+            )
+            await asyncio.sleep(delay)
+        except Exception as error:
+            _record_turn_error(
+                controller_store,
+                session_id,
+                PlanningTurnError(502, f"{kind.value} turn failed: {error}"),
+            )
+            return None
+    return None
+
+
+def _is_transient_turn_failure(error: PlanningTurnError) -> bool:
+    """Decide whether one failed turn is worth retrying.
+
+    Only the tail is scanned. A provider prints its error last, immediately
+    before exiting, while everything above is the echoed prompt and the model's
+    own text. That prompt embeds the plan under review, and a plan about rate
+    limiting legitimately contains these phrases without being one.
+
+    The bias is deliberately toward retrying: a needless retry costs seconds,
+    while a missed one throws away a session that has real work in it.
+    """
+    if error.status_code == 504:
+        return False
+    text = "\n".join(
+        _tail_lines(source) for source in (error.detail, error.raw_output)
+    ).lower()
+    return any(phrase in text for phrase in _TRANSIENT_TURN_FAILURE_PHRASES)
+
+
+def _tail_lines(source: str) -> str:
+    lines = [line for line in source.splitlines() if line.strip()]
+    return "\n".join(lines[-_TRANSIENT_SCAN_LINES:])
 
 
 def _run_clarifier_turn(

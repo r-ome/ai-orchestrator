@@ -1,5 +1,6 @@
 import asyncio
 import threading
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -272,3 +273,208 @@ def test_turn_error_fails_session_records_reason_and_releases_turn(
     assert stored["turn_state"] == "idle"
     assert stored["failure_reason"] == "bad JSON"
     assert controller_store.planning_messages(session.id)[-1]["raw_output"] == "raw failure"
+
+
+def test_transient_turn_failure_classifier_matches_capacity_and_rate_limit() -> None:
+    assert service._is_transient_turn_failure(
+        PlanningTurnError(
+            502,
+            "reviewer turn exited with status 1: ERROR: Selected model is at capacity. "
+            "Please try a different model.",
+        )
+    )
+    assert service._is_transient_turn_failure(
+        PlanningTurnError(502, "reviewer failed", "Provider rate_limit reached")
+    )
+
+
+def test_transient_classifier_ignores_bare_status_numbers_and_timeouts() -> None:
+    """Guards two rules, neither of which is the general false-positive case.
+
+    The plan-text case belongs to
+    test_transient_classifier_ignores_a_reviewed_plan_that_discusses_rate_limits.
+    """
+    # Bare numbers must never join the phrase list. A plan naming a status code
+    # is ordinary, and matching one would retry genuine failures.
+    assert not service._is_transient_turn_failure(
+        PlanningTurnError(
+            502,
+            "reviewer turn exited with status 1",
+            "# Plan\nReturn a 503 response when the resource is absent.",
+        )
+    )
+    # "Service unavailable" is in the phrase list, so this pins the 504 check
+    # ahead of phrase matching: a timeout stays terminal whatever it printed.
+    assert not service._is_transient_turn_failure(
+        PlanningTurnError(504, "reviewer turn timed out", "Service unavailable")
+    )
+
+
+def test_transient_classifier_ignores_a_reviewed_plan_that_discusses_rate_limits() -> None:
+    """The echoed prompt embeds the plan, which may legitimately use these words."""
+    reviewed_plan = "\n".join(
+        [
+            "# Plan",
+            "Add a token bucket so the API returns 429 when the rate limit is exceeded.",
+            "Show a banner while the service is temporarily unavailable.",
+        ]
+        + [f"Step {number}: implement the handler." for number in range(20)]
+    )
+
+    assert not service._is_transient_turn_failure(
+        PlanningTurnError(502, "reviewer turn exited with status 1", reviewed_plan)
+    )
+    # The same output with a real provider error appended is still transient.
+    assert service._is_transient_turn_failure(
+        PlanningTurnError(
+            502,
+            "reviewer turn exited with status 1",
+            f"{reviewed_plan}\nERROR: Selected model is at capacity.",
+        )
+    )
+
+
+def test_transient_reviewer_failure_retries_without_losing_the_current_revision(
+    controller_store: ControllerStore, settings: PlanningSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = _create(controller_store, settings)
+    controller_store.set_planning_understanding(session_id=session.id, summary="Build the feature")
+    controller_store.advance_planning_status(
+        session_id=session.id,
+        from_statuses=(PlanningStatus.CLARIFYING.value,),
+        to_status=PlanningStatus.AWAITING_CONFIRMATION.value,
+    )
+    service.confirm_understanding(controller_store, settings, PROJECT.name, session.id)
+    plan = {
+        "plan_markdown": "# Existing plan",
+        "scope": "Implement the feature.",
+        "approach": "Use the current service.",
+        "components": [],
+        "risks": [],
+        "open_questions": [],
+    }
+    controller_store.record_plan_revision(
+        session_id=session.id,
+        revision=1,
+        plan_json=plan,
+        plan_markdown=plan["plan_markdown"],
+    )
+    controller_store.advance_planning_status(
+        session_id=session.id,
+        from_statuses=(PlanningStatus.PLANNING.value,),
+        to_status=PlanningStatus.UNDER_REVIEW.value,
+    )
+    attempts = 0
+    delays: list[int] = []
+
+    def run_reviewer(*_: Any) -> TurnResult:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PlanningTurnError(502, "Selected model is at capacity", "capacity")
+        return TurnResult(
+            raw_output='{"approved":true}',
+            payload={"approved": True, "summary": "Approved.", "findings": []},
+        )
+
+    async def sleep(delay: int) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(service, "_run_reviewer_turn", run_reviewer)
+    monkeypatch.setattr(service.asyncio, "sleep", sleep)
+
+    asyncio.run(
+        service._run_turn(
+            controller_store,
+            replace(settings, turn_retries=2, turn_retry_backoff_seconds=5),
+            session.id,
+            TurnKind.REVIEWER,
+        )
+    )
+
+    stored = controller_store.planning_session(session.id)
+    assert attempts == 2
+    assert delays == [5]
+    assert stored["status"] == PlanningStatus.PLAN_READY.value
+    assert stored["plan_revision"] == 1
+    assert stored["failure_reason"] == ""
+
+
+def test_exhausted_transient_retries_fail_with_attempt_count(
+    controller_store: ControllerStore, settings: PlanningSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = _create(controller_store, settings)
+    attempts = 0
+    delays: list[int] = []
+
+    def fail(*_: Any) -> TurnResult:
+        nonlocal attempts
+        attempts += 1
+        raise PlanningTurnError(502, "Provider is overloaded", "overloaded")
+
+    async def no_sleep(delay: int) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(service, "_run_clarifier_turn", fail)
+    monkeypatch.setattr(service.asyncio, "sleep", no_sleep)
+
+    asyncio.run(
+        service._run_turn(
+            controller_store,
+            replace(settings, turn_retries=2, turn_retry_backoff_seconds=5),
+            session.id,
+            TurnKind.CLARIFIER,
+        )
+    )
+
+    stored = controller_store.planning_session(session.id)
+    assert attempts == 3
+    assert delays == [5, 10]
+    assert stored["status"] == PlanningStatus.FAILED.value
+    assert stored["failure_reason"] == "Provider is overloaded (after 3 attempts)"
+
+
+def test_cancelled_session_between_retries_stays_cancelled(
+    controller_store: ControllerStore, settings: PlanningSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = _create(controller_store, settings)
+    attempts = 0
+
+    def fail(*_: Any) -> TurnResult:
+        nonlocal attempts
+        attempts += 1
+        raise PlanningTurnError(502, "Selected model is at capacity", "capacity")
+
+    async def cancel_before_retry(_: int) -> None:
+        service.cancel_session(controller_store, PROJECT.name, session.id)
+
+    monkeypatch.setattr(service, "_run_clarifier_turn", fail)
+    monkeypatch.setattr(service.asyncio, "sleep", cancel_before_retry)
+
+    asyncio.run(service._run_turn(controller_store, settings, session.id, TurnKind.CLARIFIER))
+
+    stored = controller_store.planning_session(session.id)
+    assert attempts == 1
+    assert stored["status"] == PlanningStatus.CANCELLED.value
+    assert stored["failure_reason"] == ""
+
+
+def test_timeout_fails_without_retrying(
+    controller_store: ControllerStore, settings: PlanningSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = _create(controller_store, settings)
+    attempts = 0
+
+    def timeout(*_: Any) -> TurnResult:
+        nonlocal attempts
+        attempts += 1
+        raise PlanningTurnError(504, "clarifier turn timed out after 600 seconds")
+
+    monkeypatch.setattr(service, "_run_clarifier_turn", timeout)
+
+    asyncio.run(service._run_turn(controller_store, settings, session.id, TurnKind.CLARIFIER))
+
+    stored = controller_store.planning_session(session.id)
+    assert attempts == 1
+    assert stored["status"] == PlanningStatus.FAILED.value
+    assert stored["failure_reason"] == "clarifier turn timed out after 600 seconds"
