@@ -3,6 +3,7 @@ import json
 import os
 from dataclasses import replace
 from pathlib import Path
+from tempfile import mkdtemp
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -10,6 +11,7 @@ from uuid import uuid4
 import docker
 import pytest
 
+from app.controller.store import ControllerStore
 from app.delegation import delivery, service
 from app.delegation.models import (
     ChangeRequestStatus,
@@ -125,18 +127,27 @@ class _DirtyStore:
         legacy_paths: list[str] | None = None,
         source_path: str = "/projects/sample",
     ) -> None:
+        # Mirrors a real `sandboxes` row: it carries project_id, never
+        # source_path. That column lives on `projects`.
         self.sandbox_row: dict[str, Any] = {
             "id": "sandbox-1",
+            "project_id": "project-1",
             "volume_name": "sandbox-volume",
-            "source_path": source_path,
             "dirty_baseline_json": (
                 serialize_snapshot(baseline) if baseline is not None else None
             ),
+        }
+        self.project_row: dict[str, Any] = {
+            "id": "project-1",
+            "source_path": source_path,
         }
         self.legacy_paths = legacy_paths
 
     def sandbox(self, _sandbox_id: str) -> dict[str, Any]:
         return self.sandbox_row
+
+    def project(self, _project_id: str) -> dict[str, Any]:
+        return self.project_row
 
     def task(self, _task_id: str) -> dict[str, Any]:
         return {
@@ -336,8 +347,12 @@ def test_feature_diff_returns_file_totals_and_a_unified_patch() -> None:
     store = SimpleNamespace(
         sandbox=lambda _sandbox_id: {
             "volume_name": "sandbox-volume",
+            "project_id": "project-1",
+        },
+        project=lambda _project_id: {
+            "id": "project-1",
             "source_path": "/projects/sample",
-        }
+        },
     )
 
     result = delivery.feature_diff(
@@ -396,6 +411,10 @@ def test_incorporated_change_invalidates_the_previous_review_target(
         task=lambda task_id: tasks.get(task_id),
         sandbox=lambda _sandbox_id: {
             "volume_name": "sandbox-volume",
+            "project_id": "project-1",
+        },
+        project=lambda _project_id: {
+            "id": "project-1",
             "source_path": "/projects/sample",
         },
     )
@@ -431,10 +450,10 @@ class _MergeStore:
         self.source_path = source_path
 
     def sandbox(self, _sandbox_id: str) -> dict[str, str]:
-        return {
-            "volume_name": "sandbox-volume",
-            "source_path": str(self.source_path),
-        }
+        return {"project_id": "project-1", "volume_name": "sandbox-volume"}
+
+    def project(self, _project_id: str) -> dict[str, str]:
+        return {"id": "project-1", "source_path": str(self.source_path)}
 
     def mark_delegation_review_source_merged(
         self,
@@ -869,3 +888,82 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
             except docker.errors.NotFound:
                 pass
         client.close()
+
+
+def test_feature_diff_reads_source_path_from_the_project_not_the_sandbox() -> None:
+    """A `sandboxes` row has no source_path column; reading one raised KeyError.
+
+    The fakes used to return source_path from `sandbox()`, so this path was
+    green in tests and 500'd against the real store on every request.
+    """
+    store = ControllerStore(Path(mkdtemp()) / "controller.sqlite3")
+    store.initialize()
+
+    with store._connection() as connection:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(sandboxes)").fetchall()
+        }
+    assert "source_path" not in columns
+    assert "project_id" in columns
+
+
+def test_feature_diff_reports_no_local_folder_for_a_managed_v1_sandbox() -> None:
+    numstat = b"1\t0\tsrc/app.py\n"
+    docker = _Docker(_state(), numstat, b"diff --git a/src/app.py b/src/app.py\n")
+    # A v1 project is keyed by its Git remote and has no local folder.
+    store = SimpleNamespace(
+        sandbox=lambda _sandbox_id: {
+            "volume_name": "sandbox-volume",
+            "project_id": "project-1",
+        },
+        project=lambda _project_id: {
+            "id": "project-1",
+            "source_path": None,
+            "remote_url": "https://example.test/owner/repo.git",
+        },
+    )
+
+    result = delivery.feature_diff(docker, PREVIEW_SETTINGS, store, _view(_review()))
+
+    assert result.source_path == ""
+    assert result.additions == 1
+
+
+def test_feature_diff_survives_a_project_row_that_vanished() -> None:
+    docker = _Docker(_state(), b"", b"")
+    store = SimpleNamespace(
+        sandbox=lambda _sandbox_id: {
+            "volume_name": "sandbox-volume",
+            "project_id": "gone",
+        },
+        project=lambda _project_id: None,
+    )
+
+    assert delivery.feature_diff(
+        docker,
+        PREVIEW_SETTINGS,
+        store,
+        _view(_review()),
+    ).source_path == ""
+
+
+def test_merging_a_sandbox_with_no_local_folder_is_refused_not_a_crash(
+    tmp_path: Path,
+) -> None:
+    """v1 delivers by publishing to its remote, so merge has nothing to target."""
+    store = _MergeStore(Path("/projects/sample"))
+    store.project = lambda _project_id: {"id": "project-1", "source_path": ""}
+
+    with pytest.raises(service.DelegationOperationError) as error:
+        delivery.merge_feature_to_source(
+            _Docker(_state()),
+            PREVIEW_SETTINGS,
+            ProjectSettings(projects_root=tmp_path, copy_image="copy"),
+            store,
+            _view(_review()),
+            MergeFeatureRequest(review_id="review-1", confirm=True),
+        )
+
+    assert error.value.status_code == 409
+    assert "no local project folder" in error.value.detail

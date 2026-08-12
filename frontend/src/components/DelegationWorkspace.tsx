@@ -225,6 +225,13 @@ function FeatureCodeDiff({
             <p className="status">
               Merged into the original project folder at {review?.source_merged_at}.
             </p>
+          ) : !diff.data.source_path ? (
+            // A managed v1 sandbox is keyed by a Git remote and has no local
+            // folder, so there is nothing for this merge to target.
+            <p className="status">
+              This sandbox has no local project folder. Deliver the feature by
+              publishing its branch to the Git remote.
+            </p>
           ) : (
             <>
               <button

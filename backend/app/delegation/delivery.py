@@ -226,7 +226,7 @@ def feature_diff(
     files = _parse_numstat(numstat)
     return FeatureDiff(
         review_id=review_id,
-        source_path=str(sandbox["source_path"]),
+        source_path=_source_path(store, sandbox),
         base_branch=target.base_branch,
         base_commit=target.base_commit,
         head_commit=target.head_commit,
@@ -274,9 +274,18 @@ def merge_feature_to_source(
     sandbox = store.sandbox(delegation_view.delegation.sandbox_id)
     if sandbox is None:
         raise service.DelegationOperationError(404, "Delegation sandbox was not found")
+    local_path = _source_path(store, sandbox)
+    if not local_path:
+        # A managed v1 project has no local folder to merge into. Its feature
+        # branch is delivered by publishing to the Git remote instead.
+        raise service.DelegationOperationError(
+            409,
+            "This sandbox has no local project folder to merge into. "
+            "Publish the feature branch to its Git remote instead.",
+        )
     try:
         source_path = validated_source_path(
-            str(sandbox["source_path"]),
+            local_path,
             project_settings.projects_root,
         )
     except ProjectOperationError as error:
@@ -370,6 +379,20 @@ def _sandbox_state(
         dirty=dirty,
         legacy_dirty=fields.get("dirty") == "true",
     )
+
+
+def _source_path(store: ControllerStore, sandbox: dict[str, Any]) -> str:
+    """The local folder a sandbox was copied from, or '' when it has none.
+
+    `source_path` lives on `projects`, never on `sandboxes`. Reading it off a
+    sandbox row raised KeyError on every call. A managed v1 project is keyed by
+    its Git remote and has no local folder at all, so '' is a real answer here
+    rather than a missing one.
+    """
+    project = store.project(str(sandbox["project_id"]))
+    if project is None:
+        return ""
+    return str(project.get("source_path") or "")
 
 
 def _ensure_original_dirty_state(

@@ -211,7 +211,9 @@ class FeatureDiffFile(BaseModel):
 
 class FeatureDiff(BaseModel):
     review_id: str | None = None
-    source_path: str
+    #: The local folder this sandbox was copied from. Empty for a managed v1
+    #: sandbox, which is keyed by a Git remote and has no local folder.
+    source_path: str = ""
     base_branch: str
     base_commit: str
     head_commit: str
