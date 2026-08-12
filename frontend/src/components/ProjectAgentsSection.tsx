@@ -72,7 +72,7 @@ function ProjectAgentsSection({
     try {
       const agent = await summonAgent(projectName, provider, credentialProfile)
       navigate(
-        `/projects/${encodeURIComponent(projectName)}/agents/${encodeURIComponent(agent.id)}`,
+        `/local/${encodeURIComponent(projectName)}/agents/${encodeURIComponent(agent.id)}`,
       )
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Unknown error')
@@ -105,7 +105,7 @@ function ProjectAgentsSection({
       )
       setPendingReplace(null)
       navigate(
-        `/projects/${encodeURIComponent(projectName)}/agents/${encodeURIComponent(replacement.id)}`,
+        `/local/${encodeURIComponent(projectName)}/agents/${encodeURIComponent(replacement.id)}`,
       )
     } catch (err) {
       setStopError(err instanceof Error ? err.message : 'Unknown error')
@@ -224,7 +224,7 @@ function ProjectAgentsSection({
                           className="small"
                           onClick={() =>
                             navigate(
-                              `/projects/${encodeURIComponent(projectName)}/agents/${encodeURIComponent(agent.id)}`,
+                              `/local/${encodeURIComponent(projectName)}/agents/${encodeURIComponent(agent.id)}`,
                             )
                           }
                         >

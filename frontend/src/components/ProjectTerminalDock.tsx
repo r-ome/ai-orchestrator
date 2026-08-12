@@ -26,7 +26,7 @@ function ProjectTerminalDock({ projectName }: ProjectTerminalDockProps) {
 
   if (loading || error || !agent) return null
 
-  const terminalPath = `/projects/${encodeURIComponent(projectName)}/agents/${encodeURIComponent(agent.id)}`
+  const terminalPath = `/local/${encodeURIComponent(projectName)}/agents/${encodeURIComponent(agent.id)}`
 
   return (
     <aside className={`terminal-dock${open ? ' terminal-dock-open' : ''}`}>

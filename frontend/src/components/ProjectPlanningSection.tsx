@@ -24,6 +24,9 @@ interface ProjectPlanningSectionProps {
    *  sandbox and a legacy local copy are both "not a project", so the noun is
    *  supplied by the page rather than assumed here. */
   subject?: string
+  /** Route prefix for this section's own pages, without a trailing slash.
+   *  A sandbox lives under /sandboxes, a legacy local copy under /local. */
+  basePath: string
 }
 
 const PROVIDERS: AgentProvider[] = ['claude', 'codex']
@@ -32,6 +35,7 @@ function ProjectPlanningSection({
   projectName,
   projectReady,
   subject = 'workspace',
+  basePath,
 }: ProjectPlanningSectionProps) {
   const navigate = useNavigate()
   const fetcher = useCallback(
@@ -94,7 +98,7 @@ function ProjectPlanningSection({
     try {
       const session = await createPlanningSession(projectName, body)
       navigate(
-        `/projects/${encodeURIComponent(projectName)}/plans/${encodeURIComponent(session.id)}`,
+        `${basePath}/plans/${encodeURIComponent(session.id)}`,
       )
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Unknown error')
@@ -169,7 +173,7 @@ function ProjectPlanningSection({
                   <tr key={session.id}>
                     <td>
                       <Link
-                        to={`/projects/${encodeURIComponent(projectName)}/plans/${encodeURIComponent(session.id)}`}
+                        to={`${basePath}/plans/${encodeURIComponent(session.id)}`}
                       >
                         {session.title}
                       </Link>

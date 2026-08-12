@@ -47,7 +47,7 @@ function ProjectDetailPage() {
     setRemoveError(null)
     try {
       await removeProject(data?.name ?? projectName)
-      navigate('/projects', { replace: true })
+      navigate('/local', { replace: true })
     } catch (err) {
       setRemoveError(err instanceof Error ? err.message : 'Unknown error')
       setRemoveBusy(false)
@@ -70,7 +70,7 @@ function ProjectDetailPage() {
       <header className="page-header">
         <div>
           <p className="breadcrumb">
-            <Link to="/projects">Projects</Link>
+            <Link to="/local">Local copies</Link>
             <span className="breadcrumb-separator" aria-hidden="true">
               /
             </span>
@@ -103,18 +103,18 @@ function ProjectDetailPage() {
             }}
             disabled={removeBusy}
           >
-            Remove project
+            Remove local copy
           </button>
         </div>
       </header>
 
       {error && (
         <p className="status status-error" role="alert">
-          Failed to load project: {error}
+          Failed to load local copy: {error}
         </p>
       )}
 
-      {!error && loading && <p className="status">Loading project…</p>}
+      {!error && loading && <p className="status">Loading local copy…</p>}
 
       {!error && !loading && data && (
         <>
@@ -165,6 +165,7 @@ function ProjectDetailPage() {
             projectName={data.name}
             projectReady={data.ready}
             subject="local copy"
+            basePath={`/local/${encodeURIComponent(data.name)}`}
           />
 
           <ProjectPreviewSection

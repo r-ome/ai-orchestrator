@@ -31,7 +31,7 @@ function CopyJobsTable({ jobs, onShowLog }: CopyJobsTableProps) {
           {jobs.map((job) => (
             <tr key={job.job_id}>
               <td>
-                <Link to={`/projects/${encodeURIComponent(job.project_name)}`}>
+                <Link to={`/local/${encodeURIComponent(job.project_name)}`}>
                   {job.project_name}
                 </Link>
               </td>

@@ -174,15 +174,25 @@ function providerFor(
 }
 
 function PlanningSessionPage() {
-  const { projectName = '', sessionId = '' } = useParams()
-  // The planning route calls this projectName, but v1 passes a sandbox ID so
-  // inspect_registered_project can find the managed sandbox.
+  // Planning is reachable from two places, so the route supplies one of two
+  // params. Both land in the same API position: for a v1 sandbox that
+  // position takes the sandbox ID, which is what the v1 branch of
+  // inspect_registered_project expects. Do not "fix" that.
+  const {
+    sandboxId,
+    projectName: localName,
+    sessionId = '',
+  } = useParams()
+  const projectName = sandboxId ?? localName ?? ''
   const [sandbox, setSandbox] = useState<Sandbox | null>(null)
   const projectPath = sandbox
     ? `/sandboxes/${encodeURIComponent(sandbox.sandbox_id)}`
-    : `/projects/${encodeURIComponent(projectName)}`
+    : `/local/${encodeURIComponent(projectName)}`
   const sandboxCrumb = sandbox ? sandboxLabel(sandbox) : projectName
   const projectCrumb = sandbox ? projectLabel(sandbox.remote_url) : null
+  const projectHref = sandbox
+    ? `/projects/${encodeURIComponent(sandbox.project_id)}`
+    : '/projects'
   const fetcher = useCallback(
     (signal: AbortSignal) => fetchPlanningSession(projectName, sessionId, signal),
     [projectName, sessionId],
@@ -329,13 +339,15 @@ function PlanningSessionPage() {
       <header className="page-header">
         <div>
           <p className="breadcrumb">
-            <Link to="/projects">Projects</Link>
+            <Link to={sandbox ? '/projects' : '/local'}>
+              {sandbox ? 'Projects' : 'Local copies'}
+            </Link>
             <span className="breadcrumb-separator" aria-hidden="true">
               /
             </span>
             {projectCrumb && (
               <>
-                <Link to="/projects">{projectCrumb}</Link>
+                <Link to={projectHref}>{projectCrumb}</Link>
                 <span className="breadcrumb-separator" aria-hidden="true">
                   /
                 </span>

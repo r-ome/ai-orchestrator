@@ -7,7 +7,7 @@ import { useApiResource } from '../hooks/useApiResource'
 function AgentTerminalPage() {
   const { projectName = '', agentId = '' } = useParams()
   const navigate = useNavigate()
-  const projectPath = `/projects/${encodeURIComponent(projectName)}`
+  const projectPath = `/local/${encodeURIComponent(projectName)}`
   const fetcher = useCallback(
     (signal: AbortSignal) => fetchAgent(agentId, signal),
     [agentId],

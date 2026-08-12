@@ -102,8 +102,11 @@ function SandboxDetailPage() {
     setBusy(true, 'remove')
     setActionError(null)
     try {
+      const projectId = data.project_id
       await removeSandbox(data.sandbox_id)
-      navigate('/projects', { replace: true })
+      // Back to the project, not the list: the other sandboxes of this
+      // project are the likely next stop.
+      navigate(`/projects/${encodeURIComponent(projectId)}`, { replace: true })
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Unknown error')
       setBusy(false, 'remove')
@@ -189,7 +192,9 @@ function SandboxDetailPage() {
             <span className="breadcrumb-separator" aria-hidden="true">/</span>
             {data && (
               <>
-                <Link to="/projects">{projectLabel(data.remote_url)}</Link>
+                <Link to={`/projects/${encodeURIComponent(data.project_id)}`}>
+                  {projectLabel(data.remote_url)}
+                </Link>
                 <span className="breadcrumb-separator" aria-hidden="true">/</span>
               </>
             )}
@@ -285,6 +290,7 @@ function SandboxDetailPage() {
               projectName={data.sandbox_id}
               projectReady={data.lifecycle_status === 'ready'}
               subject="sandbox"
+              basePath={`/sandboxes/${encodeURIComponent(data.sandbox_id)}`}
             />
           )}
 

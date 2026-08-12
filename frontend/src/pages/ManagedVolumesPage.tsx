@@ -160,7 +160,7 @@ function ManagedVolumesPage() {
                   <h2>
                   {group.projectName ? (
                     <Link
-                      to={`/projects/${encodeURIComponent(group.projectName)}`}
+                      to={`/local/${encodeURIComponent(group.projectName)}`}
                     >
                       {group.title}
                     </Link>
