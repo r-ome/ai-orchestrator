@@ -79,6 +79,9 @@ function ProjectDetailPage() {
             </span>
           </p>
           <h1>{data?.name ?? projectName}</h1>
+          {/* Distinguishes this from a sandbox of a Git project. A local copy
+              has no remote and no feature branch. */}
+          <p className="page-subtitle">Legacy local copy</p>
         </div>
         <div className="button-row">
           <button
@@ -161,6 +164,7 @@ function ProjectDetailPage() {
           <ProjectPlanningSection
             projectName={data.name}
             projectReady={data.ready}
+            subject="local copy"
           />
 
           <ProjectPreviewSection

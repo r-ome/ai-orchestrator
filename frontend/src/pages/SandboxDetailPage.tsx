@@ -278,10 +278,13 @@ function SandboxDetailPage() {
           )}
 
           {data.lifecycle_status === 'ready' && (
-            // Project planning uses the v1 sandbox ID as the project name.
+            // Planning routes take a sandbox ID in the `:projectName`
+            // position. That is what the v1 branch of
+            // `inspect_registered_project` expects. Do not "fix" it.
             <ProjectPlanningSection
               projectName={data.sandbox_id}
               projectReady={data.lifecycle_status === 'ready'}
+              subject="sandbox"
             />
           )}
 

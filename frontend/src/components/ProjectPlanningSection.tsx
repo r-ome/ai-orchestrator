@@ -20,6 +20,10 @@ import PlanningStatusBadge from './PlanningStatusBadge'
 interface ProjectPlanningSectionProps {
   projectName: string
   projectReady: boolean
+  /** What this section is planning against, in the operator's words. A managed
+   *  sandbox and a legacy local copy are both "not a project", so the noun is
+   *  supplied by the page rather than assumed here. */
+  subject?: string
 }
 
 const PROVIDERS: AgentProvider[] = ['claude', 'codex']
@@ -27,6 +31,7 @@ const PROVIDERS: AgentProvider[] = ['claude', 'codex']
 function ProjectPlanningSection({
   projectName,
   projectReady,
+  subject = 'workspace',
 }: ProjectPlanningSectionProps) {
   const navigate = useNavigate()
   const fetcher = useCallback(
@@ -126,7 +131,7 @@ function ProjectPlanningSection({
         <div className="card-body">
           {!projectReady && (
             <p className="status">
-              This project is not ready yet. Wait for the copy to finish before
+              This {subject} is not ready yet. Wait for it to finish before
               planning a feature.
             </p>
           )}
@@ -141,7 +146,8 @@ function ProjectPlanningSection({
 
           {!error && !loading && sessions.length === 0 && (
             <p className="status">
-              Planning produces a reviewed plan and changes nothing in this project.
+              Planning produces a reviewed plan and changes nothing in this{' '}
+              {subject}.
             </p>
           )}
         </div>
