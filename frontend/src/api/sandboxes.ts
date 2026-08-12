@@ -183,9 +183,17 @@ export function syncSandbox(
   )
 }
 
-export function publishSandbox(sandboxId: string): Promise<PublishSandboxResult> {
+export interface PublishSandboxBody {
+  stop_blocking_preview: boolean
+}
+
+export function publishSandbox(
+  sandboxId: string,
+  body: PublishSandboxBody = { stop_blocking_preview: false },
+): Promise<PublishSandboxResult> {
   return postJson<PublishSandboxResult>(
     `/sandboxes/${encodeURIComponent(sandboxId)}/publish`,
+    body,
   )
 }
 

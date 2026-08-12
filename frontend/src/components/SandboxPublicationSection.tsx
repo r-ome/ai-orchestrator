@@ -16,7 +16,7 @@ interface SandboxPublicationSectionProps {
   /** This section's own action is running; only it shows progress. */
   pending: boolean
   actionError: string | null
-  onPublish: () => Promise<PublishSandboxResult | null>
+  onPublish: (stopBlockingPreview: boolean) => Promise<PublishSandboxResult | null>
 }
 
 function SandboxPublicationSection({
@@ -38,11 +38,14 @@ function SandboxPublicationSection({
   )
   const publication = useApiResource(fetcher, [fetcher])
   const [open, setOpen] = useState(false)
+  // A running preview holds the sandbox as a writer, so publish cannot take
+  // its lease. Stopping it is deliberate, never implied by pressing Publish.
+  const [stopBlockingPreview, setStopBlockingPreview] = useState(false)
   const [publishResult, setPublishResult] = useState<PublishSandboxResult | null>(null)
   const remoteBranch = publication.data?.remote_branch || sandbox.feature_branch || sandbox.sandbox_id
 
   const publish = async () => {
-    const result = await onPublish()
+    const result = await onPublish(stopBlockingPreview)
     if (!result) return
     setPublishResult(result)
     setOpen(false)
@@ -116,6 +119,15 @@ function SandboxPublicationSection({
           <p>
             This pushes remote branch <span className="mono">{remoteBranch}</span>. A pull request will be created if none exists.
           </p>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={stopBlockingPreview}
+              onChange={(event) => setStopBlockingPreview(event.target.checked)}
+              disabled={pending}
+            />
+            Stop a running preview before publishing
+          </label>
         </ConfirmDialog>
       )}
     </>

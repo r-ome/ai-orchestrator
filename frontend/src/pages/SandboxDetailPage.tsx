@@ -131,12 +131,16 @@ function SandboxDetailPage() {
     }
   }
 
-  const publish = async (): Promise<PublishSandboxResult | null> => {
+  const publish = async (
+    stopBlockingPreview: boolean,
+  ): Promise<PublishSandboxResult | null> => {
     if (!data || busy) return null
     setBusy(true, 'publish')
     setActionError(null)
     try {
-      const result = await publishSandbox(data.sandbox_id)
+      const result = await publishSandbox(data.sandbox_id, {
+        stop_blocking_preview: stopBlockingPreview,
+      })
       reload()
       return result
     } catch (err) {

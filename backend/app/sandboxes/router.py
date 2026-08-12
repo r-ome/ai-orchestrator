@@ -220,6 +220,12 @@ class SyncSandboxRequest(BaseModel):
     stop_blocking_preview: bool = False
 
 
+class PublishSandboxRequest(BaseModel):
+    """Explicit consent is required before publish stops a live preview."""
+
+    stop_blocking_preview: bool = False
+
+
 class EngineSyncReport(BaseModel):
     confirmed_engine: str | None
     detected_engine: str | None
@@ -766,6 +772,7 @@ def publish_sandbox(
     sandbox_id: str,
     docker_client: Annotated[DockerClient, Depends(get_docker_client)],
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
+    request: PublishSandboxRequest = PublishSandboxRequest(),
 ) -> PublishSandboxResponse:
     """Push one reviewed branch, then discover or create and verify its PR."""
     sandbox = controller_store.sandbox(sandbox_id)
@@ -797,7 +804,13 @@ def publish_sandbox(
     try:
         # Lock order is fixed: sandbox lifecycle lease, then project mirror
         # lock. The mirror lock covers both local staging and network push.
-        with lifecycle_lease(controller_store, sandbox_id, "publish") as lease:
+        with lifecycle_lease(
+            controller_store,
+            sandbox_id,
+            "publish",
+            docker_client=docker_client,
+            stop_blocking_previews=request.stop_blocking_preview,
+        ) as lease:
             if lease is None:
                 raise RuntimeError("managed sandbox did not acquire a lifecycle lease")
             operation_id = str(lease["operation_id"])

@@ -588,3 +588,46 @@ def test_sync_git_path_rebases_from_a_local_bare_remote() -> None:
             remote_volume.remove(force=True)
         if network is not None:
             network.remove()
+
+
+def test_publish_preview_requires_opt_in_like_sync_does(
+    client: TestClient, fake_docker_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Publish took its lease without the preview opt-in every other
+    lifecycle operation has, so a running preview blocked it with no way
+    through short of stopping the preview by hand."""
+    _register(fake_docker_client=fake_docker_client)
+    store = get_controller_store()
+    store.create_preview_run(
+        {
+            "id": "preview-blocker", "sandbox_id": SANDBOX_ID, "proposal_id": "proposal",
+            "mode": "native", "kind": "live", "task_id": None, "commit_sha": None,
+            "status": "running", "selected_service": None, "container_port": 3000,
+            "host_port": None, "config_json": "{}", "config_digest": "digest",
+            "network_name": None, "created_at": "", "started_at": None,
+            "expires_at": None, "last_activity_at": "",
+        }
+    )
+
+    refused = client.post(f"/sandboxes/{SANDBOX_ID}/publish", json={})
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["blocking_writer"] == {
+        "class": "preview",
+        "id": "preview-blocker",
+    }
+
+    stopped: list[str] = []
+
+    def stop(*_args: object, preview_id: str, **_kwargs: object) -> None:
+        stopped.append(preview_id)
+        store.update_preview_run(preview_id, status="stopped")
+
+    monkeypatch.setattr(sandbox_lifecycle, "_stop_blocking_preview", stop)
+
+    # The publish itself has no reviewed head here, so it stops at that
+    # check. Getting that far is the point: the lease was granted.
+    proceeded = client.post(
+        f"/sandboxes/{SANDBOX_ID}/publish", json={"stop_blocking_preview": True}
+    )
+    assert stopped == ["preview-blocker"]
+    assert proceeded.json()["detail"] != refused.json()["detail"]
