@@ -1438,6 +1438,84 @@ class ControllerStore:
             ).fetchone()
         return _row(row)
 
+    def v1_projects(self) -> list[dict[str, Any]]:
+        """List remote-keyed projects, each with its v1 sandbox count.
+
+        A remote URL is what makes a project a project. Rows carrying only a
+        source path are legacy local copies and never appear here.
+        """
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT projects.*, (
+                    SELECT COUNT(*) FROM sandboxes
+                    WHERE sandboxes.project_id = projects.id
+                    AND sandboxes.lifecycle_version = 'v1'
+                ) AS sandbox_count
+                FROM projects
+                WHERE remote_url IS NOT NULL
+                ORDER BY remote_url
+                """
+            ).fetchall()
+        return [row for row in (_row(row) for row in rows) if row is not None]
+
+    def v1_project(self, project_id: str) -> dict[str, Any] | None:
+        """Return one remote-keyed project with its v1 sandbox count."""
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT projects.*, (
+                    SELECT COUNT(*) FROM sandboxes
+                    WHERE sandboxes.project_id = projects.id
+                    AND sandboxes.lifecycle_version = 'v1'
+                ) AS sandbox_count
+                FROM projects
+                WHERE id = ? AND remote_url IS NOT NULL
+                """,
+                (project_id,),
+            ).fetchone()
+        return _row(row)
+
+    def sandboxes_for_project(self, project_id: str) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM sandboxes WHERE project_id = ? ORDER BY created_at",
+                (project_id,),
+            ).fetchall()
+        return [row for row in (_row(row) for row in rows) if row is not None]
+
+    def delete_v1_project(self, project_id: str) -> None:
+        """Delete a remote-keyed project that has no sandboxes left.
+
+        Sandbox teardown stays exclusively at `DELETE /sandboxes/{id}`, which
+        is the only path that takes the lifecycle lease and drains writers.
+        This refuses rather than cascading, so a project can never become a
+        second, leaseless way to destroy a sandbox.
+        """
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM projects WHERE id = ? AND remote_url IS NOT NULL",
+                (project_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"no remote project {project_id!r}")
+            remaining = connection.execute(
+                "SELECT COUNT(*) FROM sandboxes WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()[0]
+            if remaining:
+                raise ValueError(
+                    f"project {project_id!r} still has {remaining} sandbox(es); "
+                    "remove each sandbox first"
+                )
+            connection.execute(
+                "DELETE FROM project_secrets WHERE project_id = ?", (project_id,)
+            )
+            connection.execute(
+                "DELETE FROM project_mirror_locks WHERE project_id = ?", (project_id,)
+            )
+            connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+
     def _delete_sandbox_children(
         self,
         connection: sqlite3.Connection,

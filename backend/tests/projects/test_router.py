@@ -30,7 +30,12 @@ from app.projects.service import (
     LABEL_STATUS_STORAGE,
     STATUS_STORAGE_CONTROLLER_VOLUME,
 )
-from app.sandboxes.naming import ownership_labels, workspace_volume
+from app.sandboxes.naming import (
+    mirror_ownership_labels,
+    mirror_volume,
+    ownership_labels,
+    workspace_volume,
+)
 
 client = TestClient(app)
 
@@ -782,3 +787,203 @@ def test_long_folder_name_creates_unique_sandbox_volumes(tmp_path: Path) -> None
     assert first.json()["project_name"].endswith("-sandbox-1")
     assert second.json()["project_name"].endswith("-sandbox-2")
     assert first.json()["volume_name"] != second.json()["volume_name"]
+
+
+def _remote_store(tmp_path: Path) -> ControllerStore:
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+    store.initialize()
+    return store
+
+
+def test_remote_routes_win_over_the_legacy_project_name_route(tmp_path: Path) -> None:
+    """`/projects/remote` must not be read as a legacy project named 'remote'."""
+    store = _remote_store(tmp_path)
+    _set_overrides(StubDockerClient(), tmp_path)
+    app.dependency_overrides[get_controller_store] = lambda: store
+    try:
+        listed = client.get("/projects/remote")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert listed.status_code == 200
+    assert listed.json() == {"count": 0, "projects": []}
+
+
+def test_registering_a_project_is_idempotent_and_needs_no_sandbox(
+    tmp_path: Path,
+) -> None:
+    store = _remote_store(tmp_path)
+    _set_overrides(StubDockerClient(), tmp_path)
+    app.dependency_overrides[get_controller_store] = lambda: store
+    try:
+        created = client.post(
+            "/projects/remote",
+            json={"remote_url": "https://example.test/owner/repo.git"},
+        )
+        again = client.post(
+            "/projects/remote",
+            json={"remote_url": "https://example.test/owner/repo.git"},
+        )
+        listed = client.get("/projects/remote")
+        fetched = client.get(f"/projects/remote/{created.json()['project_id']}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert created.status_code == 201
+    assert created.json()["sandbox_count"] == 0
+    # The mirror is fetched when the first sandbox is created, under the
+    # project mirror lock. Registration must not report a branch it never read.
+    assert created.json()["default_branch"] is None
+    assert created.json()["mirror_fetched_at"] is None
+    assert again.status_code == 200
+    assert again.json()["project_id"] == created.json()["project_id"]
+    assert listed.json()["count"] == 1
+    assert fetched.status_code == 200
+
+
+def test_a_project_with_no_sandboxes_is_still_listed(tmp_path: Path) -> None:
+    """The whole point of a projects endpoint: it does not need a sandbox."""
+    store = _remote_store(tmp_path)
+    store.register_v1_project(
+        project_id="c" * 32,
+        remote_url="https://example.test/owner/empty.git",
+        default_branch="main",
+        mirror_volume="mirror",
+        created_at="2026-08-12T00:00:00Z",
+    )
+    _set_overrides(StubDockerClient(), tmp_path)
+    app.dependency_overrides[get_controller_store] = lambda: store
+    try:
+        listed = client.get("/projects/remote")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert [p["sandbox_count"] for p in listed.json()["projects"]] == [0]
+
+
+def test_legacy_local_copies_never_appear_as_projects(tmp_path: Path) -> None:
+    store = _remote_store(tmp_path)
+    # A legacy row has a source path and no remote. That is what excludes it.
+    with store._connection() as connection:
+        connection.execute(
+            "INSERT INTO projects(id, source_path, created_at) VALUES (?, ?, ?)",
+            ("2" * 32, "/tmp/legacy", "2026-08-12T00:00:00Z"),
+        )
+    _set_overrides(StubDockerClient(), tmp_path)
+    app.dependency_overrides[get_controller_store] = lambda: store
+    try:
+        listed = client.get("/projects/remote")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert listed.json() == {"count": 0, "projects": []}
+
+
+def test_removing_a_project_refuses_while_a_sandbox_remains(tmp_path: Path) -> None:
+    """Sandbox teardown stays at DELETE /sandboxes/{id}, which takes the lease."""
+    identifier = "d" * 32
+    sandbox_id = "e" * 32
+    store = _remote_store(tmp_path)
+    store.register_v1_project(
+        project_id=identifier,
+        remote_url="https://example.test/owner/busy.git",
+        default_branch="main",
+        mirror_volume=mirror_volume(identifier),
+        created_at="2026-08-12T00:00:00Z",
+    )
+    store.register_v1_sandbox(
+        sandbox_id=sandbox_id,
+        project_id=identifier,
+        project_name="busy",
+        volume_name=workspace_volume(sandbox_id),
+        created_at="2026-08-12T00:00:00Z",
+    )
+    docker_client = StubDockerClient()
+    docker_client.volumes.items.append(
+        StubVolume(
+            mirror_volume(identifier),
+            mirror_ownership_labels(project_id=identifier),
+        )
+    )
+    _set_overrides(docker_client, tmp_path)
+    app.dependency_overrides[get_controller_store] = lambda: store
+    try:
+        refused = client.delete(f"/projects/remote/{identifier}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert refused.status_code == 409
+    assert "remove each sandbox first" in refused.json()["detail"]
+    assert store.v1_project(identifier) is not None
+    # The mirror must survive a refused removal.
+    assert docker_client.volumes.items[0].removed_force is None
+
+
+def test_removing_an_empty_project_also_removes_its_mirror(tmp_path: Path) -> None:
+    identifier = "f" * 32
+    store = _remote_store(tmp_path)
+    store.register_v1_project(
+        project_id=identifier,
+        remote_url="https://example.test/owner/gone.git",
+        default_branch="main",
+        mirror_volume=mirror_volume(identifier),
+        created_at="2026-08-12T00:00:00Z",
+    )
+    store.set_project_secrets(identifier, {"TOKEN": "value"})
+    docker_client = StubDockerClient()
+    mirror = StubVolume(
+        mirror_volume(identifier),
+        mirror_ownership_labels(project_id=identifier),
+    )
+    docker_client.volumes.items.append(mirror)
+    _set_overrides(docker_client, tmp_path)
+    app.dependency_overrides[get_controller_store] = lambda: store
+    try:
+        removed = client.delete(f"/projects/remote/{identifier}")
+        missing = client.get(f"/projects/remote/{identifier}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert removed.status_code == 200
+    assert removed.json()["removed_mirror_volume"] == mirror_volume(identifier)
+    assert mirror.removed_force is True
+    assert missing.status_code == 404
+    assert store.project_secret_names(identifier) == []
+
+
+def test_removing_a_project_leaves_a_mirror_it_does_not_own(tmp_path: Path) -> None:
+    """The mirror name is derived, so ownership is re-checked before removal."""
+    identifier = "1" * 32
+    store = _remote_store(tmp_path)
+    store.register_v1_project(
+        project_id=identifier,
+        remote_url="https://example.test/owner/shared.git",
+        default_branch="main",
+        mirror_volume=mirror_volume(identifier),
+        created_at="2026-08-12T00:00:00Z",
+    )
+    docker_client = StubDockerClient()
+    impostor = StubVolume(mirror_volume(identifier), {"made-by": "hand"})
+    docker_client.volumes.items.append(impostor)
+    _set_overrides(docker_client, tmp_path)
+    app.dependency_overrides[get_controller_store] = lambda: store
+    try:
+        removed = client.delete(f"/projects/remote/{identifier}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert removed.status_code == 200
+    assert removed.json()["removed_mirror_volume"] is None
+    assert impostor.removed_force is None
+
+
+def test_removing_an_unknown_project_reports_not_found(tmp_path: Path) -> None:
+    store = _remote_store(tmp_path)
+    _set_overrides(StubDockerClient(), tmp_path)
+    app.dependency_overrides[get_controller_store] = lambda: store
+    try:
+        missing = client.delete("/projects/remote/" + "9" * 32)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert missing.status_code == 404

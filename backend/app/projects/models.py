@@ -74,3 +74,29 @@ class BrowseResponse(BaseModel):
     path: str
     parent: str | None
     entries: list[BrowseEntry]
+
+
+# A project is a Git repository, keyed by its remote. The rows above describe
+# legacy local copies, which have a source path and no remote.
+class RemoteProject(BaseModel):
+    project_id: str
+    remote_url: str
+    default_branch: str | None = None
+    mirror_volume: str | None = None
+    mirror_fetched_at: str | None = None
+    sandbox_count: int = 0
+    created_at: str
+
+
+class RemoteProjectsResponse(BaseModel):
+    count: int
+    projects: list[RemoteProject]
+
+
+class RegisterRemoteProjectRequest(BaseModel):
+    remote_url: str
+
+
+class RemoveRemoteProjectResponse(BaseModel):
+    project_id: str
+    removed_mirror_volume: str | None = None
