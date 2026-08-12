@@ -27,6 +27,7 @@ _SECTION = "@@@ENGINE_FILE:"
 _TRACKED_DATABASE_SECTION = "@@@ENGINE_TRACKED_DATABASE:"
 _COMPOSE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 _KNOWN_ENGINES = frozenset({"mysql", "postgres", "sqlite"})
+NO_DATABASE = "none"
 _EXPLICIT_PRECEDENCE_MAX = 3
 _ENGINE_ALIASES = {
     "postgresql": "postgres",
@@ -74,6 +75,13 @@ class EngineDetection:
 def normalize_engine(value: str) -> str | None:
     """Map framework spellings to the controller's engine names."""
     return _ENGINE_ALIASES.get(value.strip().lower())
+
+
+def normalize_confirmable_engine(value: str) -> str | None:
+    """Map a human-confirmed engine spelling to its stored name."""
+    if value.strip().lower() == NO_DATABASE:
+        return NO_DATABASE
+    return normalize_engine(value)
 
 
 def detect_engine(
@@ -124,11 +132,18 @@ def detect_engine(
     )
     decision_signals = explicit_signals or ordered
     engines = {signal.engine for signal in decision_signals}
-    proposed_engine = next(iter(engines)) if len(engines) == 1 else None
+    if not signals and not tracked_paths:
+        proposed_engine = NO_DATABASE
+    else:
+        proposed_engine = next(iter(engines)) if len(engines) == 1 else None
     migrate_commands, seed_commands, commands_source = _prisma_commands(files)
     return EngineDetection(
         signals=ordered,
-        proposed_engine=proposed_engine if proposed_engine in _KNOWN_ENGINES else None,
+        proposed_engine=(
+            proposed_engine
+            if proposed_engine in _KNOWN_ENGINES or proposed_engine == NO_DATABASE
+            else None
+        ),
         migrate_commands=migrate_commands,
         seed_commands=seed_commands,
         commands_source=commands_source,

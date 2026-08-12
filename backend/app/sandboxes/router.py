@@ -33,9 +33,10 @@ from app.sandboxes.database import (
 )
 from app.sandboxes.engine_detection import (
     EngineDetection,
+    NO_DATABASE,
     discover_engine,
     discover_schema_baseline_files,
-    normalize_engine,
+    normalize_confirmable_engine,
 )
 from app.sandboxes.mirror import (
     ensure_project_mirror,
@@ -175,9 +176,9 @@ class EngineConfirmationRequest(BaseModel):
     @field_validator("engine")
     @classmethod
     def validate_engine(cls, value: str) -> str:
-        engine = normalize_engine(value)
+        engine = normalize_confirmable_engine(value)
         if engine is None:
-            raise ValueError("engine must be mysql, postgres, or sqlite")
+            raise ValueError("engine must be mysql, postgres, sqlite, or none")
         return engine
 
     @field_validator("migrate_commands", "seed_commands")
@@ -1053,6 +1054,11 @@ def reset_database(
             status.HTTP_409_CONFLICT,
             "Sandbox database can reset only from ready or database_failed",
         )
+    if manifest.db_engine == NO_DATABASE:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Sandbox '{sandbox_id}' has no database to reset",
+        )
     try:
         with lifecycle_lease(
             controller_store,
@@ -1156,9 +1162,7 @@ def resume_sandbox(
             detection = controller_store.sandbox_engine_detection(sandbox_id)
             if not detection or not detection.get("confirmed_engine"):
                 raise RuntimeError("sandbox database engine is not confirmed")
-            database_row = controller_store.sandbox_database(sandbox_id)
-            if database_row is not None and database_row.get("status") == "ready":
-                sandbox_database_runtime(docker_client, controller_store, sandbox_id)
+            if detection.get("confirmed_engine") == NO_DATABASE:
                 refreshed = read_manifest(controller_store, sandbox_id) or manifest
                 write_manifest(
                     controller_store,
@@ -1167,17 +1171,39 @@ def resume_sandbox(
                         lifecycle_status="ready",
                         operation="resume",
                         operation_phase="ready",
+                        db_engine=NO_DATABASE,
+                        db_name=None,
+                        db_data_volume=None,
+                        current_base_commit=(
+                            refreshed.pending_base_commit or refreshed.current_base_commit
+                        ),
+                        pending_base_commit=None,
                         last_error=None,
                     ),
                 )
             else:
-                _complete_database_provision(
-                    docker_client,
-                    controller_store,
-                    sandbox_id=sandbox_id,
-                    operation="resume",
-                    rebuild=False,
-                )
+                database_row = controller_store.sandbox_database(sandbox_id)
+                if database_row is not None and database_row.get("status") == "ready":
+                    sandbox_database_runtime(docker_client, controller_store, sandbox_id)
+                    refreshed = read_manifest(controller_store, sandbox_id) or manifest
+                    write_manifest(
+                        controller_store,
+                        replace(
+                            refreshed,
+                            lifecycle_status="ready",
+                            operation="resume",
+                            operation_phase="ready",
+                            last_error=None,
+                        ),
+                    )
+                else:
+                    _complete_database_provision(
+                        docker_client,
+                        controller_store,
+                        sandbox_id=sandbox_id,
+                        operation="resume",
+                        rebuild=False,
+                    )
             return _sandbox_response(controller_store, sandbox)
     except (SandboxAdmissionError, ValueError) as error:
         raise HTTPException(status.HTTP_409_CONFLICT, lifecycle_conflict_detail(error) if isinstance(error, SandboxAdmissionError) else str(error)) from error
@@ -1488,7 +1514,7 @@ def _confirm_engine_snapshot(
     proposed_seed = [str(value) for value in _json_value(detection["seed_commands_json"], [])]
     migrate = request.migrate_commands or proposed_migrate
     seed = request.seed_commands or proposed_seed
-    if not migrate and not seed:
+    if request.engine != NO_DATABASE and not migrate and not seed:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Engine confirmation requires project migration or seed commands when detection proposes none",
@@ -1527,6 +1553,23 @@ def _complete_database_provision(
     if manifest is None or detection is None:
         raise SandboxDatabaseError(409, "Sandbox database intent is incomplete")
     engine = str(detection.get("confirmed_engine") or "")
+    if engine == NO_DATABASE:
+        write_manifest(
+            controller_store,
+            replace(
+                manifest,
+                lifecycle_status="ready",
+                operation=operation,
+                operation_phase="ready",
+                db_engine=engine,
+                db_name=None,
+                db_data_volume=None,
+                current_base_commit=manifest.pending_base_commit or manifest.current_base_commit,
+                pending_base_commit=None,
+                last_error=None,
+            ),
+        )
+        return
     migrate = [
         str(value)
         for value in _json_value(detection.get("migrate_commands_json"), [])

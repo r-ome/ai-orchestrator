@@ -355,6 +355,43 @@ def test_sync_reports_but_never_applies_an_engine_mismatch(
     assert get_controller_store().sandbox_engine_detection(SANDBOX_ID)["confirmed_engine"] == "sqlite"
 
 
+def test_sync_reports_a_database_added_after_no_database_confirmation(
+    fake_docker_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _register(fake_docker_client=fake_docker_client)
+    store = get_controller_store()
+    store.confirm_sandbox_engine_detection(
+        sandbox_id=SANDBOX_ID,
+        engine="none",
+        migrate_commands=[],
+        seed_commands=[],
+        commands_source={},
+        actor="tester",
+    )
+    monkeypatch.setattr(
+        sandbox_router,
+        "discover_engine",
+        lambda *_args, **_kwargs: EngineDetection(
+            signals=(EngineSignal("postgres", "test", "x", "added", 1),),
+            proposed_engine="postgres",
+            migrate_commands=(),
+            seed_commands=(),
+            commands_source={},
+        ),
+    )
+
+    report = sandbox_router._sync_engine_report(
+        fake_docker_client,
+        store,
+        sandbox_id=SANDBOX_ID,
+        image="alpine:3.21",
+    )
+
+    assert report.confirmed_engine == "none"
+    assert report.detected_engine == "postgres"
+    assert report.mismatch is True
+
+
 def test_sync_refuses_legacy_sandbox(client: TestClient) -> None:
     store = get_controller_store()
     store.register_sandbox(

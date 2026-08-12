@@ -25,6 +25,7 @@ from requests.exceptions import ReadTimeout
 from app.previews.config import PreviewSettings
 from app.previews.models import PreviewConfiguration, PreviewDependencyService
 from app.controller.store import ControllerStore
+from app.sandboxes.engine_detection import NO_DATABASE
 from app.sandboxes.naming import (
     database_name,
     db_data_volume,
@@ -1059,6 +1060,8 @@ def sandbox_database_runtime(
     sandbox = store.sandbox(sandbox_id)
     if sandbox is None or sandbox.get("lifecycle_version") != "v1":
         return None
+    if sandbox.get("db_engine") == NO_DATABASE:
+        return None
     row = store.sandbox_database(sandbox_id)
     if row is None:
         if require_ready:
@@ -1119,6 +1122,8 @@ def provision_sandbox_database(
         raise SandboxDatabaseError(409, "Only managed v1 sandboxes own databases")
     detection = store.sandbox_engine_detection(sandbox_id)
     engine_name = str((detection or {}).get("confirmed_engine") or "")
+    if engine_name == NO_DATABASE:
+        raise SandboxDatabaseError(409, f"Sandbox '{sandbox_id}' has no database")
     if engine_name not in DATABASE_ENGINES:
         raise SandboxDatabaseError(409, "Sandbox engine is not confirmed")
     db_name = database_name(sandbox_id)
@@ -1278,7 +1283,12 @@ def drop_sandbox_database(
     """Drop server-backed sandbox data before manifest-driven Docker cleanup."""
     sandbox = store.sandbox(sandbox_id)
     row = store.sandbox_database(sandbox_id)
-    if sandbox is None or row is None or str(row["engine"]) == "sqlite":
+    if (
+        sandbox is None
+        or sandbox.get("db_engine") == NO_DATABASE
+        or row is None
+        or str(row["engine"]) == "sqlite"
+    ):
         return
     engine_name = str(row["engine"])
     shared = _ensure_shared_server(

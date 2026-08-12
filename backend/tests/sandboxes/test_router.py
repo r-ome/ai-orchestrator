@@ -1,15 +1,18 @@
 from dataclasses import replace
 import inspect
+import os
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import docker
 import pytest
 from fastapi.testclient import TestClient
 from docker.errors import APIError, NotFound
 
 from app.agents.models import AgentProvider
 from app.controller.store import get_controller_store
+from app.docker_client import get_docker_client
 from app.main import app
 from app.planning import service as planning_service
 from app.planning.config import PlanningSettings
@@ -25,8 +28,8 @@ from app.sandboxes.naming import (
 from app.sandboxes import router as sandbox_router
 from app.sandboxes import publish as sandbox_publish
 from app.sandboxes import database as sandbox_database
-from app.sandboxes.database import shared_database_names
-from app.sandboxes.engine_detection import EngineDetection, EngineSignal
+from app.sandboxes.database import sandbox_database_runtime, shared_database_names
+from app.sandboxes.engine_detection import EngineDetection, EngineSignal, NO_DATABASE
 from app.sandboxes.naming import database_name, db_data_volume, network
 from app.sandboxes.manifest import read_manifest, write_manifest
 from app.sandboxes.publish import PullRequest, PublishError, PublishOutcome
@@ -34,6 +37,10 @@ from app.sandboxes.publish import PullRequest, PublishError, PublishOutcome
 
 REMOTE = "https://github.com/owner/repo.git"
 FEATURE_KEY = "add-sandbox-api"
+requires_docker = pytest.mark.skipif(
+    os.getenv("RUN_DOCKER_PREVIEW_TESTS") != "1",
+    reason="set RUN_DOCKER_PREVIEW_TESTS=1 to use the local Docker daemon",
+)
 
 
 @pytest.fixture
@@ -251,6 +258,145 @@ def test_confirm_engine_requires_commands_when_detection_has_none(client: TestCl
     assert client.get(f"/sandboxes/{created['sandbox_id']}").json()["lifecycle_status"] == (
         "awaiting_engine_confirmation"
     )
+
+
+def test_confirm_no_database_reaches_ready_without_database_resources(
+    client: TestClient, fake_docker_client
+) -> None:
+    created = _create(client).json()
+
+    response = client.post(
+        f"/sandboxes/{created['sandbox_id']}/confirm-engine",
+        json={"engine": "none", "actor": "jerome"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["lifecycle_status"] == "ready"
+    assert body["db_engine"] == NO_DATABASE
+    assert body["db_name"] is None
+    assert body["db_data_volume"] is None
+    assert get_controller_store().sandbox_database(created["sandbox_id"]) is None
+    assert sandbox_database_runtime(
+        fake_docker_client, get_controller_store(), created["sandbox_id"]
+    ) is None
+    assert fake_docker_client.networks.items == []
+
+
+def test_reset_database_refuses_a_no_database_sandbox(client: TestClient) -> None:
+    created = _create(client).json()
+    confirmed = client.post(
+        f"/sandboxes/{created['sandbox_id']}/confirm-engine",
+        json={"engine": "none", "actor": "jerome"},
+    )
+    assert confirmed.status_code == 200
+
+    response = client.post(f"/sandboxes/{created['sandbox_id']}/reset-db", json={})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        f"Sandbox '{created['sandbox_id']}' has no database to reset"
+    )
+
+
+@requires_docker
+def test_no_database_provision_and_destroy_leave_no_database_residue() -> None:
+    docker_client = docker.from_env()
+    sandbox_id = f"no-database-{uuid4().hex}"
+    project_id = f"no-database-project-{uuid4().hex}"
+    workspace = workspace_volume(sandbox_id)
+    store = get_controller_store()
+    previous_override = app.dependency_overrides.get(get_docker_client)
+    try:
+        store.register_v1_project(
+            project_id=project_id,
+            remote_url="https://example.test/no-database/repository.git",
+            default_branch="main",
+            mirror_volume=f"no-database-mirror-{uuid4().hex}",
+            created_at="",
+        )
+        store.register_v1_sandbox(
+            sandbox_id=sandbox_id,
+            project_id=project_id,
+            project_name="no database repository",
+            volume_name=workspace,
+            created_at="",
+        )
+        docker_client.volumes.create(
+            name=workspace,
+            labels=ownership_labels(sandbox_id=sandbox_id, project_id=project_id),
+        )
+        store.record_sandbox_resource(sandbox_id, kind="volume", name=workspace)
+        write_manifest(
+            store,
+            sandbox_router.SandboxManifest(
+                sandbox_id=sandbox_id,
+                lifecycle_version="v1",
+                feature_key="no-database",
+                desired_state="active",
+                lifecycle_status="creating",
+                db_engine="none",
+            ),
+        )
+        store.record_sandbox_engine_detection(
+            sandbox_id=sandbox_id,
+            signals=[],
+            proposed_engine="none",
+            migrate_commands=[],
+            seed_commands=[],
+            commands_source={},
+            detected_at_commit="a" * 40,
+        )
+        store.confirm_sandbox_engine_detection(
+            sandbox_id=sandbox_id,
+            engine="none",
+            migrate_commands=[],
+            seed_commands=[],
+            commands_source={},
+            actor="tester",
+        )
+
+        sandbox_router._complete_database_provision(
+            docker_client,
+            store,
+            sandbox_id=sandbox_id,
+            operation="confirm-engine",
+            rebuild=False,
+        )
+
+        manifest = read_manifest(store, sandbox_id)
+        assert manifest is not None
+        assert manifest.lifecycle_status == "ready"
+        assert manifest.db_name is None
+        assert manifest.db_data_volume is None
+        assert store.sandbox_database(sandbox_id) is None
+        assert docker_client.networks.list(names=[network(sandbox_id)]) == []
+        assert docker_client.volumes.list(filters={"name": db_data_volume(sandbox_id)}) == []
+        assert docker_client.containers.list(
+            all=True,
+            filters={"label": f"orchestrator.sandbox.id={sandbox_id}"},
+        ) == []
+
+        def override():
+            yield docker_client
+
+        app.dependency_overrides[get_docker_client] = override
+        deleted = TestClient(app).delete(f"/sandboxes/{sandbox_id}")
+
+        assert deleted.status_code == 200
+        with pytest.raises(NotFound):
+            docker_client.volumes.get(workspace)
+        assert docker_client.networks.list(names=[network(sandbox_id)]) == []
+        assert docker_client.volumes.list(filters={"name": db_data_volume(sandbox_id)}) == []
+    finally:
+        if previous_override is None:
+            app.dependency_overrides.pop(get_docker_client, None)
+        else:
+            app.dependency_overrides[get_docker_client] = previous_override
+        try:
+            docker_client.volumes.get(workspace).remove(force=True)
+        except NotFound:
+            pass
 
 
 def test_human_confirmation_at_create_skips_the_waiting_state(

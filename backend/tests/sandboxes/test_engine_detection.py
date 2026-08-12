@@ -1,6 +1,31 @@
 import pytest
 
-from app.sandboxes.engine_detection import detect_engine, discover_engine
+from app.sandboxes.engine_detection import (
+    NO_DATABASE,
+    detect_engine,
+    discover_engine,
+    normalize_confirmable_engine,
+    normalize_engine,
+)
+
+
+def test_no_files_propose_no_database() -> None:
+    detection = detect_engine({})
+
+    assert detection.proposed_engine == NO_DATABASE
+    assert detection.signals == ()
+
+
+def test_tracked_database_path_does_not_propose_no_database() -> None:
+    detection = detect_engine({}, tracked_paths=("data.sqlite3",))
+
+    assert detection.proposed_engine is None
+    assert detection.tracked_database_paths == ("data.sqlite3",)
+
+
+def test_only_confirmation_normalizes_no_database() -> None:
+    assert normalize_confirmable_engine("none") == NO_DATABASE
+    assert normalize_engine("none") is None
 
 
 @pytest.mark.parametrize(
