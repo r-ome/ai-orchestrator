@@ -1,6 +1,5 @@
 import sqlite3
 from pathlib import Path
-from shutil import copy2
 
 import pytest
 
@@ -44,12 +43,36 @@ PROJECT_COLUMNS = {
 }
 
 
-def _copy_controller_database(source: Path, destination: Path) -> None:
-    copy2(source, destination)
-    for suffix in ("-wal", "-shm"):
-        source_sidecar = source.with_name(f"{source.name}{suffix}")
-        if source_sidecar.exists():
-            copy2(source_sidecar, destination.with_name(f"{destination.name}{suffix}"))
+def _seed_database_at_versions(database_path: Path, versions: list[int]) -> None:
+    """Build a pre-upgrade database holding one project and one sandbox.
+
+    ``versions`` are stamped into ``schema_migrations`` without running
+    anything. Versions 2 to 17 were squashed into ``INITIAL_MIGRATION`` and no
+    longer exist as callables, so stamping is the only way to reproduce a
+    database that predates the squash.
+    """
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(store_module.INITIAL_MIGRATION)
+        connection.executemany(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            [(version, "2026-08-11T00:00:00+00:00") for version in versions],
+        )
+        connection.execute(
+            """
+            INSERT INTO projects(id, source_path, created_at)
+            VALUES ('project-1', '/projects/sample', '2026-08-11T00:00:00+00:00')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO sandboxes(
+                id, project_id, project_name, volume_name, status, created_at, updated_at
+            ) VALUES (
+                'sandbox-1', 'project-1', 'sample', 'sample-volume', 'ready',
+                '2026-08-11T00:00:00+00:00', '2026-08-11T00:00:00+00:00'
+            )
+            """
+        )
 
 
 def _database_ids(database_path: Path) -> tuple[list[str], list[str]]:
@@ -761,42 +784,38 @@ def test_add_column_is_idempotent_and_reraises_other_errors(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize(
-    ("filename", "initial_versions", "upgraded_versions"),
+    ("initial_versions", "upgraded_versions"),
     [
-        ("controller.sqlite3", [1], [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]),
-        (
-            "controller.sqlite3.backup-before-empty-reset-20260810T1721+0800",
-            list(range(1, 18)),
-            [*range(1, 29)],
-        ),
+        ([1], [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]),
+        (list(range(1, 18)), [*range(1, 29)]),
     ],
+    ids=["initial-schema", "pre-squash-schema"],
 )
-def test_upgrade_local_controller_database_copy(
+def test_upgrade_preserves_data_and_reruns_no_applied_migration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    filename: str,
     initial_versions: list[int],
     upgraded_versions: list[int],
 ) -> None:
-    source = Path(__file__).resolve().parents[2] / ".controller-data" / filename
-    if not source.exists():
-        pytest.skip(f"requires local controller database at {source}")
-
-    database_copy = tmp_path / filename
-    _copy_controller_database(source, database_copy)
-    expected_ids = _database_ids(database_copy)
-    store = ControllerStore(database_copy)
+    database_path = tmp_path / "controller.sqlite3"
+    _seed_database_at_versions(database_path, initial_versions)
+    expected_ids = _database_ids(database_path)
+    store = ControllerStore(database_path)
     assert store.applied_versions() == initial_versions
 
+    rerun_calls: list[int] = []
     if initial_versions[-1] == 17:
-        rerun_calls: list[int] = []
-
         def old_migration(version: int):
             def apply(connection: sqlite3.Connection) -> None:
                 rerun_calls.append(version)
 
             return apply
 
+        # Stand in for the squashed 2 to 17 callables, which this database
+        # already carries stamps for. Reaching one means the upgrade re-ran a
+        # migration a stamp had already recorded. Only patch for this case: at
+        # version 1 the same stamps are absent, so the fakes would legitimately
+        # run and prove nothing.
         monkeypatch.setattr(
             store_module,
             "MIGRATIONS",
@@ -805,21 +824,19 @@ def test_upgrade_local_controller_database_copy(
                 **store_module.MIGRATIONS,
             },
         )
-    else:
-        rerun_calls = []
 
     store.initialize()
     store.initialize()
 
     assert store.applied_versions() == upgraded_versions
-    assert _database_ids(database_copy) == expected_ids
+    assert _database_ids(database_path) == expected_ids
     assert rerun_calls == []
-    schema = _sandbox_column_schema(database_copy)
+    schema = _sandbox_column_schema(database_path)
     assert {column: schema[column] for column in SANDBOX_LIFECYCLE_COLUMNS} == (
         SANDBOX_LIFECYCLE_COLUMNS
     )
-    assert _project_schema(database_copy) == PROJECT_COLUMNS
-    with sqlite3.connect(database_copy) as connection:
+    assert _project_schema(database_path) == PROJECT_COLUMNS
+    with sqlite3.connect(database_path) as connection:
         assert connection.execute(
             """
             SELECT s.project_id
@@ -828,7 +845,7 @@ def test_upgrade_local_controller_database_copy(
             WHERE p.id IS NULL
             """
         ).fetchall() == []
-    _assert_database_is_consistent(database_copy)
+    _assert_database_is_consistent(database_path)
 
 
 def test_existing_sandbox_is_backfilled_as_legacy(tmp_path: Path) -> None:
