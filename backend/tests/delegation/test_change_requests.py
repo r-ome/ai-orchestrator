@@ -359,6 +359,66 @@ def test_browser_installation_cannot_count_as_behavior_verification() -> None:
     ]
 
 
+def test_denying_an_install_still_counts_as_behavior_verification() -> None:
+    """A run that installed nothing must not read as an install.
+
+    This is the exact string a real turn reported. The old check matched the
+    bare word " install" inside "no install of any kind", so saying the right
+    thing failed the change twice over.
+    """
+    evidence = change_requests._acceptance_evidence(
+        {
+            "change_kind": "interactive_ui",
+            "acceptance_criteria": [
+                {
+                    "criterion": "The button replaces its label after clicking",
+                    "verification_kind": "behavior_test",
+                    "verified": True,
+                    "evidence": "22/22 checks passed against a live browser",
+                }
+            ],
+            "verification": {
+                "ran": [
+                    "node scripts/verify-action-bar.mjs "
+                    "(== npm run verify:action-bar), using the sandbox's global "
+                    "Playwright via NODE_PATH — no install of any kind"
+                ],
+                "outcome": "passed",
+            },
+        }
+    )
+
+    assert evidence["errors"] == []
+    assert evidence["complete"] is True
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        "npx playwright install chromium",
+        "npm install playwright",
+        "pnpm add playwright",
+        "apt-get install -y chromium",
+        "apk add chromium",
+    ],
+)
+def test_a_real_browser_install_is_still_refused(check: str) -> None:
+    assert change_requests._installs_test_infrastructure(check) is True
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        "no install of any kind, used the sandbox's playwright",
+        "ran playwright without installing anything",
+        "did not run npm install playwright",
+        "npm run verify:action-bar drives playwright",
+    ],
+)
+def test_prose_that_denies_an_install_is_not_an_install(check: str) -> None:
+    assert change_requests._installs_test_infrastructure(check) is False
+
+
 def test_failed_change_verification_keeps_the_previous_implementation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

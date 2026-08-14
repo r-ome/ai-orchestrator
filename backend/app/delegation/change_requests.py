@@ -1,6 +1,7 @@
 """Agent changes requested against a completed feature implementation."""
 
 import json
+import re
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -502,25 +503,43 @@ def _is_behavior_check(check: str) -> bool:
     )
 
 
+# Match an install the way it is written as a command, not as the bare word.
+# The old bare " install" matched prose such as "no install of any kind", so an
+# agent that correctly installed nothing was recorded as having installed test
+# infrastructure, and its real browser run stopped counting as a behaviour
+# check. Both errors came from that one substring.
+_INSTALL_ACTION = re.compile(
+    r"\b(?:"
+    r"(?:npm|pnpm|yarn|bun)\s+(?:install|add|i)\b"
+    r"|(?:npx\s+)?(?:playwright|puppeteer)\s+install\b"
+    r"|apt(?:-get)?\s+install\b"
+    r"|apk\s+add\b"
+    r"|(?:pip|pip3)\s+install\b"
+    r"|brew\s+install\b"
+    r")"
+)
+# Prose that denies the install sitting right after it.
+_INSTALL_NEGATION = re.compile(
+    r"\b(?:no|not|never|without|avoided?|skipped?|"
+    r"don'?t|doesn'?t|didn'?t|did\s+not|does\s+not|do\s+not)\b"
+)
+#: How far back a denial can sit and still govern the install it denies.
+_NEGATION_WINDOW = 40
+
+
 def _installs_test_infrastructure(command: str) -> bool:
     normalized = command.casefold()
     browser_tool = any(
         tool in normalized
         for tool in ("playwright", "puppeteer", "chromium", "google-chrome")
     )
-    install_action = any(
-        action in normalized
-        for action in (
-            " install",
-            "npm i ",
-            "pnpm add",
-            "yarn add",
-            "apt-get",
-            "apt ",
-            "apk add",
-        )
-    )
-    return browser_tool and install_action
+    if not browser_tool:
+        return False
+    for match in _INSTALL_ACTION.finditer(normalized):
+        preceding = normalized[max(0, match.start() - _NEGATION_WINDOW) : match.start()]
+        if not _INSTALL_NEGATION.search(preceding):
+            return True
+    return False
 
 
 def _bounded_json(value: Mapping[str, Any], limit: int = 120_000) -> str:

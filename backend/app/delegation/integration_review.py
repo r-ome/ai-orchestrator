@@ -499,9 +499,16 @@ Use an empty findings list when approved.
 
 def _change_evidence_findings(delegation_view: Any) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
-    for change in delegation_view.changes:
-        if change.status.value != "awaiting_review":
-            continue
+    # Only the newest pending change describes the tree under review. An
+    # earlier revision's shortcomings were answered by the one that replaced
+    # it, and a change request has no settled state to leave, so judging every
+    # pending revision let one weak turn block the delegation permanently.
+    pending = [
+        change for change in delegation_view.changes
+        if change.status.value == "awaiting_review"
+    ]
+    latest = max(pending, key=lambda change: change.revision, default=None)
+    for change in [latest] if latest is not None else []:
         verification = change.verification
         evidence = (
             verification.get("acceptance_evidence")

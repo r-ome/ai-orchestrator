@@ -299,6 +299,66 @@ def test_review_cannot_approve_a_change_without_acceptance_evidence(
     )
 
 
+def test_a_later_change_supersedes_an_earlier_incomplete_one(
+    store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An answered revision must stop blocking the delegation.
+
+    A change request has no settled state to move to, so every revision stays
+    at awaiting_review for good. Judging all of them let one weak turn block
+    approval permanently, even after a later turn fixed exactly what it missed.
+    """
+    completed = _completed(store)
+    for revision, evidence in (
+        (1, {"complete": False, "errors": ["Agent reported no observable acceptance criteria"]}),
+        (2, {"complete": True, "errors": []}),
+    ):
+        request_id = f"change-{revision}"
+        store.create_delegation_change_request(
+            {
+                "id": request_id,
+                "delegation_id": completed.delegation.id,
+                "revision": revision,
+                "status": "running",
+                "instructions": "Change the interactive button state",
+                "provider": "claude",
+                "model": "change-model",
+                "task_id": None,
+            }
+        )
+        store.settle_delegation_change_request(
+            request_id,
+            to_status="awaiting_review",
+            verification_json=json.dumps(
+                {"passed": True, "acceptance_evidence": evidence}
+            ),
+        )
+    _pin_target(monkeypatch)
+
+    monkeypatch.setattr(
+        integration_review,
+        "run_planning_turn",
+        lambda *_args, **_kwargs: TurnResult(
+            raw_output="{}",
+            payload={"approved": True, "summary": "Looks correct", "findings": []},
+            model="review-model",
+        ),
+    )
+
+    outcome = integration_review.generate_integration_review(
+        object(),
+        get_planning_settings(),
+        IntegrationReviewSettings("review-model"),
+        store,
+        completed.delegation.id,
+        GenerateIntegrationReviewRequest(),
+    )
+
+    assert outcome.review.approved is True
+    assert outcome.review.findings == []
+
+
 def test_review_requires_completed_delegation(store: ControllerStore) -> None:
     view = service.create_revision(store, "session-1", [_item("a")])
 
