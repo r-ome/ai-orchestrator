@@ -21,6 +21,18 @@ def derive_feature_status(
     }:
         return FeatureStatus(planning_status)
 
+    # A pull request carries commits, and commits come from a delegation. A
+    # session that never delegated cannot have published anything, so PR facts
+    # that reach it describe somebody else's work and are dropped here.
+    #
+    # This is belt to the join's braces: `sandbox_publications` is now scoped
+    # to a session, but the row is still keyed by sandbox, so a publication
+    # attributed to the wrong session — or to none — must not be able to
+    # promote an empty session to `published` or `merged`.
+    if delegation_status is None:
+        pr_number = None
+        pr_merged_at = None
+
     normalised_pr_state = str(pr_state or "").lower()
 
     # A recorded merge is final even when older rows still report another stage.

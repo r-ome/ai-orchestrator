@@ -23,8 +23,20 @@ def _derive(**overrides: object) -> FeatureStatus:
 @pytest.mark.parametrize(
     ("overrides", "expected"),
     [
-        ({"pr_merged_at": "2026-08-14T00:00:00Z"}, FeatureStatus.MERGED),
-        ({"pr_number": 42, "pr_state": "open"}, FeatureStatus.PUBLISHED),
+        # A pull request implies a delegation produced the commits in it, so
+        # every PR case here carries one. See
+        # `test_a_pull_request_without_a_delegation_belongs_to_another_session`.
+        (
+            {
+                "delegation_status": "completed",
+                "pr_merged_at": "2026-08-14T00:00:00Z",
+            },
+            FeatureStatus.MERGED,
+        ),
+        (
+            {"delegation_status": "completed", "pr_number": 42, "pr_state": "open"},
+            FeatureStatus.PUBLISHED,
+        ),
         ({"delegation_status": "abandoned"}, FeatureStatus.ABANDONED),
         ({"context_status": "failed"}, FeatureStatus.BLOCKED),
         (
@@ -112,6 +124,7 @@ def test_blocked_wins_over_in_review() -> None:
 
 def test_merged_wins_over_published() -> None:
     assert _derive(
+        delegation_status="completed",
         pr_number=42,
         pr_state="closed",
         pr_merged_at="2026-08-14T00:00:00Z",
@@ -120,6 +133,7 @@ def test_merged_wins_over_published() -> None:
 
 def test_merged_pull_request_never_reads_as_plan_ready() -> None:
     status = _derive(
+        delegation_status="completed",
         pr_number=42,
         pr_state="closed",
         pr_merged_at="2026-08-14T00:00:00Z",
@@ -131,6 +145,7 @@ def test_merged_pull_request_never_reads_as_plan_ready() -> None:
 
 def test_closed_unmerged_pull_request_stays_in_progress() -> None:
     status = _derive(
+        delegation_status="completed",
         pr_number=42,
         pr_state="closed",
         review_status="completed",
@@ -142,7 +157,42 @@ def test_closed_unmerged_pull_request_stays_in_progress() -> None:
 
 
 def test_uppercase_open_pull_request_is_published() -> None:
-    assert _derive(pr_number=42, pr_state="OPEN") is FeatureStatus.PUBLISHED
+    assert (
+        _derive(delegation_status="completed", pr_number=42, pr_state="OPEN")
+        is FeatureStatus.PUBLISHED
+    )
+
+
+def test_a_pull_request_without_a_delegation_belongs_to_another_session() -> None:
+    """Two planning sessions in one sandbox shared a publication row.
+
+    The sandbox held an open PR for the session that had actually built
+    something. The other session had hit its review limit without producing a
+    plan, and reported itself `published` — the most misleading label available
+    for a session with no commits at all.
+    """
+    stuck = derive_feature_status(
+        PlanningStatus.REVIEW_LIMIT_REACHED,
+        context_status=None,
+        delegation_status=None,
+        review_status=None,
+        review_approved=None,
+        source_merged_at=None,
+        change_status=None,
+        pr_number=1,
+        pr_state="open",
+        pr_merged_at=None,
+    )
+
+    assert stuck is FeatureStatus.REVIEW_LIMIT_REACHED
+
+
+def test_a_merged_pull_request_without_a_delegation_is_also_ignored() -> None:
+    assert _derive(
+        pr_number=1,
+        pr_state="closed",
+        pr_merged_at="2026-08-14T00:00:00Z",
+    ) is FeatureStatus.PLAN_READY
 
 
 def test_running_delegation_without_context_is_building() -> None:

@@ -786,6 +786,41 @@ def _add_publication_merged_at(connection: sqlite3.Connection) -> None:
     _add_column(connection, "sandbox_publications", "pr_merged_at", "TEXT")
 
 
+def _add_publication_session_id(connection: sqlite3.Connection) -> None:
+    """Name the planning session a publication belongs to.
+
+    The row is keyed by sandbox, so a sandbox holding more than one planning
+    session handed the same pull request to every one of them: a session that
+    had reached its review limit without producing a plan still read as
+    `published`, because its neighbour had an open PR.
+
+    The backfill attributes an existing row to the session whose delegation
+    settled most recently, which is the only session in that sandbox that can
+    have produced the pushed branch. A sandbox with no delegation at all keeps
+    NULL, and NULL attributes the publication to nobody rather than guessing.
+    """
+    # A database that stamped migration 28 without running it has no table to
+    # alter. Creating it here is idempotent and leaves the column reachable
+    # either way.
+    _create_sandbox_publications(connection)
+    _add_column(connection, "sandbox_publications", "session_id", "TEXT")
+    connection.execute(
+        """
+        UPDATE sandbox_publications
+        SET session_id = (
+            SELECT delegation.session_id
+            FROM delegations AS delegation
+            JOIN planning_sessions AS session
+                ON session.id = delegation.session_id
+            WHERE session.sandbox_id = sandbox_publications.sandbox_id
+            ORDER BY COALESCE(delegation.settled_at, delegation.updated_at) DESC
+            LIMIT 1
+        )
+        WHERE session_id IS NULL
+        """
+    )
+
+
 def _add_planning_session_models(connection: sqlite3.Connection) -> None:
     """Record the provider model each planning role uses."""
     for column in (
@@ -831,6 +866,7 @@ MIGRATIONS: Mapping[int, Callable[[sqlite3.Connection], None]] = {
     28: _create_sandbox_publications,
     29: _add_publication_merged_at,
     30: _add_planning_session_models,
+    31: _add_publication_session_id,
 }
 
 
@@ -891,6 +927,12 @@ LEFT JOIN delegation_change_requests AS change_request
     )
 LEFT JOIN sandbox_publications AS publication
     ON publication.sandbox_id = session.sandbox_id
+    -- Every other join above is scoped to this session. This one was scoped to
+    -- the sandbox alone, so a sandbox holding two planning sessions gave both
+    -- of them the same pull request, and a session that had produced nothing
+    -- reported itself as published. A publication with no owner attributes to
+    -- nobody, which under-claims instead of claiming somebody else's work.
+    AND publication.session_id = session.id
 """
 
 
@@ -1292,17 +1334,28 @@ class ControllerStore:
         pr_url: str | None = None,
         pr_state: str | None = None,
         pr_merged_at: str | None = None,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
-        """Upsert observed Git and PR state without asserting publication intent."""
+        """Upsert observed Git and PR state without asserting publication intent.
+
+        `session_id` names the planning session the publication belongs to. It
+        is COALESCEd like the PR columns, so the call that observes a later
+        fact — a push failure, a refreshed PR state — keeps the attribution the
+        publishing call established rather than clearing it.
+        """
         now = _now()
         with self._connection() as connection:
             connection.execute(
                 """
                 INSERT INTO sandbox_publications(
                     sandbox_id, remote_branch, last_pushed_commit, remote_branch_sha,
-                    pr_number, pr_url, pr_state, pr_merged_at, last_error, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    pr_number, pr_url, pr_state, pr_merged_at, last_error, updated_at,
+                    session_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(sandbox_id) DO UPDATE SET
+                    session_id = COALESCE(
+                        excluded.session_id, sandbox_publications.session_id
+                    ),
                     remote_branch = excluded.remote_branch,
                     last_pushed_commit = excluded.last_pushed_commit,
                     remote_branch_sha = excluded.remote_branch_sha,
@@ -1326,6 +1379,7 @@ class ControllerStore:
                     pr_merged_at,
                     last_error,
                     now,
+                    session_id,
                 ),
             )
             row = connection.execute(
@@ -1336,6 +1390,30 @@ class ControllerStore:
         if result is None:
             raise RuntimeError("sandbox publication did not persist")
         return result
+
+    def publication_owner_session(self, sandbox_id: str) -> str | None:
+        """The planning session whose work a push from this sandbox carries.
+
+        A sandbox has one feature branch, and every delegation in it merges
+        into that branch, so the session that most recently settled a
+        delegation is the one whose work is being pushed. Returns None when
+        the sandbox has no delegation, because then nothing built the branch
+        and no session should be credited with the pull request.
+        """
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT delegation.session_id AS session_id
+                FROM delegations AS delegation
+                JOIN planning_sessions AS session
+                    ON session.id = delegation.session_id
+                WHERE session.sandbox_id = ?
+                ORDER BY COALESCE(delegation.settled_at, delegation.updated_at) DESC
+                LIMIT 1
+                """,
+                (sandbox_id,),
+            ).fetchone()
+        return str(row["session_id"]) if row is not None else None
 
     def sandbox_engine_detection(self, sandbox_id: str) -> dict[str, Any] | None:
         """Return one sandbox's persisted detection and command snapshot."""

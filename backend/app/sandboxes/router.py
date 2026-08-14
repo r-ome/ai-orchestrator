@@ -806,6 +806,10 @@ def publish_sandbox(
     remote_branch = _optional_string(prior_publication.get("remote_branch")) or (
         manifest.remote_branch or manifest.feature_branch
     )
+    # Which planning session this push carries. Recorded on the publication so
+    # the feature status of a *different* session in the same sandbox does not
+    # inherit this pull request.
+    owner_session_id = controller_store.publication_owner_session(sandbox_id)
     base_ref = _required_sync_value(sandbox, "base_ref", sandbox_id)
     workspace_name = workspace_volume(sandbox_id)
     mirror_name = str(project["mirror_volume"])
@@ -887,6 +891,7 @@ def publish_sandbox(
                 last_pushed_commit=outcome.last_pushed_commit,
                 remote_branch_sha=outcome.remote_branch_sha,
                 last_error=None,
+                session_id=owner_session_id,
             )
             pushed = read_manifest(controller_store, sandbox_id)
             if pushed is None:

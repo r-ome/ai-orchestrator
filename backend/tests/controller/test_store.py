@@ -372,9 +372,10 @@ def test_planning_sessions_for_project_includes_latest_feature_facts(tmp_path: P
         connection.execute(
             """
             INSERT INTO sandbox_publications(
-                sandbox_id, remote_branch, pr_number, pr_state, pr_merged_at, updated_at
-            ) VALUES ('sandbox-feature-status', 'feature/status', 42, 'open',
-                      '2026-08-14T02:00:00Z', ?)
+                sandbox_id, session_id, remote_branch, pr_number, pr_state,
+                pr_merged_at, updated_at
+            ) VALUES ('sandbox-feature-status', 'session-feature-status',
+                      'feature/status', 42, 'open', '2026-08-14T02:00:00Z', ?)
             """,
             (now,),
         )
@@ -441,6 +442,7 @@ def test_publication_merge_fact_survives_later_observations(tmp_path: Path) -> N
         pr_state="closed",
         pr_merged_at=merged_at,
         last_error=None,
+        session_id=session_id,
     )
 
     facts = store.planning_session_with_feature_facts(session_id)
@@ -671,7 +673,7 @@ def test_fresh_database_applies_sandbox_migrations(tmp_path: Path) -> None:
 
     store.initialize()
 
-    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
 
 
 def test_migration_21_applies_when_22_and_23_are_already_stamped(
@@ -685,7 +687,7 @@ def test_migration_21_applies_when_22_and_23_are_already_stamped(
 
     store.initialize()
 
-    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
     with store._connection() as connection:
         assert connection.execute(
             """
@@ -796,6 +798,7 @@ def test_initialize_applies_migrations_in_order_once_and_skips_stamps(
         28,
         29,
         30,
+        31,
         101,
         102,
         103,
@@ -946,8 +949,8 @@ def test_add_column_is_idempotent_and_reraises_other_errors(tmp_path: Path) -> N
 @pytest.mark.parametrize(
     ("initial_versions", "upgraded_versions"),
     [
-        ([1], [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]),
-        (list(range(1, 18)), [*range(1, 31)]),
+        ([1], [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]),
+        (list(range(1, 18)), [*range(1, 32)]),
     ],
     ids=["initial-schema", "pre-squash-schema"],
 )
@@ -1038,7 +1041,7 @@ def test_initialize_is_idempotent_and_legacy_backfill_is_guarded(tmp_path: Path)
     sandbox = store.sandboxes()[0]
     assert sandbox["lifecycle_version"] == "v1"
     assert sandbox["desired_state"] == "destroyed"
-    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
 
 
 def test_projects_rebuild_keeps_sandbox_foreign_key_schema_and_data(tmp_path: Path) -> None:
@@ -1312,9 +1315,10 @@ def test_initial_migration_creates_the_current_schema_once(tmp_path: Path) -> No
             "pr_merged_at",
             "last_error",
             "updated_at",
+            "session_id",
         } == columns("sandbox_publications")
 
-    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
     assert {
         "tasks",
         "planning_sessions",
