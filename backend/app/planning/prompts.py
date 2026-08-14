@@ -10,12 +10,79 @@ CLARIFIER_SCHEMA = """{
   \"understanding_summary\": \"\"
 }"""
 
-_PLANNER_SCHEMA_BODY = """  \"plan_markdown\": \"the full plan as markdown\",
-  \"scope\": \"what this feature includes and excludes\",
-  \"approach\": \"the proposed approach in prose\",
-  \"components\": [{\"name\": \"...\", \"responsibility\": \"...\"}],
-  \"risks\": [{\"severity\": \"high|medium|low\", \"text\": \"...\"}],
-  \"open_questions\": [\"...\"]"""
+def _render_prose(value: Any) -> str:
+    text = str(value or "").strip()
+    return text or "(none)"
+
+
+def _render_components(value: Any) -> str:
+    items = value if isinstance(value, list) else []
+    lines = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        name = str(item.get("name", "")).strip()
+        responsibility = str(item.get("responsibility", "")).strip()
+        lines.append(f"- {name}: {responsibility}" if responsibility else f"- {name}")
+    return "\n".join(lines) or "(none)"
+
+
+def _render_risks(value: Any) -> str:
+    items = value if isinstance(value, list) else []
+    lines = [
+        f"- [{str(item.get('severity', '')).strip()}] {str(item.get('text', '')).strip()}"
+        for item in items
+        if isinstance(item, Mapping)
+    ]
+    return "\n".join(lines) or "(none)"
+
+
+def _render_questions(value: Any) -> str:
+    items = value if isinstance(value, list) else []
+    lines = [f"{index}. {str(item).strip()}" for index, item in enumerate(items, start=1)]
+    return "\n".join(lines) or "(none)"
+
+
+# One list drives both halves of the plan contract: the schema the planner is
+# asked to fill, and the rendering the reviewer is shown. They have to stay
+# together. When the reviewer received `plan_markdown` alone, a planner that
+# put a scope decision in `open_questions` and pointed at it from the markdown
+# produced a plan the reviewer could not read whole: it saw the reference, saw
+# no such section, and re-raised a finding the planner had already answered.
+# The loop ran to its turn limit on a disagreement neither side could settle.
+# So the invariant is: anything the planner can put a claim in must reach the
+# reviewer. Adding a field here without a renderer fails the coverage test in
+# tests/planning/test_prompts.py.
+_PLAN_FIELDS: tuple[tuple[str, str, str, Any], ...] = (
+    ("plan_markdown", '"the full plan as markdown"', "Plan", _render_prose),
+    ("scope", '"what this feature includes and excludes"', "Scope", _render_prose),
+    ("approach", '"the proposed approach in prose"', "Approach", _render_prose),
+    (
+        "components",
+        '[{"name": "...", "responsibility": "..."}]',
+        "Components",
+        _render_components,
+    ),
+    ("risks", '[{"severity": "high|medium|low", "text": "..."}]', "Risks", _render_risks),
+    ("open_questions", '["..."]', "Open questions", _render_questions),
+)
+
+_PLANNER_SCHEMA_BODY = ",\n".join(
+    f'  "{name}": {literal}' for name, literal, _, _ in _PLAN_FIELDS
+)
+
+
+def render_plan(plan: Mapping[str, Any]) -> str:
+    """Render every planner field the reviewer has to judge.
+
+    Empty fields render as `(none)` rather than disappearing. A missing
+    section reads to the reviewer as a plan it was handed incompletely; an
+    explicit `(none)` reads as a planner that had nothing to say.
+    """
+    return "\n\n".join(
+        f"## {heading}\n{render(plan.get(name))}"
+        for name, _, heading, render in _PLAN_FIELDS
+    )
 
 # Round one has no review ledger, so the planner has nothing to respond to.
 # Showing it the `finding_responses` field anyway invites it to invent findings
@@ -101,6 +168,14 @@ def planner_prompt(
             "compiled, built, or tested anything. Take dependency versions from the "
             "manifest or lockfile and name the file you took them from."
         ),
+        # Without this the planner treats plan_markdown as the only thing that is
+        # read, and puts the decision that settles a finding somewhere else.
+        (
+            "The reviewer receives every field of your reply, not plan_markdown "
+            "alone. Put each thing in its own field: an unresolved decision belongs "
+            "in open_questions, not buried in the markdown, and the markdown should "
+            "not point at a section it does not contain."
+        ),
     ]
     first_round = round_number < 2
     if not first_round:
@@ -118,14 +193,18 @@ def planner_prompt(
 def reviewer_prompt(
     *,
     brief: str,
-    plan_markdown: str,
+    plan: Mapping[str, Any],
     ledger: Sequence[Mapping[str, Any]],
 ) -> str:
     return "\n\n".join(
         [
             "You are the plan reviewer for a project-level planning session.",
             f"Feature brief:\n{brief}",
-            f"Current plan:\n{plan_markdown}",
+            (
+                "Current plan. This is the whole plan the planner produced, every "
+                "field of it. Judge all of it, not the Plan section alone:\n"
+                + render_plan(plan)
+            ),
             (
                 "Verify the plan against the project at /workspace. It is read-only. "
                 "Check that the files, symbols, and conventions the plan names exist "

@@ -582,12 +582,15 @@ def _run_reviewer_turn(
     if sandbox is None:
         raise PlanningTurnError(500, "reviewer turn has no registered sandbox")
     revision = _current_revision(controller_store, session_id, int(session["plan_revision"]))
+    plan = _json_value(revision["plan_json"])
+    if not isinstance(plan, dict):
+        raise PlanningTurnError(500, "stored plan revision has invalid JSON")
     request = TurnRequest(
         role=PlanningRole.REVIEWER,
         provider=AgentProvider(str(session["reviewer_provider"])),
         prompt=reviewer_prompt(
             brief=str(session["feature_brief"]),
-            plan_markdown=str(revision["plan_markdown"]),
+            plan=plan,
             ledger=_review_ledger(controller_store.planning_findings(session_id)),
         ),
         project_volume=str(sandbox["volume_name"]),

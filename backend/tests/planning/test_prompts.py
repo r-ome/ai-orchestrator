@@ -3,8 +3,11 @@ from app.planning.config import PlanningSettings
 from app.planning.runner import turn_model
 from app.planning.prompts import (
     JSON_INSTRUCTION,
+    PLANNER_SCHEMA,
+    _PLAN_FIELDS,
     clarifier_prompt,
     planner_prompt,
+    render_plan,
     reviewer_prompt,
 )
 
@@ -57,7 +60,7 @@ def test_planner_prompt_only_includes_ledger_after_first_round() -> None:
 def test_reviewer_prompt_contains_ledger_but_not_planner_transcript() -> None:
     prompt = reviewer_prompt(
         brief="The brief",
-        plan_markdown="# Current plan",
+        plan={"plan_markdown": "# Current plan"},
         ledger=[{"id": "F1", "severity": "major", "text": "Add rollback"}],
     )
 
@@ -66,11 +69,51 @@ def test_reviewer_prompt_contains_ledger_but_not_planner_transcript() -> None:
     assert "Your previous planning turns" not in prompt
 
 
+def test_reviewer_prompt_shows_every_planner_field() -> None:
+    """The planner must not be able to justify a finding out of the reviewer's sight.
+
+    A plan whose only visible field was plan_markdown let the planner answer a
+    blocking finding in open_questions. The reviewer re-raised it every round
+    because it could not see the answer, and the loop hit its turn limit.
+    """
+    plan = {
+        "plan_markdown": "# Plan\nSee Open question 1.",
+        "scope": "One file only",
+        "approach": "Edit the footer component",
+        "components": [{"name": "Footer.astro", "responsibility": "renders the icons"}],
+        "risks": [{"severity": "medium", "text": "The footer is mounted nowhere"}],
+        "open_questions": ["Should the footer be mounted at all?"],
+    }
+
+    prompt = reviewer_prompt(brief="The brief", plan=plan, ledger=[])
+
+    assert "One file only" in prompt
+    assert "Edit the footer component" in prompt
+    assert "Footer.astro: renders the icons" in prompt
+    assert "[medium] The footer is mounted nowhere" in prompt
+    assert "1. Should the footer be mounted at all?" in prompt
+
+
+def test_every_planner_schema_field_reaches_the_reviewer() -> None:
+    """Adding a planner field without rendering it recreates the side channel."""
+    rendered = render_plan({})
+    for name, _, heading, _ in _PLAN_FIELDS:
+        assert f'"{name}"' in PLANNER_SCHEMA, f"{name} is missing from the planner schema"
+        assert f"## {heading}" in rendered, f"{name} never reaches the reviewer"
+
+
+def test_absent_planner_fields_render_as_none_rather_than_vanishing() -> None:
+    rendered = render_plan({})
+
+    assert "## Open questions\n(none)" in rendered
+    assert "## Risks\n(none)" in rendered
+
+
 def test_model_prompts_end_with_the_json_instruction() -> None:
     prompts = [
         clarifier_prompt(title="Title", messages=[]),
         planner_prompt(brief="Brief", round_number=1, previous_turns=[], ledger=[]),
-        reviewer_prompt(brief="Brief", plan_markdown="Plan", ledger=[]),
+        reviewer_prompt(brief="Brief", plan={"plan_markdown": "Plan"}, ledger=[]),
     ]
 
     assert all(prompt.endswith(JSON_INSTRUCTION) for prompt in prompts)
