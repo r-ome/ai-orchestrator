@@ -24,6 +24,27 @@ matches SQLite records with labeled Docker resources. Docker restart policies
 remain disabled, so applications do not restart automatically after a machine
 reboot.
 
+## Configuration
+
+Every setting is an environment variable with a code default. `backend/.env`
+supplies those variables at startup: `app/env.py` reads it before any settings
+module runs. A real environment variable always wins over a line in the file.
+The file is not committed. Copy `backend/.env.example` to start one.
+
+`.env.example` holds the model assignment this project runs by default:
+
+| Role | Model |
+|---|---|
+| Planning clarifier | Claude, `claude-opus-5` |
+| Planning planner | Claude, `claude-opus-5` |
+| Planning reviewer | Codex, `gpt-5.6-sol`, high reasoning effort |
+| Work item implementation | Codex, tiered by complexity: luna / terra / sol |
+| Delegator | Claude, `claude-sonnet-5` |
+| Integration reviewer | Claude, `claude-sonnet-5` |
+
+`ROUTING_DEFAULT_PROVIDER` sets the provider for a work item run that carries
+no per-run and no per-item preference. Those preferences still win over it.
+
 Controller settings:
 
 ```text
