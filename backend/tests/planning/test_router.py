@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.controller.store import get_controller_store
 from app.docker_client import get_docker_client
 from app.main import app
+from app.planning.config import get_planning_settings
 from app.planning import service
 from app.projects.service import project_id
 
@@ -57,6 +58,24 @@ def _create(client: TestClient) -> dict[str, Any]:
     )
     assert response.status_code == 201
     return response.json()
+
+
+def test_defaults_returns_planning_settings_and_provider_catalogues(client: TestClient) -> None:
+    response = client.get("/projects/Sample%20Project/planning/defaults")
+
+    assert response.status_code == 200
+    body = response.json()
+    settings = get_planning_settings()
+    assert body["clarifier_provider"] == settings.clarifier_provider.value
+    assert body["planner_provider"] == settings.planner_provider.value
+    assert body["reviewer_provider"] == settings.reviewer_provider.value
+    assert body["claude_model"] == settings.claude_model
+    assert body["codex_model"] == settings.codex_model
+    assert body["codex_reasoning_effort"] == settings.codex_reasoning_effort
+    assert body["max_review_turns"] == settings.max_review_turns
+    assert body["models_by_provider"]["claude"]
+    assert body["models_by_provider"]["codex"]
+    assert body["reasoning_efforts"] == ["low", "medium", "high"]
 
 
 def test_planning_endpoints_return_the_specified_statuses_and_models(client: TestClient) -> None:

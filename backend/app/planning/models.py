@@ -124,6 +124,10 @@ class CreatePlanningSessionRequest(BaseModel):
     clarifier_provider: AgentProvider | None = None
     planner_provider: AgentProvider | None = None
     reviewer_provider: AgentProvider | None = None
+    clarifier_model: str | None = None
+    planner_model: str | None = None
+    reviewer_model: str | None = None
+    reviewer_reasoning_effort: str | None = None
     max_review_turns: int | None = Field(default=None, ge=1, le=10)
 
 
@@ -226,6 +230,10 @@ class PlanningSession(BaseModel):
     clarifier_provider: AgentProvider
     planner_provider: AgentProvider
     reviewer_provider: AgentProvider
+    clarifier_model: str | None
+    planner_model: str | None
+    reviewer_model: str | None
+    reviewer_reasoning_effort: str | None
     max_review_turns: int
     review_turn: int
     plan_revision: int
@@ -247,3 +255,15 @@ class PlanningSessionDetail(PlanningSession):
 class PlanningSessionsResponse(BaseModel):
     count: int
     sessions: list[PlanningSession]
+
+
+class PlanningDefaults(BaseModel):
+    clarifier_provider: AgentProvider
+    planner_provider: AgentProvider
+    reviewer_provider: AgentProvider
+    claude_model: str
+    codex_model: str
+    codex_reasoning_effort: str
+    max_review_turns: int
+    models_by_provider: dict[str, list[str]]
+    reasoning_efforts: list[str]

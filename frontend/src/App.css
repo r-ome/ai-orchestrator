@@ -861,6 +861,32 @@
   font-size: 0.935rem;
 }
 
+.planning-override-row {
+  margin: 1rem 0;
+}
+
+.planning-override-row h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.935rem;
+}
+
+.planning-override-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.75fr);
+  gap: 0.75rem;
+}
+
+.planning-override-fields--with-reasoning {
+  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.75fr) minmax(0, 1fr);
+}
+
+/* A grid item is min-width: auto by default, so a long model name would widen
+   its column past the dialog edge. Zero lets the column hold the track size. */
+.planning-override-fields .dialog-field {
+  margin: 0;
+  min-width: 0;
+}
+
 .dialog-field input {
   font: inherit;
   font-size: 0.99rem;
@@ -879,6 +905,13 @@
   border: 1px solid var(--border);
   background: var(--bg);
   color: inherit;
+}
+
+@media (max-width: 720px) {
+  .planning-override-fields,
+  .planning-override-fields--with-reasoning {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .summon-provider-note {

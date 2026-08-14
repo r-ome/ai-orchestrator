@@ -95,6 +95,157 @@ def test_create_stores_request_as_first_message_and_starts_clarifying(
     ]
 
 
+def test_create_records_resolved_model_defaults(
+    controller_store: ControllerStore, settings: PlanningSettings
+) -> None:
+    session = _create(controller_store, settings)
+
+    stored = controller_store.planning_session(session.id)
+    assert stored is not None
+    assert stored["clarifier_model"] == "opus"
+    assert stored["planner_model"] == "opus"
+    assert stored["reviewer_model"] == "gpt-5.6-terra"
+    assert stored["reviewer_reasoning_effort"] == "high"
+
+
+def test_create_rejects_a_model_owned_by_another_provider(
+    controller_store: ControllerStore, settings: PlanningSettings
+) -> None:
+    with pytest.raises(PlanningOperationError, match="claude model and codex cannot run it") as error:
+        service.create_session(
+            object(),
+            controller_store,
+            settings,
+            PROJECT.name,
+            CreatePlanningSessionRequest(
+                title="Add planning",
+                request="Plan project sessions",
+                clarifier_provider=AgentProvider.CODEX,
+                clarifier_model="claude-fable-5",
+            ),
+        )
+
+    assert error.value.status_code == 422
+
+
+def test_create_accepts_an_unlisted_model_and_rejects_bad_reasoning_effort(
+    controller_store: ControllerStore, settings: PlanningSettings
+) -> None:
+    session = service.create_session(
+        object(),
+        controller_store,
+        settings,
+        PROJECT.name,
+        CreatePlanningSessionRequest(
+            title="Add planning",
+            request="Plan project sessions",
+            clarifier_model="claude-next",
+        ),
+    )
+    stored = controller_store.planning_session(session.id)
+    assert stored is not None
+    assert stored["clarifier_model"] == "claude-next"
+
+    with pytest.raises(PlanningOperationError, match="reasoning effort") as error:
+        service.create_session(
+            object(),
+            controller_store,
+            settings,
+            PROJECT.name,
+            CreatePlanningSessionRequest(
+                title="Bad effort",
+                request="Plan project sessions",
+                reviewer_reasoning_effort="maximum",
+            ),
+        )
+
+    assert error.value.status_code == 422
+
+
+def test_a_configured_effort_outside_the_dialog_choices_is_not_refused(
+    controller_store: ControllerStore, settings: PlanningSettings
+) -> None:
+    """The dialog offers three efforts. A deployment may configure another."""
+    configured = replace(settings, codex_reasoning_effort="minimal")
+
+    session = _create(controller_store, configured)
+
+    stored = controller_store.planning_session(session.id)
+    assert stored is not None
+    assert stored["reviewer_reasoning_effort"] == "minimal"
+
+    # The dialog offers the configured effort, so sending it back must work.
+    echoed = service.create_session(
+        object(),
+        controller_store,
+        configured,
+        PROJECT.name,
+        CreatePlanningSessionRequest(
+            title="Echo the effort",
+            request="Plan project sessions",
+            reviewer_reasoning_effort="minimal",
+        ),
+    )
+    assert controller_store.planning_session(echoed.id)["reviewer_reasoning_effort"] == "minimal"
+
+
+def test_each_role_runs_with_its_stored_model(
+    controller_store: ControllerStore,
+    settings: PlanningSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = service.create_session(
+        object(),
+        controller_store,
+        settings,
+        PROJECT.name,
+        CreatePlanningSessionRequest(
+            title="Add planning",
+            request="Plan project sessions",
+            clarifier_model="claude-fable-5",
+            planner_provider=AgentProvider.CODEX,
+            planner_model="gpt-5.6-sol",
+            reviewer_model="gpt-5.6-terra",
+            reviewer_reasoning_effort="low",
+        ),
+    )
+    controller_store.record_plan_revision(
+        session_id=session.id,
+        revision=1,
+        plan_json={},
+        plan_markdown="# Plan",
+    )
+    controller_store.advance_planning_status(
+        session_id=session.id,
+        from_statuses=(PlanningStatus.CLARIFYING.value,),
+        to_status=PlanningStatus.PLANNING.value,
+    )
+    stored = controller_store.planning_session(session.id)
+    assert stored is not None
+    assert stored["clarifier_model"] == "claude-fable-5"
+    assert stored["planner_model"] == "gpt-5.6-sol"
+    assert stored["reviewer_model"] == "gpt-5.6-terra"
+    assert stored["reviewer_reasoning_effort"] == "low"
+    captured: list[tuple[PlanningSettings, AgentProvider]] = []
+
+    def run(_: object, turn_settings: PlanningSettings, request: Any, __: Any) -> TurnResult:
+        captured.append((turn_settings, request.provider))
+        return TurnResult(raw_output="", payload={})
+
+    monkeypatch.setattr(service, "run_turn_with_repair", run)
+    monkeypatch.setattr(service.docker, "from_env", lambda: SimpleNamespace(close=lambda: None))
+
+    service._run_clarifier_turn(controller_store, settings, session.id)
+    service._run_planner_turn(controller_store, settings, session.id)
+    service._run_reviewer_turn(controller_store, settings, session.id)
+
+    assert [(turn.claude_model, turn.codex_model, turn.codex_reasoning_effort, provider) for turn, provider in captured] == [
+        ("claude-fable-5", "gpt-5.6-terra", "high", AgentProvider.CLAUDE),
+        ("opus", "gpt-5.6-sol", "high", AgentProvider.CODEX),
+        ("opus", "gpt-5.6-terra", "low", AgentProvider.CODEX),
+    ]
+
+
 def test_create_rejects_project_that_is_not_ready(
     controller_store: ControllerStore, settings: PlanningSettings, monkeypatch: pytest.MonkeyPatch
 ) -> None:

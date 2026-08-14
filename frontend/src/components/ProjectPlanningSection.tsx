@@ -9,9 +9,11 @@ import { Link, useNavigate } from 'react-router-dom'
 import type { AgentProvider } from '../api/agents'
 import {
   createPlanningSession,
+  fetchPlanningDefaults,
   fetchPlanningSessions,
   isPlanningTerminal,
   type CreatePlanningSessionBody,
+  type PlanningDefaults,
 } from '../api/planning'
 import { useApiResource } from '../hooks/useApiResource'
 import { formatRelativeTime, formatTimestamp } from '../utils/format'
@@ -28,6 +30,35 @@ interface ProjectPlanningSectionProps {
 
 const PROVIDERS: AgentProvider[] = ['claude', 'codex']
 
+interface PlanningOverrides {
+  clarifierProvider: AgentProvider
+  plannerProvider: AgentProvider
+  reviewerProvider: AgentProvider
+  clarifierModel: string
+  plannerModel: string
+  reviewerModel: string
+  reviewerReasoningEffort: string
+  /** Kept as text so an emptied field stays empty while the operator retypes. */
+  maxReviewTurns: string
+}
+
+function defaultModel(provider: AgentProvider, defaults: PlanningDefaults): string {
+  return provider === 'claude' ? defaults.claude_model : defaults.codex_model
+}
+
+function defaultOverrides(defaults: PlanningDefaults): PlanningOverrides {
+  return {
+    clarifierProvider: defaults.clarifier_provider,
+    plannerProvider: defaults.planner_provider,
+    reviewerProvider: defaults.reviewer_provider,
+    clarifierModel: defaultModel(defaults.clarifier_provider, defaults),
+    plannerModel: defaultModel(defaults.planner_provider, defaults),
+    reviewerModel: defaultModel(defaults.reviewer_provider, defaults),
+    reviewerReasoningEffort: defaults.codex_reasoning_effort,
+    maxReviewTurns: String(defaults.max_review_turns),
+  }
+}
+
 function ProjectPlanningSection({
   projectName,
   projectReady,
@@ -40,17 +71,16 @@ function ProjectPlanningSection({
     [projectName],
   )
   const { data, loading, error, reload } = useApiResource(fetcher, [projectName])
+  const defaultsFetcher = useCallback(
+    (signal: AbortSignal) => fetchPlanningDefaults(projectName, signal),
+    [projectName],
+  )
+  const { data: defaults } = useApiResource(defaultsFetcher, [projectName])
   const [formOpen, setFormOpen] = useState(false)
   const [title, setTitle] = useState('')
   const [request, setRequest] = useState('')
-  const [clarifierProvider, setClarifierProvider] = useState<AgentProvider | ''>(
-    '',
-  )
-  const [plannerProvider, setPlannerProvider] = useState<AgentProvider | ''>('')
-  const [reviewerProvider, setReviewerProvider] = useState<AgentProvider | ''>(
-    '',
-  )
-  const [maxReviewTurns, setMaxReviewTurns] = useState('')
+  const [overridesOpen, setOverridesOpen] = useState(false)
+  const [overrides, setOverrides] = useState<PlanningOverrides | null>(null)
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -79,7 +109,38 @@ function ProjectPlanningSection({
   const closeForm = () => {
     if (busy) return
     setFormOpen(false)
+    setOverridesOpen(false)
+    setOverrides(null)
     setFormError(null)
+  }
+
+  const toggleOverrides = () => {
+    if (overridesOpen) {
+      setOverridesOpen(false)
+      setOverrides(null)
+      return
+    }
+    if (!defaults) return
+    setOverrides(defaultOverrides(defaults))
+    setOverridesOpen(true)
+  }
+
+  const setProvider = (
+    role: 'clarifier' | 'planner' | 'reviewer',
+    provider: AgentProvider,
+  ) => {
+    if (!defaults) return
+    setOverrides((current) => {
+      if (!current) return current
+      const model = defaultModel(provider, defaults)
+      if (role === 'clarifier') {
+        return { ...current, clarifierProvider: provider, clarifierModel: model }
+      }
+      if (role === 'planner') {
+        return { ...current, plannerProvider: provider, plannerModel: model }
+      }
+      return { ...current, reviewerProvider: provider, reviewerModel: model }
+    })
   }
 
   const submit = async (event: FormEvent) => {
@@ -90,10 +151,22 @@ function ProjectPlanningSection({
       title: title.trim(),
       request: request.trim(),
     }
-    if (clarifierProvider) body.clarifier_provider = clarifierProvider
-    if (plannerProvider) body.planner_provider = plannerProvider
-    if (reviewerProvider) body.reviewer_provider = reviewerProvider
-    if (maxReviewTurns !== '') body.max_review_turns = Number(maxReviewTurns)
+    if (overridesOpen && overrides) {
+      body.clarifier_provider = overrides.clarifierProvider
+      body.planner_provider = overrides.plannerProvider
+      body.reviewer_provider = overrides.reviewerProvider
+      body.clarifier_model = overrides.clarifierModel
+      body.planner_model = overrides.plannerModel
+      body.reviewer_model = overrides.reviewerModel
+      // Effort only reaches a codex reviewer, and an emptied limit field means
+      // the operator wants whatever the backend already uses.
+      if (overrides.reviewerProvider === 'codex') {
+        body.reviewer_reasoning_effort = overrides.reviewerReasoningEffort
+      }
+      if (overrides.maxReviewTurns !== '') {
+        body.max_review_turns = Number(overrides.maxReviewTurns)
+      }
+    }
 
     setBusy(true)
     setFormError(null)
@@ -248,69 +321,191 @@ function ProjectPlanningSection({
                   required
                 />
               </label>
-              <label className="dialog-field">
-                Clarifier provider
-                <select
-                  value={clarifierProvider}
-                  onChange={(event) =>
-                    setClarifierProvider(event.target.value as AgentProvider | '')
-                  }
-                  disabled={busy}
+              <div className="button-row">
+                <button
+                  type="button"
+                  onClick={toggleOverrides}
+                  aria-expanded={overridesOpen}
+                  aria-controls="planning-overrides"
+                  disabled={busy || !defaults}
                 >
-                  <option value="">Use default</option>
-                  {PROVIDERS.map((provider) => (
-                    <option key={provider} value={provider}>
-                      {provider}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="dialog-field">
-                Planner provider
-                <select
-                  value={plannerProvider}
-                  onChange={(event) =>
-                    setPlannerProvider(event.target.value as AgentProvider | '')
-                  }
-                  disabled={busy}
-                >
-                  <option value="">Use default</option>
-                  {PROVIDERS.map((provider) => (
-                    <option key={provider} value={provider}>
-                      {provider}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="dialog-field">
-                Plan reviewer provider
-                <select
-                  value={reviewerProvider}
-                  onChange={(event) =>
-                    setReviewerProvider(event.target.value as AgentProvider | '')
-                  }
-                  disabled={busy}
-                >
-                  <option value="">Use default</option>
-                  {PROVIDERS.map((provider) => (
-                    <option key={provider} value={provider}>
-                      {provider}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="dialog-field">
-                Review-round limit
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={maxReviewTurns}
-                  placeholder="Use default"
-                  onChange={(event) => setMaxReviewTurns(event.target.value)}
-                  disabled={busy}
-                />
-              </label>
+                  Override
+                </button>
+              </div>
+              {overridesOpen && overrides && defaults && (
+                <div id="planning-overrides">
+                  <section className="planning-override-row">
+                    <h3>Clarifier</h3>
+                    <div className="planning-override-fields">
+                      <label className="dialog-field">
+                        Provider
+                        <select
+                          value={overrides.clarifierProvider}
+                          onChange={(event) =>
+                            setProvider('clarifier', event.target.value as AgentProvider)
+                          }
+                          disabled={busy}
+                        >
+                          {PROVIDERS.map((provider) => (
+                            <option key={provider} value={provider}>
+                              {provider}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="dialog-field">
+                        Model
+                        <select
+                          value={overrides.clarifierModel}
+                          onChange={(event) =>
+                            setOverrides((current) =>
+                              current
+                                ? { ...current, clarifierModel: event.target.value }
+                                : current,
+                            )
+                          }
+                          disabled={busy}
+                        >
+                          {(defaults.models_by_provider[overrides.clarifierProvider] ?? []).map(
+                            (model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      </label>
+                    </div>
+                  </section>
+                  <section className="planning-override-row">
+                    <h3>Planner</h3>
+                    <div className="planning-override-fields">
+                      <label className="dialog-field">
+                        Provider
+                        <select
+                          value={overrides.plannerProvider}
+                          onChange={(event) =>
+                            setProvider('planner', event.target.value as AgentProvider)
+                          }
+                          disabled={busy}
+                        >
+                          {PROVIDERS.map((provider) => (
+                            <option key={provider} value={provider}>
+                              {provider}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="dialog-field">
+                        Model
+                        <select
+                          value={overrides.plannerModel}
+                          onChange={(event) =>
+                            setOverrides((current) =>
+                              current ? { ...current, plannerModel: event.target.value } : current,
+                            )
+                          }
+                          disabled={busy}
+                        >
+                          {(defaults.models_by_provider[overrides.plannerProvider] ?? []).map(
+                            (model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      </label>
+                    </div>
+                  </section>
+                  <section className="planning-override-row">
+                    <h3>Plan reviewer</h3>
+                    <div
+                      className={
+                        overrides.reviewerProvider === 'codex'
+                          ? 'planning-override-fields planning-override-fields--with-reasoning'
+                          : 'planning-override-fields'
+                      }
+                    >
+                      <label className="dialog-field">
+                        Provider
+                        <select
+                          value={overrides.reviewerProvider}
+                          onChange={(event) =>
+                            setProvider('reviewer', event.target.value as AgentProvider)
+                          }
+                          disabled={busy}
+                        >
+                          {PROVIDERS.map((provider) => (
+                            <option key={provider} value={provider}>
+                              {provider}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="dialog-field">
+                        Model
+                        <select
+                          value={overrides.reviewerModel}
+                          onChange={(event) =>
+                            setOverrides((current) =>
+                              current ? { ...current, reviewerModel: event.target.value } : current,
+                            )
+                          }
+                          disabled={busy}
+                        >
+                          {(defaults.models_by_provider[overrides.reviewerProvider] ?? []).map(
+                            (model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      </label>
+                      {overrides.reviewerProvider === 'codex' && (
+                        <label className="dialog-field">
+                          Reasoning effort
+                          <select
+                            value={overrides.reviewerReasoningEffort}
+                            onChange={(event) =>
+                              setOverrides((current) =>
+                                current
+                                  ? { ...current, reviewerReasoningEffort: event.target.value }
+                                  : current,
+                              )
+                            }
+                            disabled={busy}
+                          >
+                            {defaults.reasoning_efforts.map((effort) => (
+                              <option key={effort} value={effort}>
+                                {effort}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                    </div>
+                  </section>
+                  <label className="dialog-field">
+                    Review-round limit
+                    <input
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={overrides.maxReviewTurns}
+                      onChange={(event) =>
+                        setOverrides((current) =>
+                          current
+                            ? { ...current, maxReviewTurns: event.target.value }
+                            : current,
+                        )
+                      }
+                      disabled={busy}
+                    />
+                  </label>
+                </div>
+              )}
               {formError && (
                 <p className="status status-error" role="alert">
                   {formError}

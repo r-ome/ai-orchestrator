@@ -190,6 +190,10 @@ CREATE TABLE IF NOT EXISTS planning_sessions (
     clarifier_provider TEXT NOT NULL,
     planner_provider TEXT NOT NULL,
     reviewer_provider TEXT NOT NULL,
+    clarifier_model TEXT,
+    planner_model TEXT,
+    reviewer_model TEXT,
+    reviewer_reasoning_effort TEXT,
     credential_profile TEXT NOT NULL DEFAULT 'default',
     max_review_turns INTEGER NOT NULL,
     review_turn INTEGER NOT NULL DEFAULT 0,
@@ -782,6 +786,17 @@ def _add_publication_merged_at(connection: sqlite3.Connection) -> None:
     _add_column(connection, "sandbox_publications", "pr_merged_at", "TEXT")
 
 
+def _add_planning_session_models(connection: sqlite3.Connection) -> None:
+    """Record the provider model each planning role uses."""
+    for column in (
+        "clarifier_model",
+        "planner_model",
+        "reviewer_model",
+        "reviewer_reasoning_effort",
+    ):
+        _add_column(connection, "planning_sessions", column, "TEXT")
+
+
 def _create_sandbox_publications(connection: sqlite3.Connection) -> None:
     """Record observed Git publication facts, never publication intent."""
     connection.execute(
@@ -815,6 +830,7 @@ MIGRATIONS: Mapping[int, Callable[[sqlite3.Connection], None]] = {
     27: _add_project_mirror_fetched_at,
     28: _create_sandbox_publications,
     29: _add_publication_merged_at,
+    30: _add_planning_session_models,
 }
 
 
@@ -1963,6 +1979,10 @@ class ControllerStore:
         reviewer_provider: str,
         credential_profile: str,
         max_review_turns: int,
+        clarifier_model: str | None = None,
+        planner_model: str | None = None,
+        reviewer_model: str | None = None,
+        reviewer_reasoning_effort: str | None = None,
     ) -> None:
         now = _now()
         with self._connection() as connection:
@@ -1971,8 +1991,10 @@ class ControllerStore:
                 INSERT INTO planning_sessions(
                     id, project_id, sandbox_id, project_name, title, status,
                     clarifier_provider, planner_provider, reviewer_provider,
-                    credential_profile, max_review_turns, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    clarifier_model, planner_model, reviewer_model,
+                    reviewer_reasoning_effort, credential_profile, max_review_turns,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -1984,6 +2006,10 @@ class ControllerStore:
                     clarifier_provider,
                     planner_provider,
                     reviewer_provider,
+                    clarifier_model,
+                    planner_model,
+                    reviewer_model,
+                    reviewer_reasoning_effort,
                     credential_profile,
                     max_review_turns,
                     now,

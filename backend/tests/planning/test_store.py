@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.controller.store import ControllerStore
+import app.controller.store as store_module
 
 
 def _store(tmp_path: Path) -> ControllerStore:
@@ -62,7 +63,40 @@ def test_initial_migration_creates_planning_tables(
         "planning_findings",
         "planning_plan_revisions",
     } <= table_names
-    assert versions == {1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29}
+    assert versions == {1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30}
+
+
+def test_planning_session_model_columns_match_for_new_and_upgraded_databases(
+    tmp_path: Path,
+) -> None:
+    columns = {
+        "clarifier_model",
+        "planner_model",
+        "reviewer_model",
+        "reviewer_reasoning_effort",
+    }
+    fresh = ControllerStore(tmp_path / "fresh.sqlite3")
+    fresh.initialize()
+
+    legacy_path = tmp_path / "legacy.sqlite3"
+    legacy_schema = store_module.INITIAL_MIGRATION
+    for column in columns:
+        legacy_schema = legacy_schema.replace(f"    {column} TEXT,\n", "")
+    with sqlite3.connect(legacy_path) as connection:
+        connection.executescript(legacy_schema)
+        connection.executemany(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            [(version, "2026-08-14T00:00:00Z") for version in range(1, 30)],
+        )
+    legacy = ControllerStore(legacy_path)
+    legacy.initialize()
+
+    def session_columns(store: ControllerStore) -> set[str]:
+        with sqlite3.connect(store.database_path) as connection:
+            return {str(row[1]) for row in connection.execute("PRAGMA table_info(planning_sessions)")}
+
+    assert columns <= session_columns(fresh)
+    assert session_columns(fresh) == session_columns(legacy)
 
 
 def test_initialize_twice_is_a_no_op(tmp_path: Path) -> None:
@@ -78,7 +112,7 @@ def test_initialize_twice_is_a_no_op(tmp_path: Path) -> None:
             )
         ]
 
-    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
 
 
 def test_creating_session_for_unregistered_sandbox_raises_integrity_error(

@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
@@ -11,7 +12,8 @@ from docker.client import DockerClient
 
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
-from app.planning.config import PlanningSettings
+from app.delegation.config import get_routing_settings
+from app.planning.config import PlanningSettings, reasoning_effort_choices
 from app.planning.feature_status import derive_feature_status
 from app.planning.models import (
     TERMINAL_PLANNING_STATUSES,
@@ -90,6 +92,15 @@ def create_session(
     except ProjectOperationError as error:
         raise PlanningOperationError(error.status_code, error.detail) from error
 
+    clarifier_provider = request.clarifier_provider or settings.clarifier_provider
+    planner_provider = request.planner_provider or settings.planner_provider
+    reviewer_provider = request.reviewer_provider or settings.reviewer_provider
+    clarifier_model = _resolve_model(
+        request.clarifier_model, clarifier_provider, settings
+    )
+    planner_model = _resolve_model(request.planner_model, planner_provider, settings)
+    reviewer_model = _resolve_model(request.reviewer_model, reviewer_provider, settings)
+    reviewer_reasoning_effort = _resolve_reviewer_reasoning_effort(request, settings)
     session_id = uuid4().hex
     controller_store.create_planning_session(
         session_id=session_id,
@@ -98,9 +109,13 @@ def create_session(
         project_name=project.name,
         title=request.title,
         status=PlanningStatus.CLARIFYING.value,
-        clarifier_provider=(request.clarifier_provider or settings.clarifier_provider).value,
-        planner_provider=(request.planner_provider or settings.planner_provider).value,
-        reviewer_provider=(request.reviewer_provider or settings.reviewer_provider).value,
+        clarifier_provider=clarifier_provider.value,
+        planner_provider=planner_provider.value,
+        reviewer_provider=reviewer_provider.value,
+        clarifier_model=clarifier_model,
+        planner_model=planner_model,
+        reviewer_model=reviewer_model,
+        reviewer_reasoning_effort=reviewer_reasoning_effort,
         credential_profile=settings.credential_profile,
         max_review_turns=request.max_review_turns or settings.max_review_turns,
     )
@@ -137,6 +152,43 @@ def list_sessions(
         )
     ]
     return PlanningSessionsResponse(count=len(sessions), sessions=sessions)
+
+
+def _resolve_model(
+    requested: str | None,
+    provider: AgentProvider,
+    settings: PlanningSettings,
+) -> str:
+    if requested is not None:
+        owner = get_routing_settings().provider_for_model(requested)
+        if owner is not None and owner is not provider:
+            raise PlanningOperationError(
+                422,
+                f"'{requested}' is a {owner.value} model and {provider.value} cannot run it.",
+            )
+        return requested
+    return settings.claude_model if provider is AgentProvider.CLAUDE else settings.codex_model
+
+
+def _resolve_reviewer_reasoning_effort(
+    request: CreatePlanningSessionRequest,
+    settings: PlanningSettings,
+) -> str:
+    """Check the operator's choice against exactly what the dialog offered.
+
+    The dialog's list carries the deployment's configured effort when that sits
+    outside the three standard ones. Validating against the same list keeps a
+    round trip through the dialog from being refused.
+    """
+    if request.reviewer_reasoning_effort is None:
+        return settings.codex_reasoning_effort
+    choices = reasoning_effort_choices(settings)
+    if request.reviewer_reasoning_effort not in choices:
+        raise PlanningOperationError(
+            422,
+            f"Reviewer reasoning effort must be one of: {', '.join(choices)}",
+        )
+    return request.reviewer_reasoning_effort
 
 
 def get_session(
@@ -441,7 +493,12 @@ def _run_clarifier_turn(
     )
     client = docker.from_env()
     try:
-        return run_turn_with_repair(client, settings, request, _validate_clarifier_payload)
+        return run_turn_with_repair(
+            client,
+            _turn_settings(settings, session, PlanningRole.CLARIFIER),
+            request,
+            _validate_clarifier_payload,
+        )
     finally:
         client.close()
 
@@ -457,6 +514,23 @@ def _run_model_turn(
     if kind is TurnKind.PLANNER:
         return _run_planner_turn(controller_store, settings, session_id)
     return _run_reviewer_turn(controller_store, settings, session_id)
+
+
+def _turn_settings(
+    settings: PlanningSettings,
+    session: Mapping[str, Any],
+    role: PlanningRole,
+) -> PlanningSettings:
+    provider = AgentProvider(str(session[f"{role.value}_provider"]))
+    model = session.get(f"{role.value}_model")
+    if provider is AgentProvider.CLAUDE:
+        return replace(settings, claude_model=str(model or settings.claude_model))
+    changes: dict[str, str] = {"codex_model": str(model or settings.codex_model)}
+    if role is PlanningRole.REVIEWER:
+        changes["codex_reasoning_effort"] = str(
+            session.get("reviewer_reasoning_effort") or settings.codex_reasoning_effort
+        )
+    return replace(settings, **changes)
 
 
 def _run_planner_turn(
@@ -490,7 +564,7 @@ def _run_planner_turn(
     try:
         return run_turn_with_repair(
             client,
-            settings,
+            _turn_settings(settings, session, PlanningRole.PLANNER),
             request,
             _planner_validator({str(finding["id"]) for finding in ledger}),
         )
@@ -521,7 +595,12 @@ def _run_reviewer_turn(
     )
     client = docker.from_env()
     try:
-        return run_turn_with_repair(client, settings, request, _validate_reviewer_payload)
+        return run_turn_with_repair(
+            client,
+            _turn_settings(settings, session, PlanningRole.REVIEWER),
+            request,
+            _validate_reviewer_payload,
+        )
     finally:
         client.close()
 
@@ -1029,6 +1108,10 @@ def _session_data(session: Mapping[str, Any]) -> dict[str, Any]:
             "clarifier_provider",
             "planner_provider",
             "reviewer_provider",
+            "clarifier_model",
+            "planner_model",
+            "reviewer_model",
+            "reviewer_reasoning_effort",
             "max_review_turns",
             "review_turn",
             "plan_revision",

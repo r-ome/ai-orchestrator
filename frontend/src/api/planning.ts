@@ -40,7 +40,23 @@ export interface CreatePlanningSessionBody {
   clarifier_provider?: AgentProvider
   planner_provider?: AgentProvider
   reviewer_provider?: AgentProvider
+  clarifier_model?: string
+  planner_model?: string
+  reviewer_model?: string
+  reviewer_reasoning_effort?: string
   max_review_turns?: number
+}
+
+export interface PlanningDefaults {
+  clarifier_provider: AgentProvider
+  planner_provider: AgentProvider
+  reviewer_provider: AgentProvider
+  claude_model: string
+  codex_model: string
+  codex_reasoning_effort: string
+  max_review_turns: number
+  models_by_provider: Record<string, string[]>
+  reasoning_efforts: string[]
 }
 
 /** A finding as one reviewer round raised it, with no ledger status. */
@@ -130,6 +146,10 @@ export interface PlanningSession {
   clarifier_provider: AgentProvider
   planner_provider: AgentProvider
   reviewer_provider: AgentProvider
+  clarifier_model: string | null
+  planner_model: string | null
+  reviewer_model: string | null
+  reviewer_reasoning_effort: string | null
   max_review_turns: number
   review_turn: number
   plan_revision: number
@@ -176,6 +196,13 @@ export function fetchPlanningSessions(
     `${planningPath(projectName)}/sessions`,
     signal,
   )
+}
+
+export function fetchPlanningDefaults(
+  projectName: string,
+  signal?: AbortSignal,
+): Promise<PlanningDefaults> {
+  return getJson<PlanningDefaults>(`${planningPath(projectName)}/defaults`, signal)
 }
 
 export function fetchPlanningSession(

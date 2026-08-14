@@ -671,7 +671,7 @@ def test_fresh_database_applies_sandbox_migrations(tmp_path: Path) -> None:
 
     store.initialize()
 
-    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
 
 
 def test_migration_21_applies_when_22_and_23_are_already_stamped(
@@ -685,7 +685,7 @@ def test_migration_21_applies_when_22_and_23_are_already_stamped(
 
     store.initialize()
 
-    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
     with store._connection() as connection:
         assert connection.execute(
             """
@@ -795,6 +795,7 @@ def test_initialize_applies_migrations_in_order_once_and_skips_stamps(
         27,
         28,
         29,
+        30,
         101,
         102,
         103,
@@ -945,8 +946,8 @@ def test_add_column_is_idempotent_and_reraises_other_errors(tmp_path: Path) -> N
 @pytest.mark.parametrize(
     ("initial_versions", "upgraded_versions"),
     [
-        ([1], [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]),
-        (list(range(1, 18)), [*range(1, 30)]),
+        ([1], [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]),
+        (list(range(1, 18)), [*range(1, 31)]),
     ],
     ids=["initial-schema", "pre-squash-schema"],
 )
@@ -1037,7 +1038,7 @@ def test_initialize_is_idempotent_and_legacy_backfill_is_guarded(tmp_path: Path)
     sandbox = store.sandboxes()[0]
     assert sandbox["lifecycle_version"] == "v1"
     assert sandbox["desired_state"] == "destroyed"
-    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
 
 
 def test_projects_rebuild_keeps_sandbox_foreign_key_schema_and_data(tmp_path: Path) -> None:
@@ -1313,7 +1314,7 @@ def test_initial_migration_creates_the_current_schema_once(tmp_path: Path) -> No
             "updated_at",
         } == columns("sandbox_publications")
 
-    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
     assert {
         "tasks",
         "planning_sessions",

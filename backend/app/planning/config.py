@@ -21,6 +21,22 @@ class PlanningSettings:
     turn_retry_backoff_seconds: int = 5
 
 
+#: The reasoning efforts the planning dialog offers for a codex reviewer.
+REASONING_EFFORTS = ("low", "medium", "high")
+
+
+def reasoning_effort_choices(settings: PlanningSettings) -> list[str]:
+    """The three standard efforts, plus this deployment's own if it differs.
+
+    A provider may accept efforts outside the three. Including the configured
+    one keeps the dialog able to show what is already in force, and keeps a
+    round trip through the dialog from being refused.
+    """
+    if settings.codex_reasoning_effort in REASONING_EFFORTS:
+        return list(REASONING_EFFORTS)
+    return [*REASONING_EFFORTS, settings.codex_reasoning_effort]
+
+
 @lru_cache
 def get_planning_settings() -> PlanningSettings:
     return PlanningSettings(

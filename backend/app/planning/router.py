@@ -5,10 +5,16 @@ from docker.errors import APIError, ContainerError, DockerException, NotFound
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.controller.store import ControllerStore, get_controller_store
+from app.delegation.config import get_routing_settings
 from app.docker_client import get_docker_client
-from app.planning.config import PlanningSettings, get_planning_settings
+from app.planning.config import (
+    PlanningSettings,
+    get_planning_settings,
+    reasoning_effort_choices,
+)
 from app.planning.models import (
     CreatePlanningSessionRequest,
+    PlanningDefaults,
     PlanningMessageRaw,
     PlanningMessageRequest,
     PlanningSession,
@@ -63,6 +69,28 @@ def _docker_response(function: Callable[[], ResponseType]) -> ResponseType:
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Docker daemon is unavailable",
         ) from error
+
+
+@router.get("/defaults", response_model=PlanningDefaults)
+async def defaults(
+    project_name: str,
+    settings: Annotated[PlanningSettings, Depends(get_planning_settings)],
+) -> PlanningDefaults:
+    del project_name
+    return PlanningDefaults(
+        clarifier_provider=settings.clarifier_provider,
+        planner_provider=settings.planner_provider,
+        reviewer_provider=settings.reviewer_provider,
+        claude_model=settings.claude_model,
+        codex_model=settings.codex_model,
+        codex_reasoning_effort=settings.codex_reasoning_effort,
+        max_review_turns=settings.max_review_turns,
+        models_by_provider={
+            provider: list(models)
+            for provider, models in get_routing_settings().catalogue().items()
+        },
+        reasoning_efforts=reasoning_effort_choices(settings),
+    )
 
 
 @router.post("/sessions", response_model=PlanningSession, status_code=status.HTTP_201_CREATED)
