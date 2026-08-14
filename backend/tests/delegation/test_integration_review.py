@@ -359,6 +359,62 @@ def test_a_later_change_supersedes_an_earlier_incomplete_one(
     assert outcome.review.findings == []
 
 
+def _approving_review(
+    store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+    findings: list[dict[str, Any]],
+):
+    completed = _completed(store)
+    _pin_target(monkeypatch)
+    monkeypatch.setattr(
+        integration_review,
+        "run_planning_turn",
+        lambda *_args, **_kwargs: TurnResult(
+            raw_output="{}",
+            payload={"approved": True, "summary": "Looks correct", "findings": findings},
+            model="review-model",
+        ),
+    )
+    return integration_review.generate_integration_review(
+        object(),
+        get_planning_settings(),
+        IntegrationReviewSettings("review-model"),
+        store,
+        completed.delegation.id,
+        GenerateIntegrationReviewRequest(),
+    )
+
+
+def test_approval_is_overridden_by_a_medium_finding(
+    store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outcome = _approving_review(
+        store,
+        monkeypatch,
+        [{"severity": "medium", "text": "The error path is unhandled", "work_item_keys": ["a"]}],
+    )
+
+    assert outcome.review.approved is False
+    assert "overridden" in outcome.review.summary
+    assert "Looks correct" in outcome.review.summary
+    assert len(outcome.review.findings) == 1
+
+
+def test_a_low_finding_still_approves(
+    store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outcome = _approving_review(
+        store,
+        monkeypatch,
+        [{"severity": "low", "text": "The comment has a typo", "work_item_keys": ["a"]}],
+    )
+
+    assert outcome.review.approved is True
+    assert outcome.review.summary == "Looks correct"
+
+
 def test_review_requires_completed_delegation(store: ControllerStore) -> None:
     view = service.create_revision(store, "session-1", [_item("a")])
 

@@ -316,6 +316,16 @@ def execute_integration_review(
             *result_payload.get("findings", []),
             *claim.evidence_findings,
         ]
+    # A reviewer that approves while naming a high or medium finding contradicts
+    # itself, and the approval is the half the controller acts on. Take the
+    # findings as the verdict and keep the reviewer's own words in the summary.
+    elif result_payload.get("approved") is True and _has_serious_finding(result_payload):
+        result_payload["approved"] = False
+        result_payload["summary"] = (
+            "The reviewer verdict was overridden because it approved the feature "
+            "while raising a high or medium finding. Reviewer summary: "
+            + str(result_payload.get("summary", "")).strip()
+        )
 
     store.settle_delegation_review(
         review_id,
@@ -478,11 +488,38 @@ Completed work:
 Requested feature changes:
 {json.dumps(changes, indent=2)}
 
+Review the delivered code for:
+
+1. Requirements coverage. Does the feature satisfy every requirement in the plan, every
+   item's acceptance criteria, and every requested change? Is any user-visible behavior
+   missing or left unspecified?
+2. Repository correctness. Do the paths, symbols, and APIs the work names exist and behave
+   as the work assumes? Read the current file before you raise or dismiss a finding.
+3. Architectural fit. Does the code follow the abstractions and conventions this repository
+   already uses? Does it introduce a concept the feature does not need?
+4. Completeness. Error paths, edge cases, state transitions, concurrency and races where
+   relevant, backwards compatibility, and migrations or data integrity where relevant.
+5. Integration. Do the separately implemented items fit together? Look for a leftover stub,
+   a new symbol nothing calls, a caller that was never updated, and two items that solve
+   the same problem twice.
+6. Verification. Does the evidence make the desired behavior objectively testable, and does
+   it prove it? Are the important regression cases covered?
+7. Scope discipline. Is anything unnecessary included? Is anything required left out?
+
 Treat acceptance evidence as part of the review gate. Do not approve an interactive
 or user-visible change when its only evidence is a build, typecheck, lint, or static
 inspection. Check related markup, styling, state transitions, and timing. When the
 evidence cannot prove the requested behavior, return approved=false with a specific
 finding. Use an empty work_item_keys list for a finding about a feature change.
+
+Cite a repository fact only if you read it, and give the path and line range. Do not claim
+to have run, compiled, built, or tested anything. Judge execution only from the verification
+records above.
+
+Severity: high blocks the feature, medium is a real defect a maintainer must fix before
+release, low is a nit. Approve only when no high or medium finding stands. A low finding may
+remain open when it does not affect correctness, architecture, requirements, or the
+delivered behavior.
 
 Inspect current files when needed. Do not modify the repository.
 Return exactly one JSON object:
@@ -495,6 +532,16 @@ Return exactly one JSON object:
 }}
 Use an empty findings list when approved.
 """
+
+
+def _has_serious_finding(payload: Mapping[str, Any]) -> bool:
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        return False
+    return any(
+        isinstance(finding, Mapping) and finding.get("severity") in {"high", "medium"}
+        for finding in findings
+    )
 
 
 def _change_evidence_findings(delegation_view: Any) -> list[dict[str, Any]]:
