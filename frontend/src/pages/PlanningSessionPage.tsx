@@ -339,9 +339,7 @@ function PlanningSessionPage() {
       <header className="page-header">
         <div>
           <p className="breadcrumb">
-            <Link to={sandbox ? '/projects' : '/local'}>
-              {sandbox ? 'Projects' : 'Local copies'}
-            </Link>
+            <Link to="/projects">Projects</Link>
             <span className="breadcrumb-separator" aria-hidden="true">
               /
             </span>

@@ -231,4 +231,3 @@ def test_execution_routes_are_project_session_and_delegation_scoped() -> None:
     assert f"{prefix}/{{delegation_id}}/review" in paths
     assert f"{prefix}/{{delegation_id}}/changes" in paths
     assert f"{prefix}/{{delegation_id}}/diff" in paths
-    assert f"{prefix}/{{delegation_id}}/merge" in paths

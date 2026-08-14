@@ -47,7 +47,7 @@ def read_manifest(store: ControllerStore, sandbox_id: str) -> SandboxManifest | 
 
 
 def write_manifest(store: ControllerStore, manifest: SandboxManifest) -> None:
-    """Persist managed lifecycle state without touching legacy import status."""
+    """Persist managed lifecycle state."""
     if manifest.lifecycle_version == "v1":
         validate_feature_key(manifest.feature_key)
     store.update_sandbox_manifest(

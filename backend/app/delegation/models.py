@@ -211,9 +211,6 @@ class FeatureDiffFile(BaseModel):
 
 class FeatureDiff(BaseModel):
     review_id: str | None = None
-    #: The local folder this sandbox was copied from. Empty for a managed v1
-    #: sandbox, which is keyed by a Git remote and has no local folder.
-    source_path: str = ""
     base_branch: str
     base_commit: str
     head_commit: str
@@ -222,19 +219,6 @@ class FeatureDiff(BaseModel):
     deletions: int
     patch: str
     truncated: bool = False
-
-
-class MergeFeatureRequest(BaseModel):
-    review_id: str = Field(min_length=1, max_length=64)
-    confirm: bool = False
-
-
-class MergeFeatureOutcome(BaseModel):
-    review: IntegrationReview
-    source_path: str
-    branch: str
-    head_commit: str
-    already_merged: bool = False
 
 
 class FeatureChangeRequest(BaseModel):

@@ -239,23 +239,13 @@ def test_shared_data_remains_mysql_only() -> None:
         )
 
 
-def test_shared_data_is_refused_for_managed_v1_mysql() -> None:
-    class _V1Store:
-        @staticmethod
-        def sandbox(_: str) -> dict[str, str]:
-            return {"lifecycle_version": "v1"}
-
+def test_shared_data_is_refused() -> None:
     config = _config(PreviewServiceType.MYSQL)
     config.services["database"].sharing = PreviewSharing.SHARED_DATA
     config.services["database"].share_target = "a" * 32
 
-    with pytest.raises(PreviewOperationError, match="legacy MySQL"):
-        _validate_sharing(
-            _V1Store(),  # type: ignore[arg-type]
-            project_key="project",
-            sandbox_id="b" * 32,
-            config=config,
-        )
+    with pytest.raises(PreviewOperationError, match="shared_data is unavailable"):
+        _validate_sharing(config)
     with pytest.raises(ValueError, match="only for MySQL"):
         PreviewDependencyService(
             type=PreviewServiceType.SQLITE,
@@ -265,8 +255,8 @@ def test_shared_data_is_refused_for_managed_v1_mysql() -> None:
         )
 
 
-def test_postgres_shared_names_are_engine_keyed_for_v1() -> None:
-    assert postgres_shared_database_names("1f2e3d4c5b6a7988", "v1") == {
+def test_postgres_shared_names_are_engine_keyed() -> None:
+    assert postgres_shared_database_names("1f2e3d4c5b6a7988") == {
         "container": "orchestrator-shared-db-1f2e3d4c5b6a-postgres",
         "data": "orchestrator-shared-db-1f2e3d4c5b6a-postgres-data",
         "credentials": "orchestrator-shared-db-1f2e3d4c5b6a-postgres-credentials",

@@ -264,88 +264,20 @@ def test_sharing_state_names_both_sides_of_the_coupling(tmp_path: Path) -> None:
     assert guest_state.schema_name == owner_state.schema_name
 
 
-def test_validate_sharing_accepts_an_owned_target(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    _own_schema(store, OWNER)
-
-    _validate_sharing(
-        store,
-        project_key=PROJECT_KEY,
-        sandbox_id=GUEST,
-        config=_config(PreviewSharing.SHARED_DATA, OWNER),
-    )
-
-
-def test_validate_sharing_rejects_an_unknown_target(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-
-    with pytest.raises(PreviewOperationError) as error:
-        _validate_sharing(
-            store,
-            project_key=PROJECT_KEY,
-            sandbox_id=GUEST,
-            config=_config(PreviewSharing.SHARED_DATA, OWNER),
-        )
-
-    assert error.value.status_code == 409
-
-
-def test_validate_sharing_rejects_a_guest_as_a_target(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    _own_schema(store, OWNER)
-    _guest_schema(store, GUEST, OWNER)
-
-    with pytest.raises(PreviewOperationError) as error:
-        _validate_sharing(
-            store,
-            project_key=PROJECT_KEY,
-            sandbox_id=OTHER,
-            config=_config(PreviewSharing.SHARED_DATA, GUEST),
-        )
-
-    assert error.value.status_code == 409
-
-
-def test_validate_sharing_rejects_a_different_image(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    _own_schema(store, OWNER, image="mysql:8.0")
-
-    with pytest.raises(PreviewOperationError) as error:
-        _validate_sharing(
-            store,
-            project_key=PROJECT_KEY,
-            sandbox_id=GUEST,
-            config=_config(PreviewSharing.SHARED_DATA, OWNER, image="mysql:8.4"),
-        )
-
-    assert error.value.status_code == 409
-    assert "mysql:8.0" in error.value.detail
-
-
-def test_validate_sharing_rejects_a_target_from_another_project(tmp_path: Path) -> None:
+def test_validate_sharing_refuses_shared_data(tmp_path: Path) -> None:
+    """Every sandbox owns its schema, so no sandbox can join another's data."""
     store = _store(tmp_path)
     _own_schema(store, OWNER)
 
     with pytest.raises(PreviewOperationError) as error:
-        _validate_sharing(
-            store,
-            project_key="9999999999999999",
-            sandbox_id=GUEST,
-            config=_config(PreviewSharing.SHARED_DATA, OWNER),
-        )
+        _validate_sharing(_config(PreviewSharing.SHARED_DATA, OWNER))
 
-    assert error.value.status_code == 409
+    assert error.value.status_code == 422
+    assert "shared_data is unavailable" in error.value.detail
 
 
 def test_validate_sharing_ignores_isolated_configurations(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-
-    _validate_sharing(
-        store,
-        project_key=PROJECT_KEY,
-        sandbox_id=GUEST,
-        config=_config(),
-    )
+    _validate_sharing(_config())
 
 
 def test_a_guest_release_drops_its_user_and_never_the_owner_schema(
@@ -468,16 +400,8 @@ def test_idleness_ignores_records_and_follows_active_previews(tmp_path: Path) ->
     assert _shared_server_is_idle(store, PROJECT_KEY) is False
 
 
-def test_shared_names_keep_legacy_projects_on_the_existing_resources() -> None:
-    names = _shared_database_names(PROJECT_KEY, "legacy")
-
-    assert names["container"] == "orchestrator-shared-db-1f2e3d4c5b6a"
-    assert names["data"] == "orchestrator-shared-db-1f2e3d4c5b6a-data"
-    assert _shared_database_names(PROJECT_KEY) == names
-
-
-def test_shared_names_include_the_engine_for_v1_projects() -> None:
-    names = _shared_database_names(PROJECT_KEY, "v1")
+def test_shared_names_carry_the_engine() -> None:
+    names = _shared_database_names(PROJECT_KEY)
 
     assert names["container"] == "orchestrator-shared-db-1f2e3d4c5b6a-mysql"
     assert names["data"] == "orchestrator-shared-db-1f2e3d4c5b6a-mysql-data"

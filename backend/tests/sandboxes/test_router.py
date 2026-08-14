@@ -17,7 +17,6 @@ from app.main import app
 from app.planning import service as planning_service
 from app.planning.config import PlanningSettings
 from app.planning.models import CreatePlanningSessionRequest
-from app.projects.config import ProjectSettings, get_project_settings
 from app.sandboxes.mirror import MirrorPin
 from app.sandboxes.naming import (
     mirror_ownership_labels,
@@ -234,7 +233,7 @@ def test_confirm_engine_freezes_snapshot_claims_a_fresh_lease_and_advances(
     assert database["db_name"] == body["db_name"]
     project_id = body["project_id"]
     assert fake_docker_client.containers.get(
-        shared_database_names(project_id, "postgres", "v1")["container"]
+        shared_database_names(project_id, "postgres")["container"]
     )
     assert fake_docker_client.networks.get(network(created["sandbox_id"]))
     assert get_controller_store().sandbox_lease(created["sandbox_id"]) is None
@@ -736,7 +735,7 @@ def test_destroy_drops_postgres_database_and_preserves_shared_server(
             "actor": "jerome",
         },
     ).json()
-    names = shared_database_names(confirmed["project_id"], "postgres", "v1")
+    names = shared_database_names(confirmed["project_id"], "postgres")
     server = fake_docker_client.containers.get(names["container"])
 
     response = client.delete(f"/sandboxes/{confirmed['sandbox_id']}")
@@ -1075,7 +1074,7 @@ def test_create_refuses_a_project_without_a_remote(client: TestClient) -> None:
     response = client.post("/sandboxes", json={"feature_key": FEATURE_KEY})
 
     assert response.status_code == 400
-    assert "legacy local-folder path" in response.json()["detail"]
+    assert response.json()["detail"] == "Sandbox creation requires a Git remote."
 
 
 def test_list_get_and_unknown_sandbox(client: TestClient) -> None:
@@ -1091,30 +1090,6 @@ def test_list_get_and_unknown_sandbox(client: TestClient) -> None:
     assert fetched.status_code == 200
     assert fetched.json() == created
     assert unknown.status_code == 404
-
-
-def test_legacy_projects_create_route_still_returns_a_uuid4_sandbox_id(
-    client: TestClient,
-    fake_docker_client,
-    tmp_path: Path,
-) -> None:
-    projects_root = tmp_path / "projects"
-    source = projects_root / "legacy"
-    source.mkdir(parents=True)
-    app.dependency_overrides[get_project_settings] = lambda: ProjectSettings(
-        projects_root=projects_root,
-        copy_image="alpine:latest",
-    )
-    try:
-        response = client.post("/projects", json={"path": str(source)})
-    finally:
-        app.dependency_overrides.pop(get_project_settings, None)
-
-    assert response.status_code == 202
-    assert UUID(response.json()["sandbox_id"]).version == 4
-    listed = client.get("/sandboxes")
-    assert listed.status_code == 200
-    assert listed.json()["sandboxes"][0]["lifecycle_version"] == "legacy"
 
 
 def test_planning_attaches_to_an_existing_sandbox_without_creating_one(

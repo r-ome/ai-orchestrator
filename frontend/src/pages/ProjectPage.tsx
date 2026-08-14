@@ -329,7 +329,7 @@ function SandboxesCard({
                       {sandboxLabel(sandbox)}
                     </Link>
                   </td>
-                  <td>{sandbox.lifecycle_status ?? 'legacy'}</td>
+                  <td>{sandbox.lifecycle_status ?? 'creating'}</td>
                   <td>
                     {sandbox.db_engine === 'none'
                       ? 'none'

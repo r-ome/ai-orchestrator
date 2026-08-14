@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { fetchProjects } from '../api/projects'
 import {
   fetchManagedVolumes,
   pruneVolumes,
@@ -78,9 +77,6 @@ function VolumeRows({ volumes, onRemove }: VolumeRowsProps) {
 
 function ManagedVolumesPage() {
   const { data, loading, error, reload } = useApiResource(fetchManagedVolumes)
-  // Only supplies project names for sandbox-owned volumes, so a failure here
-  // degrades the headings instead of the page.
-  const projects = useApiResource(fetchProjects)
   const [pending, setPending] = useState<PendingAction>(null)
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -88,8 +84,8 @@ function ManagedVolumesPage() {
 
   const grouped = useMemo(
     () =>
-      groupVolumesByProject(data?.volumes ?? [], projects.data?.projects ?? []),
-    [data, projects.data],
+      groupVolumesByProject(data?.volumes ?? []),
+    [data],
   )
 
   const closeDialog = () => {
@@ -158,15 +154,7 @@ function ManagedVolumesPage() {
               <div className="card-header">
                 <div className="card-header-title">
                   <h2>
-                  {group.projectName ? (
-                    <Link
-                      to={`/local/${encodeURIComponent(group.projectName)}`}
-                    >
-                      {group.title}
-                    </Link>
-                  ) : (
-                    group.title
-                  )}
+                  {group.title}
                   </h2>
                   <span className="pill">{group.volumes.length}</span>
                 </div>

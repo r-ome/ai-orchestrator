@@ -1,4 +1,3 @@
-import hashlib
 import json
 import re
 import shlex
@@ -16,6 +15,7 @@ from app.previews.config import get_preview_settings
 from app.projects.models import ProjectRegistration
 from app.projects.service import (
     ProjectOperationError,
+    ensure_sandbox_registered,
     ensure_git_baseline,
     inspect_registered_project,
     project_id,
@@ -69,19 +69,6 @@ def start_task(
             409,
             f"Sandbox '{request.project_name}' is not ready",
         )
-    existing = controller_store.sandbox(sandbox_id)
-    if existing is None or existing.get("lifecycle_version") != "v1":
-        source_path = getattr(project, "source_path", "") or f"legacy:{project.name}"
-        controller_store.register_sandbox(
-            sandbox_id=sandbox_id,
-            project_id=project_id(source_path),
-            project_name=project.name,
-            source_path=source_path,
-            volume_name=project.volume_name,
-            status="ready",
-            created_at=getattr(project, "created_at", ""),
-        )
-
     task_id = uuid4().hex
     branch = f"{TASK_BRANCH_PREFIX}{task_id}"
     active_agent = controller_store.active_agent(sandbox_id)
@@ -691,11 +678,12 @@ def _resolve_sandbox(
         )
     except ProjectOperationError as error:
         raise TaskOperationError(error.status_code, error.detail) from error
-    # Same derivation create_agent uses, so a task and a coding agent on one
-    # sandbox address the same controller row.
-    sandbox_id = getattr(project, "sandbox_id", "") or hashlib.sha256(
-        f"sandbox:{project.volume_name}".encode()
-    ).hexdigest()[:32]
+    sandbox_id, _, project = ensure_sandbox_registered(
+        docker_client,
+        controller_store,
+        project_name,
+        project=project,
+    )
     return project, sandbox_id
 
 
@@ -810,8 +798,7 @@ def _branch_script(branch: str, base_commit: str) -> str:
         "  exit 1\n"
         "fi\n"
         'printf "base-branch %s\\n" "$base_branch"\n'
-        # Keep the legacy path list for old task settlement code and record a
-        # fingerprinted sandbox baseline for feature delivery checks.
+        # Record a fingerprinted sandbox baseline for feature delivery checks.
         + snapshot_shell()
         + f'git switch -c "{branch}"\n'
         f'git rev-parse --verify "refs/heads/{branch}"\n'

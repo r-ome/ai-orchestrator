@@ -231,7 +231,7 @@ function SandboxDetailPage() {
       {data && (
         <>
           <div className="detail-status-row">
-            <span className="pill">{data.lifecycle_status ?? 'legacy'}</span>
+            <span className="pill">{data.lifecycle_status ?? 'creating'}</span>
             <span className="mono">{data.sandbox_id}</span>
           </div>
           <div className="card">

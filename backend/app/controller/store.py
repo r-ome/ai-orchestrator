@@ -881,6 +881,13 @@ class ControllerStore:
         status: str,
         created_at: str,
     ) -> None:
+        """Insert a sandbox row that carries no managed lifecycle state.
+
+        The `'legacy'` marker below no longer names a copied local folder;
+        that feature is gone. It now means only "this row has no manifest and
+        takes no lifecycle lease", which is what `sandbox_lease` reads it for.
+        Sandbox creation uses `register_v1_sandbox` instead.
+        """
         now = _now()
         with self._connection() as connection:
             stale_owner = connection.execute(
@@ -1028,9 +1035,8 @@ class ControllerStore:
     ) -> tuple[dict[str, Any], bool]:
         """Record v1 sandbox intent without creating a Docker resource.
 
-        This path deliberately does not call ``register_sandbox``.  Managed v1
-        sandboxes are keyed by a remote project, while the legacy path is keyed
-        by a source path and also owns copy-flow discovery fields.
+        This path deliberately does not call ``register_sandbox``. Managed
+        sandboxes are keyed by a remote project and need no copy-flow fields.
         """
         now = _now()
         with self._connection() as connection:
@@ -1069,7 +1075,7 @@ class ControllerStore:
         sandbox_id: str,
         values: Mapping[str, Any],
     ) -> None:
-        """Write lifecycle manifest columns while preserving legacy discovery state."""
+        """Write lifecycle manifest columns."""
         fields = (
             "lifecycle_version",
             "feature_key",
@@ -1441,8 +1447,8 @@ class ControllerStore:
     def v1_projects(self) -> list[dict[str, Any]]:
         """List remote-keyed projects, each with its v1 sandbox count.
 
-        A remote URL is what makes a project a project. Rows carrying only a
-        source path are legacy local copies and never appear here.
+        A remote URL is what makes a project a project. Rows without one do
+        not appear here.
         """
         with self._connection() as connection:
             rows = connection.execute(
@@ -3506,9 +3512,8 @@ class ControllerStore:
     ) -> dict[str, Any] | None:
         """Atomically exclude writers and other lifecycle mutations.
 
-        A null return means the sandbox is legacy and therefore does not take
-        lifecycle leases. Destroy passes ``allow_writers=True`` and changes
-        lifecycle intent in this same admission transaction.
+        A null return means the sandbox has no lifecycle state. Destroy passes
+        ``allow_writers=True`` and changes lifecycle intent in this transaction.
         """
         now = _now()
         with self._connection() as connection:

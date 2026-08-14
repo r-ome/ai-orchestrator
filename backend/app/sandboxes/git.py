@@ -717,7 +717,11 @@ def push_workspace_to_mirror(
     reviewed_head: str,
     ensure_image: bool = False,
 ) -> str:
-    """Copy the reviewed workspace ref into the local project mirror only."""
+    """Copy the reviewed workspace ref into the project's mirror volume only.
+
+    The mirror is local to this machine. Nothing here reaches the Git remote;
+    publishing is a separate, credentialed step.
+    """
     output = run_git(
         docker_client,
         image=image,

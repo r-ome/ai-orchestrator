@@ -74,7 +74,7 @@ from app.previews.models import (
 from app.projects.service import (
     ProjectOperationError,
     inspect_registered_project,
-    project_id,
+    managed_project_key,
 )
 from app.sandboxes.git import run_git
 from app.sandboxes.naming import network as sandbox_network_name
@@ -167,7 +167,6 @@ def propose_preview(
     project_name: str,
 ) -> PreviewProposal:
     project = _ready_project(docker_client, project_name, controller_store)
-    _register_sandbox(controller_store, project)
     files = _volume_runtime_files(
         docker_client,
         project.volume_name,
@@ -328,7 +327,6 @@ def start_preview(
     request: StartPreviewRequest,
 ) -> PreviewRun:
     project = _ready_project(docker_client, project_name, controller_store)
-    _register_sandbox(controller_store, project)
     with _preview_lock:
         active = controller_store.active_preview(project.sandbox_id)
         if active is not None:
@@ -478,12 +476,7 @@ def start_preview(
                 if kind is PreviewKind.TASK
                 else proposal_digest(request.config, current_hashes)
             )
-            _validate_sharing(
-                controller_store,
-                project_key=_project_key(project),
-                sandbox_id=project.sandbox_id,
-                config=request.config,
-            )
+            _validate_sharing(request.config)
             controller_store.approve_review(
                 review_id=request.proposal_id,
                 sandbox_id=project.sandbox_id,
@@ -740,9 +733,6 @@ def restart_preview(
                 docker_client,
                 settings,
                 project_key=_project_key(project),
-                lifecycle_version=_sandbox_lifecycle_version(
-                    controller_store, project.sandbox_id
-                ),
                 source_path=project.source_path,
                 database=database,
                 run_id=str(record["id"]),
@@ -876,7 +866,6 @@ def require_preview_proposal(
     reject a proposal from a different sandbox the same way.
     """
     project = _ready_project(docker_client, project_name, controller_store)
-    _register_sandbox(controller_store, project)
     review = controller_store.review(proposal_id)
     if review is None or review.get("sandbox_id") != project.sandbox_id:
         raise PreviewOperationError(404, "Preview proposal was not found")
@@ -1721,19 +1710,8 @@ def _native_runtime_environment(config: PreviewConfiguration) -> dict[str, str]:
     return {}
 
 
-def _shared_database_names(
-    project_key: str,
-    lifecycle_version: str = "legacy",
-) -> dict[str, str]:
-    return mysql_shared_database_names(project_key, lifecycle_version)
-
-
-def _sandbox_lifecycle_version(
-    controller_store: ControllerStore,
-    sandbox_id: str,
-) -> str:
-    sandbox = controller_store.sandbox(sandbox_id)
-    return str((sandbox or {}).get("lifecycle_version") or "legacy")
+def _shared_database_names(project_key: str) -> dict[str, str]:
+    return mysql_shared_database_names(project_key)
 
 
 def _shared_schema_name(sandbox_id: str) -> str:
@@ -1806,7 +1784,6 @@ def _shared_database_server(
     settings: PreviewSettings,
     *,
     project_key: str,
-    lifecycle_version: str,
     source_path: str,
     database: PreviewDependencyService,
     report: ProgressReporter,
@@ -1816,7 +1793,7 @@ def _shared_database_server(
     Held under `_shared_database_lock` so two sandboxes starting at the same
     moment cannot both create the server.
     """
-    names = _shared_database_names(project_key, lifecycle_version)
+    names = _shared_database_names(project_key)
     labels = _shared_database_labels(project_key, source_path, database.image)
     with _shared_database_lock:
         report("database-image", f"Checking database image {database.image}")
@@ -1921,9 +1898,6 @@ def _attach_shared_database(
         docker_client,
         settings,
         project_key=project_key,
-        lifecycle_version=_sandbox_lifecycle_version(
-            controller_store, owner_sandbox_id
-        ),
         source_path=source_path,
         database=database,
         report=report,
@@ -1996,7 +1970,6 @@ def _restart_shared_database(
     settings: PreviewSettings,
     *,
     project_key: str,
-    lifecycle_version: str,
     source_path: str,
     database: PreviewDependencyService,
     run_id: str,
@@ -2010,7 +1983,6 @@ def _restart_shared_database(
         docker_client,
         settings,
         project_key=project_key,
-        lifecycle_version=lifecycle_version,
         source_path=source_path,
         database=database,
         report=_ignore_progress,
@@ -2097,10 +2069,7 @@ def _release_shared_database(
     ]
     drop_schema = owner and ephemeral and not siblings
 
-    lifecycle_version = _sandbox_lifecycle_version(
-        controller_store, str(record["owner_sandbox_id"])
-    )
-    names = _shared_database_names(project_key, lifecycle_version)
+    names = _shared_database_names(project_key)
     server = _existing_shared_server(docker_client, names["container"])
     credentials_volume = _existing_volume(docker_client, names["credentials"])
     outcome: dict[str, Any] = {
@@ -2141,12 +2110,7 @@ def _release_shared_database(
         controller_store.delete_shared_schema(sandbox_id)
     outcome["kept_record"] = keep_record
     outcome["pending_cleanup"] = not applied
-    _stop_idle_shared_server(
-        docker_client,
-        controller_store,
-        project_key,
-        lifecycle_version,
-    )
+    _stop_idle_shared_server(docker_client, controller_store, project_key)
     return outcome
 
 
@@ -2181,7 +2145,6 @@ def _stop_idle_shared_server(
     docker_client: DockerClient,
     controller_store: ControllerStore,
     project_key: str,
-    lifecycle_version: str,
 ) -> None:
     """Removes the shared server once no preview of the project is running.
 
@@ -2190,7 +2153,7 @@ def _stop_idle_shared_server(
     """
     if not _shared_server_is_idle(controller_store, project_key):
         return
-    names = _shared_database_names(project_key, lifecycle_version)
+    names = _shared_database_names(project_key)
     with _shared_database_lock:
         server = _existing_shared_server(docker_client, names["container"])
         if server is not None:
@@ -2276,10 +2239,7 @@ def _sharing_state(
         owner_project_name=names.get(owner_sandbox_id, owner_sandbox_id[:12]),
         image=str(record["image"]),
         persistence=PreviewPersistence(str(record["persistence"])),
-        server_container=_shared_database_names(
-            project_key,
-            _sandbox_lifecycle_version(controller_store, owner_sandbox_id),
-        )["container"],
+        server_container=_shared_database_names(project_key)["container"],
         attached_project_names=attached,
     )
 
@@ -2291,7 +2251,6 @@ def database_sharing_state(
 ) -> ProjectDatabaseSharing:
     """The database coupling of one sandbox, plus what it could join."""
     project = _ready_project(docker_client, project_name, controller_store)
-    _register_sandbox(controller_store, project)
     project_key = _project_key(project)
     return ProjectDatabaseSharing(
         project_name=project.name,
@@ -2311,7 +2270,6 @@ def get_project_secrets(
     project_name: str,
 ) -> ProjectSecrets:
     project = _ready_project(docker_client, project_name, controller_store)
-    _register_sandbox(controller_store, project)
     project_key = _project_key(project)
     return _project_secrets_response(controller_store, project, project_key)
 
@@ -2323,7 +2281,6 @@ def set_project_secrets(
     request: SetProjectSecretsRequest,
 ) -> ProjectSecrets:
     project = _ready_project(docker_client, project_name, controller_store)
-    _register_sandbox(controller_store, project)
     project_key = _project_key(project)
     controller_store.set_project_secrets(project_key, request.values)
     controller_store.event(
@@ -2342,7 +2299,6 @@ def delete_project_secret(
     name: str,
 ) -> ProjectSecrets:
     project = _ready_project(docker_client, project_name, controller_store)
-    _register_sandbox(controller_store, project)
     project_key = _project_key(project)
     controller_store.delete_project_secret(project_key, name)
     controller_store.event(
@@ -2361,7 +2317,6 @@ def import_project_secrets(
     project_name: str,
 ) -> ImportProjectSecretsResponse:
     project = _ready_project(docker_client, project_name, controller_store)
-    _register_sandbox(controller_store, project)
     project_key = _project_key(project)
     environment_files = _volume_environment_files(
         docker_client,
@@ -2409,13 +2364,7 @@ def _project_secrets_response(
     )
 
 
-def _validate_sharing(
-    controller_store: ControllerStore,
-    *,
-    project_key: str,
-    sandbox_id: str,
-    config: PreviewConfiguration,
-) -> None:
+def _validate_sharing(config: PreviewConfiguration) -> None:
     database = config.services.get("database")
     if database is None or database.sharing is PreviewSharing.ISOLATED:
         return
@@ -2426,34 +2375,14 @@ def _validate_sharing(
         )
     if database.sharing is not PreviewSharing.SHARED_DATA:
         return
-    sandbox = controller_store.sandbox(sandbox_id)
-    if str((sandbox or {}).get("lifecycle_version") or "legacy") == "v1":
-        raise PreviewOperationError(
-            422,
-            "shared_data is supported only for legacy MySQL sandboxes",
-        )
-    target = controller_store.shared_schema(database.share_target)
-    if target is None or str(target["project_id"]) != project_key:
-        raise PreviewOperationError(
-            409,
-            "The chosen database belongs to no sandbox of this project",
-        )
-    if str(target["owner_sandbox_id"]) != database.share_target:
-        raise PreviewOperationError(
-            409,
-            "The chosen sandbox does not own its database; pick its owner instead",
-        )
-    if database.share_target == sandbox_id:
-        raise PreviewOperationError(
-            409,
-            "A sandbox cannot join its own database as a guest",
-        )
-    if str(target["image"]) != database.image:
-        raise PreviewOperationError(
-            409,
-            f"The chosen database runs {target['image']}; "
-            f"the proposal asks for {database.image}",
-        )
+    # A guest wrote into the schema its owner also wrote. Only the copied local
+    # folders tolerated that, because they shared one MySQL server per source
+    # path. Every managed sandbox owns its own schema, so the mode has no
+    # remaining meaning and no caller can opt into it.
+    raise PreviewOperationError(
+        422,
+        "shared_data is unavailable; each managed sandbox owns its database",
+    )
 
 
 def _wait_for_mysql_health(
@@ -3772,26 +3701,8 @@ def _ready_project(
     return project
 
 
-def _register_sandbox(controller_store: ControllerStore, project: Any) -> None:
-    existing = controller_store.sandbox(project.sandbox_id)
-    if existing is not None and existing.get("lifecycle_version") == "v1":
-        return
-    controller_store.register_sandbox(
-        sandbox_id=project.sandbox_id,
-        project_id=_project_key(project),
-        project_name=project.name,
-        source_path=project.source_path,
-        volume_name=project.volume_name,
-        status="ready" if project.ready else project.copy_status,
-        created_at=project.created_at,
-    )
-
-
 def _project_key(project: Any) -> str:
-    source = str(project.source_path)
-    if source.startswith("managed:"):
-        return source.removeprefix("managed:")
-    return project_id(source)
+    return managed_project_key(str(project.source_path))
 
 
 def _original_baseline(project: Any, settings: PreviewSettings) -> dict[str, bytes]:

@@ -899,18 +899,14 @@ def _read_or_create_server_credentials(
     return credentials
 
 
-def mysql_shared_database_names(
-    project_key: str,
-    lifecycle_version: str = "legacy",
-) -> dict[str, str]:
+def mysql_shared_database_names(project_key: str) -> dict[str, str]:
     """Return stable shared-server resources for one project and engine.
 
-    Legacy sandboxes retain their existing names.  Managed v1 sandboxes include
-    the engine, so a future engine change cannot reuse MySQL data or a server.
+    The name carries the engine, so a future engine change cannot reuse MySQL
+    data or a server.
     """
     key = project_key[:12]
-    engine_key = "-mysql" if lifecycle_version == "v1" else ""
-    prefix = f"{SHARED_DATABASE_PREFIX}{key}{engine_key}"
+    prefix = f"{SHARED_DATABASE_PREFIX}{key}-mysql"
     return {
         "container": prefix,
         "data": f"{prefix}-data",
@@ -919,19 +915,13 @@ def mysql_shared_database_names(
     }
 
 
-def postgres_shared_database_names(
-    project_key: str,
-    lifecycle_version: str = "legacy",
-) -> dict[str, str]:
+def postgres_shared_database_names(project_key: str) -> dict[str, str]:
     """Return stable PostgreSQL shared-server resource names.
 
-    Managed sandboxes include the engine in their names.  The legacy form is
-    intentionally unsuffixed, matching the established shared-server naming
-    contract without changing existing MySQL resources.
+    The name carries the engine, matching `mysql_shared_database_names`.
     """
     key = project_key[:12]
-    engine_key = "-postgres" if lifecycle_version == "v1" else ""
-    prefix = f"{SHARED_DATABASE_PREFIX}{key}{engine_key}"
+    prefix = f"{SHARED_DATABASE_PREFIX}{key}-postgres"
     return {
         "container": prefix,
         "data": f"{prefix}-data",
@@ -940,16 +930,12 @@ def postgres_shared_database_names(
     }
 
 
-def shared_database_names(
-    project_key: str,
-    engine: str,
-    lifecycle_version: str = "legacy",
-) -> dict[str, str]:
+def shared_database_names(project_key: str, engine: str) -> dict[str, str]:
     """Resolve server resource names without assigning any SQLite resources."""
     if engine == "mysql":
-        return mysql_shared_database_names(project_key, lifecycle_version)
+        return mysql_shared_database_names(project_key)
     if engine == "postgres":
-        return postgres_shared_database_names(project_key, lifecycle_version)
+        return postgres_shared_database_names(project_key)
     raise ValueError(f"Database engine {engine!r} has no shared server")
 
 
@@ -1399,7 +1385,7 @@ def _ensure_shared_server(
 ) -> _SharedServer:
     image = _database_image(engine_name)
     _ensure_image(docker_client, image)
-    names = shared_database_names(project_id, engine_name, "v1")
+    names = shared_database_names(project_id, engine_name)
     labels = {
         "orchestrator.managed": "true",
         "orchestrator.kind": "shared-database",

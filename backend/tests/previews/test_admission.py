@@ -29,7 +29,6 @@ def test_preparing_row_exists_before_any_docker_resource_is_created(
         volume_name="sample-volume",
         created_at="2026-08-11T00:00:00Z",
         ready=True,
-        copy_status="ready",
     )
     monkeypatch.setattr(
         "app.previews.service.inspect_registered_project",

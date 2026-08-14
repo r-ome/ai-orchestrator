@@ -3,7 +3,6 @@
 import re
 import shlex
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from docker.client import DockerClient
@@ -16,8 +15,6 @@ from app.delegation.models import (
     FeatureDiff,
     FeatureDiffFile,
     IntegrationReviewStatus,
-    MergeFeatureOutcome,
-    MergeFeatureRequest,
     RunStatus,
 )
 from app.dirty_state import (
@@ -29,8 +26,6 @@ from app.dirty_state import (
     snapshot_shell,
 )
 from app.previews.config import PreviewSettings
-from app.projects.config import ProjectSettings
-from app.projects.service import ProjectOperationError, validated_source_path
 from app.sandboxes.git import run_git
 from app.tasks.models import TaskStatus
 
@@ -226,7 +221,6 @@ def feature_diff(
     files = _parse_numstat(numstat)
     return FeatureDiff(
         review_id=review_id,
-        source_path=_source_path(store, sandbox),
         base_branch=target.base_branch,
         base_commit=target.base_commit,
         head_commit=target.head_commit,
@@ -235,81 +229,6 @@ def feature_diff(
         deletions=sum(entry.deletions or 0 for entry in files),
         patch=patch,
         truncated=truncated,
-    )
-
-
-def merge_feature_to_source(
-    docker_client: DockerClient,
-    preview_settings: PreviewSettings,
-    project_settings: ProjectSettings,
-    store: ControllerStore,
-    delegation_view: DelegationView,
-    request: MergeFeatureRequest,
-) -> MergeFeatureOutcome:
-    """Fast-forwards the original clean source branch to one approved review."""
-    if not request.confirm:
-        raise service.DelegationOperationError(400, "Set confirm=true to merge the feature")
-    review = delegation_view.review
-    if review is None or review.id != request.review_id:
-        raise service.DelegationOperationError(
-            409,
-            "The selected feature review is no longer the latest review",
-        )
-    if review.status is not IntegrationReviewStatus.COMPLETED or review.approved is not True:
-        raise service.DelegationOperationError(409, "An approved feature review is required")
-    if not review.base_branch or not review.base_commit or not review.head_commit:
-        raise service.DelegationOperationError(
-            409,
-            "This review did not record an exact commit; run the feature review again",
-        )
-    target = FeatureTarget(review.base_branch, review.base_commit, review.head_commit)
-    _validate_target(target)
-    ensure_target_unchanged(
-        docker_client,
-        preview_settings,
-        store,
-        delegation_view.delegation.sandbox_id,
-        target,
-    )
-    sandbox = store.sandbox(delegation_view.delegation.sandbox_id)
-    if sandbox is None:
-        raise service.DelegationOperationError(404, "Delegation sandbox was not found")
-    local_path = _source_path(store, sandbox)
-    if not local_path:
-        # A managed v1 project has no local folder to merge into. Its feature
-        # branch is delivered by publishing to the Git remote instead.
-        raise service.DelegationOperationError(
-            409,
-            "This sandbox has no local project folder to merge into. "
-            "Publish the feature branch to its Git remote instead.",
-        )
-    try:
-        source_path = validated_source_path(
-            local_path,
-            project_settings.projects_root,
-        )
-    except ProjectOperationError as error:
-        raise service.DelegationOperationError(error.status_code, error.detail) from error
-
-    result, fields = _merge_source(
-        docker_client,
-        preview_settings.git_image,
-        str(sandbox["volume_name"]),
-        source_path,
-        target,
-    )
-    _raise_merge_refusal(result, fields, target)
-    updated = store.mark_delegation_review_source_merged(review.id)
-    if updated is None:
-        raise service.DelegationOperationError(409, "Feature review changed during merge")
-    from app.delegation.integration_review import review_from_row
-
-    return MergeFeatureOutcome(
-        review=review_from_row(updated),
-        source_path=str(source_path),
-        branch=target.base_branch,
-        head_commit=target.head_commit,
-        already_merged=result == "already-merged",
     )
 
 
@@ -379,20 +298,6 @@ def _sandbox_state(
         dirty=dirty,
         legacy_dirty=fields.get("dirty") == "true",
     )
-
-
-def _source_path(store: ControllerStore, sandbox: dict[str, Any]) -> str:
-    """The local folder a sandbox was copied from, or '' when it has none.
-
-    `source_path` lives on `projects`, never on `sandboxes`. Reading it off a
-    sandbox row raised KeyError on every call. A managed v1 project is keyed by
-    its Git remote and has no local folder at all, so '' is a real answer here
-    rather than a missing one.
-    """
-    project = store.project(str(sandbox["project_id"]))
-    if project is None:
-        return ""
-    return str(project.get("source_path") or "")
 
 
 def _ensure_original_dirty_state(
@@ -564,86 +469,6 @@ def _bounded_diff(
         volumes={volume_name: {"bind": "/project", "mode": "ro"}},
         script=script,
     )
-
-
-def _merge_source(
-    docker_client: DockerClient,
-    git_image: str,
-    volume_name: str,
-    source_path: Path,
-    target: FeatureTarget,
-) -> tuple[str, dict[str, str]]:
-    branch = shlex.quote(target.base_branch)
-    base = shlex.quote(target.base_commit)
-    head = shlex.quote(target.head_commit)
-    script = (
-        "set -eu\n"
-        "git config --global --add safe.directory /source\n"
-        "git config --global --add safe.directory /sandbox\n"
-        "if [ ! -e /source/.git ]; then printf 'result missing-repository\\n'; exit 0; fi\n"
-        'source_branch="$(git -C /source symbolic-ref --quiet --short HEAD || true)"\n'
-        'source_head="$(git -C /source rev-parse --verify HEAD 2>/dev/null || true)"\n'
-        'printf "branch %s\\nhead %s\\n" "$source_branch" "$source_head"\n'
-        f"if [ \"$source_branch\" != {branch} ]; then "
-        "printf 'result wrong-branch\\n'; exit 0; fi\n"
-        f"if [ \"$source_head\" = {head} ]; then "
-        "printf 'result already-merged\\n'; exit 0; fi\n"
-        f"if [ \"$source_head\" != {base} ]; then "
-        "printf 'result moved\\n'; exit 0; fi\n"
-        'if [ -n "$(git -C /source status --porcelain --untracked-files=all)" ]; then\n'
-        "  printf 'result dirty\\n'; exit 0\n"
-        "fi\n"
-        f"git -C /sandbox cat-file -e {shlex.quote(target.head_commit + '^{commit}')}\n"
-        f"git -C /sandbox merge-base --is-ancestor {base} {head}\n"
-        f"git -c core.hooksPath=/dev/null -C /source fetch --no-tags /sandbox {head}\n"
-        'source_branch="$(git -C /source symbolic-ref --quiet --short HEAD || true)"\n'
-        'source_head="$(git -C /source rev-parse --verify HEAD 2>/dev/null || true)"\n'
-        f"if [ \"$source_branch\" != {branch} ] || [ \"$source_head\" != {base} ]; then\n"
-        "  printf 'result moved\\n'; exit 0\n"
-        "fi\n"
-        'if [ -n "$(git -C /source status --porcelain --untracked-files=all)" ]; then\n'
-        "  printf 'result dirty\\n'; exit 0\n"
-        "fi\n"
-        f"git -c core.hooksPath=/dev/null -C /source merge --ff-only --no-edit {head}\n"
-        'printf "result merged\\nhead %s\\n" "$(git -C /source rev-parse HEAD)"\n'
-    )
-    output = run_git(
-        docker_client,
-        image=git_image,
-        volumes={
-            volume_name: {"bind": "/sandbox", "mode": "ro"},
-            str(source_path): {"bind": "/source", "mode": "rw"},
-        },
-        script=script,
-    )
-    fields = _fields(output)
-    return fields.get("result", ""), fields
-
-
-def _raise_merge_refusal(
-    result: str,
-    fields: dict[str, str],
-    target: FeatureTarget,
-) -> None:
-    if result in {"merged", "already-merged"}:
-        return
-    if result == "missing-repository":
-        detail = "Original project folder is not a Git repository"
-    elif result == "wrong-branch":
-        detail = (
-            f"Original project folder is on branch '{fields.get('branch') or 'detached HEAD'}', "
-            f"not '{target.base_branch}'"
-        )
-    elif result == "moved":
-        detail = (
-            f"Original project branch moved from {target.base_commit} to "
-            f"{fields.get('head') or 'an unknown commit'}; a fast-forward is not safe"
-        )
-    elif result == "dirty":
-        detail = "Original project folder has uncommitted changes"
-    else:
-        detail = f"Source Git returned no merge result: {result!r}"
-    raise service.DelegationOperationError(409 if result else 502, detail)
 
 
 def _parse_numstat(output: bytes) -> list[FeatureDiffFile]:

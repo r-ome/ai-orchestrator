@@ -30,23 +30,7 @@ from app.previews.service import (
     start_preview,
     stop_preview,
 )
-from app.projects.service import (
-    LABEL_COPIED_BYTES,
-    LABEL_COPY_IMAGE,
-    LABEL_COPY_JOB_ID,
-    LABEL_COPY_MODE,
-    LABEL_CREATED_AT,
-    LABEL_EXCLUDED_DIRECTORIES,
-    LABEL_FILE_COUNT,
-    LABEL_MANAGED as PROJECT_MANAGED,
-    LABEL_NAME as PROJECT_NAME,
-    LABEL_PROJECT_ID,
-    LABEL_SANDBOX_ID,
-    LABEL_SOURCE,
-    LABEL_STATUS_STORAGE,
-    STATUS_STORAGE_PROJECT_VOLUME,
-    ensure_git_baseline,
-)
+from app.projects.service import ensure_git_baseline
 from app.tasks.models import ReportTaskRequest, StartTaskRequest, TaskStatus
 from app.tasks.service import report_task_complete, start_task
 
@@ -57,6 +41,20 @@ pytestmark = pytest.mark.skipif(
 )
 
 GIT_IMAGE = "alpine/git:latest"
+PROJECT_MANAGED = "orchestrator.project.managed"
+PROJECT_NAME = "orchestrator.project.name"
+LABEL_SOURCE = "orchestrator.project.source"
+LABEL_CREATED_AT = "orchestrator.project.created-at"
+LABEL_COPY_MODE = "orchestrator.project.copy-mode"
+LABEL_FILE_COUNT = "orchestrator.project.file-count"
+LABEL_COPIED_BYTES = "orchestrator.project.copied-bytes"
+LABEL_EXCLUDED_DIRECTORIES = "orchestrator.project.excluded-directories"
+LABEL_COPY_IMAGE = "orchestrator.project.copy-image"
+LABEL_STATUS_STORAGE = "orchestrator.project.copy-status-storage"
+LABEL_COPY_JOB_ID = "orchestrator.project.copy-job-id"
+LABEL_PROJECT_ID = "orchestrator.project.id"
+LABEL_SANDBOX_ID = "orchestrator.sandbox.id"
+STATUS_STORAGE_PROJECT_VOLUME = "project-volume-v1"
 
 
 def _serve(path: str, setup: str = "") -> str:

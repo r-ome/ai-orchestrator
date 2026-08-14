@@ -19,12 +19,10 @@ from app.delegation.models import (
     FeatureDiff,
     IntegrationReview,
     IntegrationReviewStatus,
-    MergeFeatureRequest,
     RunStatus,
 )
 from app.dirty_state import DirtyEntry, serialize_snapshot
 from app.previews.config import PreviewSettings
-from app.projects.config import ProjectSettings
 from app.sandboxes import router as sandbox_router
 from app.sandboxes.engine_detection import EngineDetection, NO_DATABASE
 from app.sandboxes.manifest import SandboxManifest, read_manifest, write_manifest
@@ -480,173 +478,6 @@ class _MergeStore:
         }
 
 
-def test_merge_feature_fast_forwards_the_original_folder(tmp_path: Path) -> None:
-    source = tmp_path / "sample"
-    source.mkdir()
-    docker = _Docker(
-        f"branch main\nhead {HEAD}\ndirty false\n".encode(),
-        f"branch main\nhead {HEAD}\nresult merged\n".encode(),
-    )
-
-    result = delivery.merge_feature_to_source(
-        docker,
-        PREVIEW_SETTINGS,
-        ProjectSettings(projects_root=tmp_path, copy_image="copy"),
-        _MergeStore(source),
-        _view(_review()),
-        MergeFeatureRequest(review_id="review-1", confirm=True),
-    )
-
-    assert result.source_path == str(source)
-    assert result.head_commit == HEAD
-    assert result.review.source_merged_at == NOW
-    mounts = docker.containers.calls[1]["volumes"]
-    assert mounts["sandbox-volume"]["mode"] == "ro"
-    assert mounts[str(source)]["mode"] == "rw"
-    assert docker.containers.calls[1]["network_disabled"] is True
-
-
-def test_final_merge_repeats_the_dirty_state_check(tmp_path: Path) -> None:
-    source = tmp_path / "sample"
-    source.mkdir()
-    position = _untracked("interview-prep/Position.md")
-    docker = _Docker(_state(_untracked(position.path, "sha256:changed")))
-
-    with pytest.raises(service.DelegationOperationError) as error:
-        delivery.merge_feature_to_source(
-            docker,
-            PREVIEW_SETTINGS,
-            ProjectSettings(projects_root=tmp_path, copy_image="copy"),
-            _DirtyStore([position], source_path=str(source)),
-            _view(_review()),
-            MergeFeatureRequest(review_id="review-1", confirm=True),
-        )
-
-    assert position.path in error.value.detail
-    assert "content modified" in error.value.detail
-    assert len(docker.containers.calls) == 1
-
-
-@pytest.mark.parametrize(
-    ("output", "message"),
-    [
-        (b"branch other\nhead 1\nresult wrong-branch\n", "not 'main'"),
-        (b"branch main\nhead 1\nresult dirty\n", "uncommitted changes"),
-        (b"branch main\nhead 4\nresult moved\n", "fast-forward is not safe"),
-    ],
-)
-def test_merge_feature_reports_strict_refusals(
-    tmp_path: Path,
-    output: bytes,
-    message: str,
-) -> None:
-    source = tmp_path / "sample"
-    source.mkdir()
-
-    with pytest.raises(service.DelegationOperationError) as error:
-        delivery.merge_feature_to_source(
-            _Docker(
-                f"branch main\nhead {HEAD}\ndirty false\n".encode(),
-                output,
-            ),
-            PREVIEW_SETTINGS,
-            ProjectSettings(projects_root=tmp_path, copy_image="copy"),
-            _MergeStore(source),
-            _view(_review()),
-            MergeFeatureRequest(review_id="review-1", confirm=True),
-        )
-
-    assert error.value.status_code == 409
-    assert message in error.value.detail
-
-
-def test_merge_feature_requires_the_latest_approved_review(tmp_path: Path) -> None:
-    source = tmp_path / "sample"
-    source.mkdir()
-
-    with pytest.raises(service.DelegationOperationError) as error:
-        delivery.merge_feature_to_source(
-            _Docker(),
-            PREVIEW_SETTINGS,
-            ProjectSettings(projects_root=tmp_path, copy_image="copy"),
-            _MergeStore(source),
-            _view(_review(status=IntegrationReviewStatus.FAILED, approved=None)),
-            MergeFeatureRequest(review_id="review-1", confirm=True),
-        )
-
-    assert error.value.status_code == 409
-    assert "approved feature review" in error.value.detail
-
-
-@requires_docker
-def test_source_merge_script_fast_forwards_a_real_git_repository() -> None:
-    client = docker.from_env()
-    source_volume = client.volumes.create()
-    sandbox_volume = client.volumes.create()
-    try:
-        base = client.containers.run(
-            PREVIEW_SETTINGS.git_image,
-            entrypoint=["sh", "-c"],
-            command=[
-                "set -eu\n"
-                "git -C /source init -q -b main\n"
-                "git -C /source config user.name tester\n"
-                "git -C /source config user.email tester@localhost\n"
-                "printf 'base\\n' > /source/app.txt\n"
-                "git -C /source add app.txt\n"
-                "git -C /source commit -q -m base\n"
-                "git -C /source rev-parse HEAD\n"
-            ],
-            remove=True,
-            volumes={source_volume.name: {"bind": "/source", "mode": "rw"}},
-        ).decode().strip()
-        client.containers.run(
-            PREVIEW_SETTINGS.git_image,
-            entrypoint=["sh", "-c"],
-            command=[
-                "set -eu\n"
-                "tar -C /source -cf - . | tar -C /sandbox -xf -\n"
-                "printf 'feature\\n' >> /sandbox/app.txt\n"
-                "git -C /sandbox add app.txt\n"
-                "git -C /sandbox commit -q -m feature\n"
-            ],
-            remove=True,
-            volumes={
-                source_volume.name: {"bind": "/source", "mode": "ro"},
-                sandbox_volume.name: {"bind": "/sandbox", "mode": "rw"},
-            },
-        )
-        head = client.containers.run(
-            PREVIEW_SETTINGS.git_image,
-            entrypoint=["sh", "-c"],
-            command=["git -C /sandbox rev-parse HEAD"],
-            remove=True,
-            volumes={sandbox_volume.name: {"bind": "/sandbox", "mode": "ro"}},
-        ).decode().strip()
-
-        result, fields = delivery._merge_source(
-            client,
-            PREVIEW_SETTINGS.git_image,
-            sandbox_volume.name,
-            Path(source_volume.name),
-            delivery.FeatureTarget("main", base, head),
-        )
-
-        assert result == "merged", fields
-        source_state = client.containers.run(
-            PREVIEW_SETTINGS.git_image,
-            entrypoint=["sh", "-c"],
-            command=["git -C /source rev-parse HEAD && cat /source/app.txt"],
-            remove=True,
-            volumes={source_volume.name: {"bind": "/source", "mode": "ro"}},
-        ).decode()
-        assert source_state == f"{head}\nbase\nfeature\n"
-    finally:
-        sandbox_volume.remove(force=True)
-        source_volume.remove(force=True)
-        client.close()
-
-
 @requires_docker
 def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers(
     monkeypatch: pytest.MonkeyPatch,
@@ -795,19 +626,6 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
             "id": "delegation-active",
         }
 
-        delivered, fields = delivery._merge_source(
-            client,
-            PREVIEW_SETTINGS.git_image,
-            workspace,
-            Path(target),
-            delivery.FeatureTarget(branch, base, head),
-        )
-        assert delivered == "merged", fields
-        assert git(
-            "git -C /target branch --show-current && git -C /target rev-parse HEAD",
-            {target: {"bind": "/target", "mode": "ro"}},
-        ).decode() == f"{branch}\n{head}\n"
-
         assert store.transition_delegation(
             "delegation-active",
             to_status="completed",
@@ -888,82 +706,3 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
             except docker.errors.NotFound:
                 pass
         client.close()
-
-
-def test_feature_diff_reads_source_path_from_the_project_not_the_sandbox() -> None:
-    """A `sandboxes` row has no source_path column; reading one raised KeyError.
-
-    The fakes used to return source_path from `sandbox()`, so this path was
-    green in tests and 500'd against the real store on every request.
-    """
-    store = ControllerStore(Path(mkdtemp()) / "controller.sqlite3")
-    store.initialize()
-
-    with store._connection() as connection:
-        columns = {
-            row[1]
-            for row in connection.execute("PRAGMA table_info(sandboxes)").fetchall()
-        }
-    assert "source_path" not in columns
-    assert "project_id" in columns
-
-
-def test_feature_diff_reports_no_local_folder_for_a_managed_v1_sandbox() -> None:
-    numstat = b"1\t0\tsrc/app.py\n"
-    docker = _Docker(_state(), numstat, b"diff --git a/src/app.py b/src/app.py\n")
-    # A v1 project is keyed by its Git remote and has no local folder.
-    store = SimpleNamespace(
-        sandbox=lambda _sandbox_id: {
-            "volume_name": "sandbox-volume",
-            "project_id": "project-1",
-        },
-        project=lambda _project_id: {
-            "id": "project-1",
-            "source_path": None,
-            "remote_url": "https://example.test/owner/repo.git",
-        },
-    )
-
-    result = delivery.feature_diff(docker, PREVIEW_SETTINGS, store, _view(_review()))
-
-    assert result.source_path == ""
-    assert result.additions == 1
-
-
-def test_feature_diff_survives_a_project_row_that_vanished() -> None:
-    docker = _Docker(_state(), b"", b"")
-    store = SimpleNamespace(
-        sandbox=lambda _sandbox_id: {
-            "volume_name": "sandbox-volume",
-            "project_id": "gone",
-        },
-        project=lambda _project_id: None,
-    )
-
-    assert delivery.feature_diff(
-        docker,
-        PREVIEW_SETTINGS,
-        store,
-        _view(_review()),
-    ).source_path == ""
-
-
-def test_merging_a_sandbox_with_no_local_folder_is_refused_not_a_crash(
-    tmp_path: Path,
-) -> None:
-    """v1 delivers by publishing to its remote, so merge has nothing to target."""
-    store = _MergeStore(Path("/projects/sample"))
-    store.project = lambda _project_id: {"id": "project-1", "source_path": ""}
-
-    with pytest.raises(service.DelegationOperationError) as error:
-        delivery.merge_feature_to_source(
-            _Docker(_state()),
-            PREVIEW_SETTINGS,
-            ProjectSettings(projects_root=tmp_path, copy_image="copy"),
-            store,
-            _view(_review()),
-            MergeFeatureRequest(review_id="review-1", confirm=True),
-        )
-
-    assert error.value.status_code == 409
-    assert "no local project folder" in error.value.detail

@@ -81,57 +81,8 @@ option removes anonymous volumes only. Named volumes remain intact.
 
 ## Project sandboxes
 
-`POST /projects` creates the next sandbox for a host project folder. It returns
-`202 Accepted`, creates an independent Docker volume, and starts a temporary
-copy container.
-
-```json
-{
-  "path": "/Users/jeromeagapay/Documents/my-project"
-}
-```
-
-The API derives the project name from the selected folder. Repeated requests
-for the same folder create `my-project-sandbox-1`,
-`my-project-sandbox-2`, and so on. Every sandbox reads the original host folder.
-It does not copy another sandbox volume.
-
-Each response also contains an immutable `sandbox_id`. Docker labels and SQLite
-use this ID even if a display name changes later.
-
-The response includes a copy job ID and `status_url`. Copy status uses four
-states: `queued`, `copying`, `completed`, and `failed`.
-
-- `GET /projects/copies` lists all copy jobs.
-- `GET /projects/copies/{job_id}` returns one job, its timestamps, exit code,
-  Docker state, error, and up to the final 8,192 log bytes.
-- `GET /projects` lists sandboxes and their current copy status.
-- `GET /projects/{name}` inspects one sandbox.
-
-Docker volume labels store sandboxes. The project volume stores final job
-state and logs under `.orchestrator/copy-job`. Copy status does not depend on
-SQLite. The state remains available after a backend restart.
-
-Docker automatically removes the copy container when it exits. Status reads
-use short-lived reader containers that also remove themselves. Deleting the
-project volume deletes its copied files, final status, and logs together.
-
-The default allowed root is `/Users/jeromeagapay/Documents`. Override it with
-`PROJECTS_ROOT`. The API rejects the root itself, paths outside the root, and
-paths that resolve outside it through a symbolic link.
-
-The copy includes hidden files and preserves symbolic links without following
-their targets. The copy helper uses the local `alpine:latest` image by default.
-Override it with `PROJECT_COPY_IMAGE`.
-
-The copy excludes dependency, environment, cache, coverage, and build folders
-at any depth. The API returns the active list as `excluded_directories`.
-
-```text
-.next, .nox, .nuxt, .orchestrator, .parcel-cache, .pnpm-store, .pytest_cache,
-.ruff_cache, .svelte-kit, .tox, .venv, .vite, __pycache__, bower_components,
-build, coverage, dist, htmlcov, node_modules, site-packages, venv
-```
+Register a remote Git repository with `POST /projects/remote`. Create and
+inspect feature sandboxes through `/sandboxes` and `/sandboxes/{sandbox_id}`.
 
 ## Feature delivery
 
@@ -172,12 +123,6 @@ requires that current approved review.
 Default coding images provide pinned Playwright and Chromium for behavioral
 checks. Change turns use those image-owned tools and must not install browser
 test infrastructure into a project or temporary directory.
-
-`POST /projects/{name}/planning/sessions/{session_id}/delegations/{id}/merge`
-fast-forwards the original source folder. The request must confirm the action
-and name the latest approved review. The merge refuses a different source
-branch, a changed source commit, any uncommitted source change, or a source
-folder outside `PROJECTS_ROOT`. Git runs without network access or hooks.
 
 ## Preview stacks
 

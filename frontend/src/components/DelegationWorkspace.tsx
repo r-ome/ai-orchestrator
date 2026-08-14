@@ -8,7 +8,6 @@ import {
   fetchFeatureDiff,
   generateContext,
   generateDelegation,
-  mergeFeature,
   requestFeatureChanges,
   resumeDelegation,
   runIntegrationReview,
@@ -31,7 +30,6 @@ import {
   type PreviewRun,
 } from '../api/previews'
 import CollapsibleCard from './CollapsibleCard'
-import ConfirmDialog from './ConfirmDialog'
 import type { TabDefinition } from './Tabs'
 import TurnConsole from './TurnConsole'
 import { useApiResource } from '../hooks/useApiResource'
@@ -230,18 +228,12 @@ function FeatureCodeDiff({
   delegationId,
   review,
   revisionKey,
-  busy,
-  actionError,
-  runAction,
 }: {
   projectName: string
   sessionId: string
   delegationId: string
   review: IntegrationReview | null
   revisionKey: string
-  busy: string
-  actionError: string | null
-  runAction: (label: string, action: () => Promise<unknown>) => Promise<void>
 }) {
   const fetcher = useCallback(
     (signal: AbortSignal) =>
@@ -253,10 +245,8 @@ function FeatureCodeDiff({
     sessionId,
     delegationId,
     review?.id,
-    review?.source_merged_at,
     revisionKey,
   ])
-  const [mergeOpen, setMergeOpen] = useState(false)
   const patchFiles = useMemo(
     () => splitPatchByFile(diff.data?.patch ?? ''),
     [diff.data?.patch],
@@ -277,18 +267,6 @@ function FeatureCodeDiff({
   // Open a single file by default. Opening all of them reproduces the wall of
   // text this replaced.
   const singleFile = patchFiles.length === 1
-  const approved = review?.status === 'completed' && review.approved === true
-  const pinned = approved && diff.data?.review_id === review.id
-  const merged = Boolean(review?.source_merged_at)
-
-  const confirmMerge = () => {
-    if (!review || !pinned) return
-    void runAction('merge-feature', async () => {
-      await mergeFeature(projectName, sessionId, delegationId, review.id)
-      setMergeOpen(false)
-      diff.reload()
-    })
-  }
 
   return (
     <section className="feature-diff-section" aria-labelledby="feature-diff-heading">
@@ -368,63 +346,9 @@ function FeatureCodeDiff({
             </p>
           )}
 
-          {merged ? (
-            <p className="status">
-              Merged into the original project folder at {review?.source_merged_at}.
-            </p>
-          ) : !diff.data.source_path ? (
-            // A managed v1 sandbox is keyed by a Git remote and has no local
-            // folder, so there is nothing for this merge to target.
-            <p className="status">
-              This sandbox has no local project folder. Deliver the feature by
-              publishing its branch to the Git remote.
-            </p>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="primary feature-merge-action"
-                disabled={Boolean(busy) || !pinned}
-                title={
-                  pinned
-                    ? undefined
-                    : 'An approved feature review for this exact commit is required'
-                }
-                onClick={() => setMergeOpen(true)}
-              >
-                Merge into project folder
-              </button>
-              {!approved && (
-                <p className="status">
-                  The merge button unlocks after the feature review approves this commit.
-                </p>
-              )}
-            </>
-          )}
         </>
       )}
 
-      {mergeOpen && diff.data && review && (
-        <ConfirmDialog
-          title="Merge feature into the original project folder?"
-          confirmPhrase="MERGE"
-          confirmLabel="Merge into project folder"
-          busy={busy === 'merge-feature'}
-          error={actionError}
-          onConfirm={confirmMerge}
-          onCancel={() => setMergeOpen(false)}
-        >
-          <p>
-            This fast-forwards branch <code>{diff.data.base_branch}</code> in{' '}
-            <code>{diff.data.source_path}</code> to commit{' '}
-            <code>{diff.data.head_commit.slice(0, 12)}</code>.
-          </p>
-          <p>
-            The merge stops if the source branch moved or the source folder has
-            uncommitted changes. It never resolves conflicts or overwrites local work.
-          </p>
-        </ConfirmDialog>
-      )}
     </section>
   )
 }
@@ -1497,9 +1421,6 @@ export function DelegationPanel({
               delegationId={delegation.delegation.id}
               review={delegation.review}
               revisionKey={`${latestChange?.id ?? 'none'}:${latestChange?.status ?? 'none'}`}
-              busy={busy}
-              actionError={actionError}
-              runAction={runAction}
             />
             <button
               type="button"

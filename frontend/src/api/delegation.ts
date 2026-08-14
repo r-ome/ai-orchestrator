@@ -154,7 +154,6 @@ export interface FeatureDiffFile {
 
 export interface FeatureDiff {
   review_id: string | null
-  source_path: string
   base_branch: string
   base_commit: string
   head_commit: string
@@ -163,14 +162,6 @@ export interface FeatureDiff {
   deletions: number
   patch: string
   truncated: boolean
-}
-
-export interface MergeFeatureOutcome {
-  review: IntegrationReview
-  source_path: string
-  branch: string
-  head_commit: string
-  already_merged: boolean
 }
 
 export interface FeatureChangeRequest {
@@ -423,18 +414,6 @@ export function fetchFeatureDiff(
   return getJson<FeatureDiff>(
     `${delegationPath(projectName, sessionId)}/${encodeURIComponent(delegationId)}/diff`,
     signal,
-  )
-}
-
-export function mergeFeature(
-  projectName: string,
-  sessionId: string,
-  delegationId: string,
-  reviewId: string,
-) {
-  return postJson<MergeFeatureOutcome>(
-    `${delegationPath(projectName, sessionId)}/${encodeURIComponent(delegationId)}/merge`,
-    { review_id: reviewId, confirm: true },
   )
 }
 

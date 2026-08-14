@@ -20,12 +20,9 @@ import PlanningStatusBadge from './PlanningStatusBadge'
 interface ProjectPlanningSectionProps {
   projectName: string
   projectReady: boolean
-  /** What this section is planning against, in the operator's words. A managed
-   *  sandbox and a legacy local copy are both "not a project", so the noun is
-   *  supplied by the page rather than assumed here. */
+  /** What this section is planning against, in the operator's words. */
   subject?: string
-  /** Route prefix for this section's own pages, without a trailing slash.
-   *  A sandbox lives under /sandboxes, a legacy local copy under /local. */
+  /** Route prefix for this section's own pages, without a trailing slash. */
   basePath: string
 }
 

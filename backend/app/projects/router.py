@@ -1,41 +1,21 @@
-from pathlib import Path
 from typing import Annotated, Callable, TypeVar
 
 from docker.client import DockerClient
 from docker.errors import APIError, DockerException, NotFound
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from app.docker_client import get_docker_client
 from app.controller.store import ControllerStore, get_controller_store
-from app.previews.config import PreviewSettings, get_preview_settings
-from app.previews.detection import capture_source_runtime_files, hashes
-from app.projects.config import ProjectSettings, get_project_settings
 from app.projects.models import (
-    BrowseResponse,
-    CopyProjectRequest,
-    ProjectCopyJobsResponse,
-    ProjectCopyJobStatus,
     RegisterRemoteProjectRequest,
     RemoteProject,
     RemoteProjectsResponse,
-    RemoveProjectRequest,
-    RemoveProjectResponse,
     RemoveRemoteProjectResponse,
-    ProjectRegistration,
-    ProjectRegistrationsResponse,
 )
 from app.projects.remote import normalize_remote_url, project_id_for_remote
 from app.sandboxes.naming import mirror_volume, validate_mirror_ownership
 from app.projects.service import (
     ProjectOperationError,
-    browse_project_folders,
-    inspect_project_copy_job,
-    inspect_registered_project,
-    list_project_copy_jobs,
-    remove_project,
-    list_registered_projects,
-    register_project,
-    project_id,
 )
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -84,90 +64,6 @@ def _remote_project(row: dict[str, object]) -> RemoteProject:
         created_at=str(row.get("created_at") or ""),
     )
 
-
-@router.post(
-    "",
-    response_model=ProjectCopyJobStatus,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-def create_project_sandbox(
-    request: CopyProjectRequest,
-    docker_client: Annotated[DockerClient, Depends(get_docker_client)],
-    settings: Annotated[ProjectSettings, Depends(get_project_settings)],
-    controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
-    preview_settings: Annotated[PreviewSettings, Depends(get_preview_settings)],
-) -> ProjectCopyJobStatus:
-    job = _docker_response(
-        lambda: register_project(docker_client, settings, request)
-    )
-    controller_store.register_sandbox(
-        sandbox_id=job.sandbox_id,
-        project_id=project_id(job.source_path),
-        project_name=job.project_name,
-        source_path=job.source_path,
-        volume_name=job.volume_name,
-        status=job.status,
-        created_at=job.created_at,
-    )
-    try:
-        baseline_files = capture_source_runtime_files(
-            Path(job.source_path),
-            maximum_file_bytes=preview_settings.maximum_file_bytes,
-            maximum_snapshot_bytes=preview_settings.maximum_snapshot_bytes,
-        )
-    except (OSError, ValueError):
-        controller_store.event(
-            sandbox_id=job.sandbox_id,
-            run_id=job.job_id,
-            kind="sandbox.baseline_failed",
-            payload={},
-        )
-    else:
-        controller_store.record_initial_baseline(
-            job.sandbox_id,
-            baseline_files,
-            hashes(baseline_files),
-        )
-    return job
-
-
-@router.get("", response_model=ProjectRegistrationsResponse)
-def get_project_registrations(
-    docker_client: Annotated[DockerClient, Depends(get_docker_client)],
-) -> ProjectRegistrationsResponse:
-    return _docker_response(lambda: list_registered_projects(docker_client))
-
-
-@router.get("/browse", response_model=BrowseResponse)
-def browse_projects_root(
-    settings: Annotated[ProjectSettings, Depends(get_project_settings)],
-    path: Annotated[str | None, Query()] = None,
-) -> BrowseResponse:
-    return _docker_response(lambda: browse_project_folders(settings, path))
-
-
-@router.get("/copies", response_model=ProjectCopyJobsResponse)
-def get_project_copy_jobs(
-    docker_client: Annotated[DockerClient, Depends(get_docker_client)],
-) -> ProjectCopyJobsResponse:
-    return _docker_response(lambda: list_project_copy_jobs(docker_client))
-
-
-@router.get("/copies/{job_id}", response_model=ProjectCopyJobStatus)
-def get_project_copy_job(
-    job_id: str,
-    docker_client: Annotated[DockerClient, Depends(get_docker_client)],
-) -> ProjectCopyJobStatus:
-    return _docker_response(
-        lambda: inspect_project_copy_job(docker_client, job_id)
-    )
-
-
-# These routes must stay above the `/{project_name}` routes below. FastAPI
-# matches in declaration order, so a static segment only wins if it is declared
-# first, exactly as `/browse` and `/copies` already rely on. A legacy project
-# literally named "remote" would be shadowed here; legacy names come from
-# folder names, and none is reserved.
 @router.get("/remote", response_model=RemoteProjectsResponse)
 def list_remote_projects(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
@@ -268,36 +164,4 @@ def delete_remote_project(
     return RemoveRemoteProjectResponse(
         project_id=project_id,
         removed_mirror_volume=removed,
-    )
-
-
-@router.delete("/{project_name}", response_model=RemoveProjectResponse)
-def delete_project(
-    project_name: str,
-    request: RemoveProjectRequest,
-    docker_client: Annotated[DockerClient, Depends(get_docker_client)],
-    controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
-) -> RemoveProjectResponse:
-    if not request.confirm:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Set confirm=true to remove the project and its Docker resources",
-        )
-    return _docker_response(
-        lambda: remove_project(docker_client, controller_store, project_name)
-    )
-
-
-@router.get("/{project_name}", response_model=ProjectRegistration)
-def get_project_registration(
-    project_name: str,
-    docker_client: Annotated[DockerClient, Depends(get_docker_client)],
-    controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
-) -> ProjectRegistration:
-    return _docker_response(
-        lambda: inspect_registered_project(
-            docker_client,
-            project_name,
-            controller_store,
-        )
     )

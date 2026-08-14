@@ -15,14 +15,6 @@ from app.previews.service import (
     LABEL_RUN_ID,
     expire_previews,
 )
-from app.projects.service import (
-    LABEL_CREATED_AT as PROJECT_CREATED_AT,
-    LABEL_MANAGED as PROJECT_MANAGED,
-    LABEL_NAME as PROJECT_NAME,
-    LABEL_SANDBOX_ID,
-    LABEL_SOURCE as PROJECT_SOURCE,
-    project_id,
-)
 from app.sandboxes.orphans import discover_orphans
 
 
@@ -169,45 +161,6 @@ def reconcile_controller_state(store: ControllerStore) -> dict[str, int]:
             run_id = labels.get(LABEL_RUN_ID) or labels.get(AGENT_RUN_ID)
             if run_id:
                 by_run.setdefault(run_id, []).append(container)
-
-        project_volumes = client.volumes.list(
-            filters={"label": f"{PROJECT_MANAGED}=true"}
-        )
-        volumes_by_name = {volume.name: volume for volume in project_volumes}
-        known_volume_names: set[str] = set()
-        for sandbox in store.sandboxes():
-            volume_name = str(sandbox["volume_name"])
-            known_volume_names.add(volume_name)
-            if volume_name not in volumes_by_name:
-                store.update_sandbox_status(str(sandbox["id"]), "missing")
-                counts["missing"] += 1
-            else:
-                counts["sandboxes"] += 1
-        for volume in project_volumes:
-            if volume.name in known_volume_names:
-                continue
-            labels = volume.attrs.get("Labels") or {}
-            sandbox_id = labels.get(LABEL_SANDBOX_ID)
-            source_path = labels.get(PROJECT_SOURCE, "")
-            project_name = labels.get(PROJECT_NAME, volume.name)
-            if not sandbox_id or not source_path:
-                continue
-            store.register_sandbox(
-                sandbox_id=sandbox_id,
-                project_id=project_id(source_path),
-                project_name=project_name,
-                source_path=source_path,
-                volume_name=volume.name,
-                status="discovered",
-                created_at=labels.get(PROJECT_CREATED_AT, ""),
-            )
-            store.event(
-                sandbox_id=sandbox_id,
-                run_id=None,
-                kind="controller.discovered_sandbox",
-                payload={"volume_name": volume.name},
-            )
-            counts["unexpected"] += 1
 
         known: set[str] = set()
         for run in store.active_agents():

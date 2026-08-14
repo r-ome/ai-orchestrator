@@ -1,4 +1,3 @@
-import type { ProjectRegistration } from '../api/projects'
 import type { ManagedVolume } from '../api/volumes'
 
 /** Set on the project volume itself. */
@@ -13,8 +12,6 @@ export interface VolumeGroup {
   key: string
   /** Project name when known, otherwise a short sandbox id. */
   title: string
-  /** Project name for a route link, or null when the project is unknown. */
-  projectName: string | null
   volumes: ManagedVolume[]
 }
 
@@ -31,7 +28,6 @@ export interface GroupedVolumes {
  * mounted where. A shared credential volume is mounted into many sandboxes but
  * belongs to none, so it stays ungrouped.
  *
- * `projects` only supplies nicer titles. Grouping still works without it.
  */
 function folderName(sourcePath: string): string {
   const parts = sourcePath.split('/').filter(Boolean)
@@ -40,20 +36,14 @@ function folderName(sourcePath: string): string {
 
 export function groupVolumesByProject(
   volumes: ManagedVolume[],
-  projects: ProjectRegistration[],
 ): GroupedVolumes {
-  const nameBySandboxId = new Map(
-    projects.map((project) => [project.sandbox_id, project.name]),
-  )
-
   const groups = new Map<string, VolumeGroup>()
   const ungrouped: ManagedVolume[] = []
 
   for (const volume of volumes) {
     const labels = volume.labels ?? {}
     const sandboxId = labels[LABEL_SANDBOX_ID] ?? ''
-    const projectName =
-      labels[LABEL_PROJECT_NAME] || nameBySandboxId.get(sandboxId) || ''
+    const projectName = labels[LABEL_PROJECT_NAME] || ''
 
     // A shared database serves every sandbox of a project, so it is grouped by
     // the project itself rather than by any one sandbox.
@@ -77,23 +67,18 @@ export function groupVolumesByProject(
           (sandboxId
             ? `Sandbox ${sandboxId.slice(0, 12)}`
             : `Shared: ${folderName(labels[LABEL_PROJECT_SOURCE] ?? '') || sharedProjectId.slice(0, 12)}`),
-        projectName: projectName || null,
         volumes: [],
       }
       groups.set(key, group)
     }
     // A later volume can carry the name an earlier one lacked.
-    if (!group.projectName && projectName) {
-      group.projectName = projectName
-      group.title = projectName
-    }
     group.volumes.push(volume)
   }
 
   // Named projects first, alphabetical; unnamed sandboxes after them.
   const ordered = [...groups.values()].sort((a, b) => {
-    if (Boolean(a.projectName) !== Boolean(b.projectName)) {
-      return a.projectName ? -1 : 1
+    if (a.title.startsWith('Sandbox ') !== b.title.startsWith('Sandbox ')) {
+      return a.title.startsWith('Sandbox ') ? 1 : -1
     }
     return a.title.localeCompare(b.title)
   })

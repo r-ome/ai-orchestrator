@@ -16,7 +16,6 @@ from app.controller.store import (
 )
 from app.docker_client import get_docker_client
 from app.projects.remote import normalize_remote_url, project_id_for_remote
-from app.projects.service import ProjectOperationError, remove_project
 from app.sandboxes.manifest import SandboxManifest, read_manifest, write_manifest
 from app.sandboxes.lifecycle import (
     drain_sandbox_writers,
@@ -277,7 +276,7 @@ def create_or_resolve_sandbox(
     if not request.remote_url:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "v1 sandbox creation requires a Git remote; use POST /projects for the legacy local-folder path.",
+            "Sandbox creation requires a Git remote.",
         )
     project_id = project_id_for_remote(request.remote_url)
     sandbox_id = sandbox_id_for(project_id, request.feature_key)
@@ -1301,45 +1300,33 @@ def delete_sandbox(
             allow_writers=True,
         ):
             drain_sandbox_writers(docker_client, controller_store, sandbox_id)
-            if sandbox.get("lifecycle_version") == "v1":
-                manifest = read_manifest(controller_store, sandbox_id)
-                if manifest is None:
-                    raise RuntimeError("v1 sandbox manifest disappeared during destroy")
-                write_manifest(
-                    controller_store,
-                    replace(manifest, lifecycle_status="destroying", operation="destroy", operation_phase="sweep", last_error=None),
-                )
-                drop_sandbox_database(
-                    docker_client,
-                    controller_store,
-                    get_preview_settings(),
-                    sandbox_id=sandbox_id,
-                )
-                _sweep_manifest_resources(docker_client, controller_store, sandbox)
-                # The tombstone is intentionally after the complete sweep. A
-                # failed removal leaves the sandbox visible in destroying.
-                tombstone = controller_store.write_sandbox_tombstone(
-                    sandbox_id,
-                    reason="destroyed",
-                    manifest={**sandbox, "resources": controller_store.sandbox_resources(sandbox_id)},
-                )
-                controller_store.delete_v1_sandbox_manifest(sandbox_id)
-            else:
-                remove_project(
-                    docker_client,
-                    controller_store,
-                    str(sandbox["project_name"]),
-                )
-                tombstone = controller_store.write_sandbox_tombstone(
-                    sandbox_id, reason="destroyed", manifest=sandbox
-                )
+            manifest = read_manifest(controller_store, sandbox_id)
+            if manifest is None:
+                raise RuntimeError("v1 sandbox manifest disappeared during destroy")
+            write_manifest(
+                controller_store,
+                replace(manifest, lifecycle_status="destroying", operation="destroy", operation_phase="sweep", last_error=None),
+            )
+            drop_sandbox_database(
+                docker_client,
+                controller_store,
+                get_preview_settings(),
+                sandbox_id=sandbox_id,
+            )
+            _sweep_manifest_resources(docker_client, controller_store, sandbox)
+            # The tombstone is intentionally after the complete sweep. A
+            # failed removal leaves the sandbox visible in destroying.
+            tombstone = controller_store.write_sandbox_tombstone(
+                sandbox_id,
+                reason="destroyed",
+                manifest={**sandbox, "resources": controller_store.sandbox_resources(sandbox_id)},
+            )
+            controller_store.delete_v1_sandbox_manifest(sandbox_id)
     except SandboxAdmissionError as error:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             lifecycle_conflict_detail(error),
         ) from error
-    except ProjectOperationError as error:
-        raise HTTPException(error.status_code, error.detail) from error
     except (DockerException, RuntimeError, ValueError, SandboxDatabaseError) as error:
         manifest = read_manifest(controller_store, sandbox_id)
         if manifest is not None:

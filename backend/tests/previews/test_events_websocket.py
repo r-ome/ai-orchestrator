@@ -11,7 +11,7 @@ from app.controller.store import ControllerStore, get_controller_store
 from app.docker_client import get_docker_client
 from app.main import app
 from app.previews.service import _record_preview_progress
-from app.projects.service import project_id
+from app.projects.service import managed_project_key
 
 client = TestClient(app)
 
@@ -54,14 +54,12 @@ def _configure(monkeypatch: pytest.MonkeyPatch, *, sandbox_id: str) -> Controlle
         lambda *_: [],
     )
     store = get_controller_store()
-    # `require_preview_proposal` (via `_register_sandbox`) would register the
-    # sandbox lazily on first websocket connect, but `_approve` below needs
-    # the row to exist first (review_rounds.sandbox_id is a NOT NULL FK). Use
-    # the same `project_id(source_path)` derivation `_register_sandbox` uses
-    # internally, so both inserts agree.
+    # `_approve` below needs the sandbox row to exist, because
+    # review_rounds.sandbox_id is a NOT NULL foreign key. Derive the project id
+    # the way the service does, so both inserts agree.
     store.register_sandbox(
         sandbox_id=sandbox_id,
-        project_id=project_id(project.source_path),
+        project_id=managed_project_key(project.source_path),
         project_name=project.name,
         source_path=project.source_path,
         volume_name=project.volume_name,

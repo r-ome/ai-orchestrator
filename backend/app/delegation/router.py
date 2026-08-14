@@ -20,7 +20,7 @@ from app.delegation.change_requests import (
     execute_change_request,
     fail_change_claim,
 )
-from app.delegation.delivery import feature_diff, merge_feature_to_source
+from app.delegation.delivery import feature_diff
 from app.delegation.execution import (
     accept_run,
     build_run_packet,
@@ -42,8 +42,6 @@ from app.delegation.models import (
     FeatureDiff,
     GenerateDelegationRequest,
     GenerateIntegrationReviewRequest,
-    MergeFeatureOutcome,
-    MergeFeatureRequest,
     RequestFeatureChange,
     SetRoutingRequest,
     StartRunOutcome,
@@ -67,7 +65,6 @@ from app.docker_client import get_docker_client
 from app.planning.config import PlanningSettings, get_planning_settings
 from app.planning.runner import PlanningTurnError
 from app.previews.config import PreviewSettings, get_preview_settings
-from app.projects.config import ProjectSettings, get_project_settings
 from app.tasks.config import CodingTurnSettings, get_coding_turn_settings
 from app.tasks.runner import CodingTurnError
 
@@ -125,7 +122,6 @@ def open_delegation(
             project_name=project_name,
         )
     )
-
 
 @router.post(
     "/generate",
@@ -522,33 +518,5 @@ def read_feature_diff(
                 session_id=session_id,
                 project_name=project_name,
             ),
-        )
-    )
-
-
-@router.post("/{delegation_id}/merge", response_model=MergeFeatureOutcome)
-def merge_feature(
-    project_name: str,
-    session_id: str,
-    delegation_id: str,
-    request: MergeFeatureRequest,
-    docker_client: Annotated[DockerClient, Depends(get_docker_client)],
-    preview_settings: Annotated[PreviewSettings, Depends(get_preview_settings)],
-    project_settings: Annotated[ProjectSettings, Depends(get_project_settings)],
-    store: StoreDep,
-) -> MergeFeatureOutcome:
-    return _response(
-        lambda: merge_feature_to_source(
-            docker_client,
-            preview_settings,
-            project_settings,
-            store,
-            view(
-                store,
-                delegation_id,
-                session_id=session_id,
-                project_name=project_name,
-            ),
-            request,
         )
     )

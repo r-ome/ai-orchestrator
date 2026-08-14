@@ -169,10 +169,6 @@ function ProjectsPage() {
         </div>
       </div>
 
-      <p className="status">
-        Folders copied from this machine are not projects. They live under{' '}
-        <Link to="/local">local copies</Link>.
-      </p>
     </section>
   )
 }

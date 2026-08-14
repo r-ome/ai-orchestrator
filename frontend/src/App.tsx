@@ -7,22 +7,17 @@ import {
   useLocation,
   useParams,
 } from 'react-router-dom'
-const AgentTerminalPage = lazy(() => import('./pages/AgentTerminalPage'))
 const PlanningSessionPage = lazy(() => import('./pages/PlanningSessionPage'))
 const ContainersPage = lazy(() => import('./pages/ContainersPage'))
 const ContainerDetailPage = lazy(() => import('./pages/ContainerDetailPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 const ProjectPage = lazy(() => import('./pages/ProjectPage'))
-const LocalCopiesPage = lazy(() => import('./pages/LocalCopiesPage'))
-const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
 const SandboxDetailPage = lazy(() => import('./pages/SandboxDetailPage'))
 const VolumesPage = lazy(() => import('./pages/VolumesPage'))
 const ManagedVolumesPage = lazy(() => import('./pages/ManagedVolumesPage'))
 const VolumeDetailPage = lazy(() => import('./pages/VolumeDetailPage'))
 const StorageStatusPage = lazy(() => import('./pages/StorageStatusPage'))
-const ProjectTerminalDock = lazy(() => import('./components/ProjectTerminalDock'))
-import { fetchAgents } from './api/agents'
-import { fetchProject, fetchRemoteProject } from './api/projects'
+import { fetchRemoteProject } from './api/projects'
 import { fetchSandbox, projectLabel, sandboxLabel } from './api/sandboxes'
 import { useApiResource } from './hooks/useApiResource'
 import { useTheme } from './hooks/useTheme'
@@ -159,69 +154,11 @@ function CurrentProjectRailSummary({ projectId }: { projectId: string }) {
   )
 }
 
-// Loads the current summary for legacy local-copy detail and agent-terminal
-// routes. The project endpoint supplies file and size counts; the agent list
-// supplies the live-agent count shown in the reference rail.
-function CurrentProjectSummary() {
-  const location = useLocation()
-  const projectMatch = location.pathname.match(/^\/local\/([^/]+)/)
-  const projectName = projectMatch ? decodeURIComponent(projectMatch[1]) : ''
-  const projectFetcher = useCallback(
-    (signal: AbortSignal) =>
-      projectName ? fetchProject(projectName, signal) : Promise.resolve(null),
-    [projectName],
-  )
-  const agentFetcher = useCallback(
-    (signal: AbortSignal) =>
-      projectName
-        ? fetchAgents(signal)
-        : Promise.resolve({ count: 0, agents: [] }),
-    [projectName],
-  )
-  const project = useApiResource(projectFetcher, [projectName])
-  const agents = useApiResource(agentFetcher, [projectName])
-  if (!projectName) return null
-
-  const liveAgents =
-    agents.data?.agents.filter(
-      (agent) =>
-        agent.project_name === projectName &&
-        ['created', 'running', 'restarting', 'paused'].includes(agent.status),
-    ).length ?? 0
-
-  return (
-    <div className="rail-current">
-      <div className="rail-current-label">Current local copy</div>
-      <div className="rail-current-name">
-        {project.data?.name ?? projectName}
-      </div>
-      <div className="rail-current-stats">
-        <div>
-          <span>files</span>
-          <strong>{project.data?.file_count ?? '—'}</strong>
-        </div>
-        <div>
-          <span>size</span>
-          <strong>{project.data?.copied_size ?? '—'}</strong>
-        </div>
-        <div>
-          <span>agents</span>
-          <strong className={liveAgents > 0 ? 'live' : ''}>
-            {liveAgents} live
-          </strong>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function App() {
   const location = useLocation()
-  // Three separate spaces: projects (Git repositories), their sandboxes, and
-  // legacy local copies. Each rail decision reads exactly one of them.
+  // Projects are Git repositories. Their sandboxes have their own routes.
   const projectMatch = location.pathname.match(/^\/projects\/([^/]+)/)
   const sandboxMatch = location.pathname.match(/^\/sandboxes\/([^/]+)/)
-  const localMatch = location.pathname.match(/^\/local\/([^/]+)/)
   // The Sandboxes link points at the closest thing to a sandbox you are in.
   const currentSandboxPath = sandboxMatch
     ? `/sandboxes/${sandboxMatch[1]}`
@@ -229,14 +166,6 @@ function App() {
       ? `/projects/${projectMatch[1]}`
       : '/projects'
   const hasCurrentSandbox = Boolean(sandboxMatch ?? projectMatch)
-  const isTerminal = location.pathname.includes('/agents/')
-  // The terminal dock belongs to legacy local copies, which are the only
-  // routes that run agents.
-  const isLocalDetail =
-    Boolean(localMatch) &&
-    !isTerminal &&
-    location.pathname.split('/').filter(Boolean).length === 2
-  const projectName = localMatch ? decodeURIComponent(localMatch[1]) : ''
 
   return (
     <div className="app-shell">
@@ -256,9 +185,7 @@ function App() {
           <CurrentProjectRailSummary
             projectId={decodeURIComponent(projectMatch[1])}
           />
-        ) : (
-          <CurrentProjectSummary />
-        )}
+        ) : null}
 
         <div className="app-rail-nav">
           <NavLink to="/projects" end>
@@ -271,10 +198,6 @@ function App() {
           >
             <RailIcon variant="bars" />
             Sandboxes
-          </NavLink>
-          <NavLink to="/local" end>
-            <RailIcon variant="square" />
-            Local copies
           </NavLink>
           <NavLink to="/containers" end>
             <RailIcon variant="square" />
@@ -298,7 +221,7 @@ function App() {
       </nav>
 
       <main className="app-main">
-        <div className={`page${isTerminal ? ' page-terminal' : ''}`}>
+        <div className="page">
           <Suspense fallback={<p className="status">Loading page…</p>}>
             <Routes>
             <Route path="/" element={<Navigate to="/projects" replace />} />
@@ -309,21 +232,6 @@ function App() {
             <Route path="/sandboxes/:sandboxId" element={<SandboxDetailPage />} />
             <Route
               path="/sandboxes/:sandboxId/plans/:sessionId"
-              element={<PlanningSessionPage />}
-            />
-            {/* Legacy local copies. They kept the /projects space until
-                projects became repositories, and no longer share it. */}
-            <Route path="/local" element={<LocalCopiesPage />} />
-            <Route
-              path="/local/:projectName"
-              element={<ProjectDetailPage />}
-            />
-            <Route
-              path="/local/:projectName/agents/:agentId"
-              element={<AgentTerminalPage />}
-            />
-            <Route
-              path="/local/:projectName/plans/:sessionId"
               element={<PlanningSessionPage />}
             />
             <Route path="/containers" element={<ContainersPage />} />
@@ -359,11 +267,6 @@ function App() {
           </Suspense>
         </div>
       </main>
-      {isLocalDetail && (
-        <Suspense fallback={null}>
-          <ProjectTerminalDock projectName={projectName} />
-        </Suspense>
-      )}
     </div>
   )
 }
