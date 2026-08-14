@@ -50,6 +50,8 @@ class ProviderModels:
 class RoutingSettings:
     claude: ProviderModels
     codex: ProviderModels
+    #: Provider for a run with no item override and no run preference.
+    default_provider: AgentProvider = AgentProvider.CLAUDE
 
     def for_provider(self, provider: AgentProvider) -> ProviderModels:
         return self.codex if provider is AgentProvider.CODEX else self.claude
@@ -93,7 +95,7 @@ def route(
     later step reads. A model chosen for one provider is never carried over to
     another: the name would be meaningless to it.
     """
-    provider = item_provider or run_provider or AgentProvider.CLAUDE
+    provider = item_provider or run_provider or settings.default_provider
     models = settings.for_provider(provider)
     recommended = models.for_complexity(complexity)
 

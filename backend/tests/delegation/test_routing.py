@@ -104,6 +104,37 @@ def test_item_provider_override_wins() -> None:
     assert decision.provider is AgentProvider.CODEX
 
 
+def test_configured_default_provider_applies_with_no_preference() -> None:
+    """A deployment that implements on Codex should not need a per-run choice."""
+    settings = RoutingSettings(
+        claude=CLAUDE,
+        codex=CODEX,
+        default_provider=AgentProvider.CODEX,
+    )
+
+    decision = route(Complexity.MEDIUM, settings)
+
+    assert decision.provider is AgentProvider.CODEX
+    assert decision.model == "gpt-standard"
+
+
+def test_a_run_preference_still_beats_the_default_provider() -> None:
+    settings = RoutingSettings(
+        claude=CLAUDE,
+        codex=CODEX,
+        default_provider=AgentProvider.CODEX,
+    )
+
+    decision = route(
+        Complexity.MEDIUM,
+        settings,
+        run_provider=AgentProvider.CLAUDE,
+    )
+
+    assert decision.provider is AgentProvider.CLAUDE
+    assert decision.model == "standard"
+
+
 def test_identical_tiers_disable_warning() -> None:
     one = ProviderModels("one", "one", "one", "one", ("one",))
     flat = RoutingSettings(claude=one, codex=one)

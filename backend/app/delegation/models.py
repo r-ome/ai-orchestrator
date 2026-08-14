@@ -316,7 +316,12 @@ class GenerateIntegrationReviewOutcome(BaseModel):
 
 
 class StartRunRequest(BaseModel):
-    provider: AgentProvider = AgentProvider.CLAUDE
+    # None means "no preference for this run", which lets `route` fall through
+    # to ROUTING_DEFAULT_PROVIDER. Defaulting to a named provider made every
+    # request that omitted the field an override, so a deployment configured
+    # for Codex still ran Claude. The unattended driver sends no preference at
+    # all, so it would have pinned every item.
+    provider: AgentProvider | None = None
     model: str | None = Field(default=None, max_length=100)
     credential_profile: str = Field(
         default="default",

@@ -2,6 +2,7 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 
+from app.agents.models import AgentProvider
 from app.delegation.routing import ProviderModels, RoutingSettings
 from app.delegation.verification import VerificationSettings
 
@@ -64,7 +65,16 @@ def get_routing_settings() -> RoutingSettings:
             default_model=codex_default,
             catalogue=_catalogue("ROUTING_CODEX_MODELS", DEFAULT_CODEX_MODELS),
         ),
+        default_provider=_provider("ROUTING_DEFAULT_PROVIDER", AgentProvider.CLAUDE),
     )
+
+
+def _provider(variable: str, fallback: AgentProvider) -> AgentProvider:
+    """Read a provider name, falling back when it names nothing we serve."""
+    try:
+        return AgentProvider(os.getenv(variable, fallback.value))
+    except ValueError:
+        return fallback
 
 
 def _catalogue(variable: str, fallback: tuple[str, ...]) -> tuple[str, ...]:
