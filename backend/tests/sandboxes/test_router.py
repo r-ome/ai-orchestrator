@@ -800,6 +800,67 @@ def test_resume_recreates_only_a_missing_workspace_and_preserves_present_worktre
     assert fake_docker_client.volumes.get(workspace_name) is not before
 
 
+def test_resume_recovers_a_workspace_phase_failure_without_engine_detection(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ensure_workspace_import = sandbox_router.ensure_workspace_import
+    monkeypatch.setattr(
+        sandbox_router,
+        "ensure_workspace_import",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("workspace import failed")),
+    )
+
+    failed = _create(client)
+
+    assert failed.status_code == 500
+    store = get_controller_store()
+    sandbox = store.sandboxes()[0]
+    sandbox_id = str(sandbox["id"])
+    manifest = read_manifest(store, sandbox_id)
+    assert manifest is not None
+    assert manifest.lifecycle_status == "creating"
+    assert manifest.operation_phase == "workspace"
+    assert store.sandbox_engine_detection(sandbox_id) is None
+
+    monkeypatch.setattr(sandbox_router, "ensure_workspace_import", ensure_workspace_import)
+    resumed = client.post(f"/sandboxes/{sandbox_id}/resume")
+
+    assert resumed.status_code == 200
+    assert resumed.json()["lifecycle_status"] == "awaiting_engine_confirmation"
+    assert store.sandbox_engine_detection(sandbox_id) is not None
+
+    confirmed = client.post(
+        f"/sandboxes/{sandbox_id}/confirm-engine",
+        json={"engine": "none", "actor": "tester"},
+    )
+
+    assert confirmed.status_code == 200
+    assert confirmed.json()["lifecycle_status"] == "ready"
+
+
+def test_resume_reuses_an_unconfirmed_engine_detection(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sandbox = _create(client).json()
+    store = get_controller_store()
+    manifest = read_manifest(store, sandbox["sandbox_id"])
+    assert manifest is not None
+    write_manifest(
+        store,
+        replace(manifest, lifecycle_status="creating", operation_phase="workspace"),
+    )
+    monkeypatch.setattr(
+        sandbox_router,
+        "discover_engine",
+        lambda *_args, **_kwargs: pytest.fail("resume must reuse the stored detection"),
+    )
+
+    resumed = client.post(f"/sandboxes/{sandbox['sandbox_id']}/resume")
+
+    assert resumed.status_code == 200
+    assert resumed.json()["lifecycle_status"] == "awaiting_engine_confirmation"
+
+
 def test_resume_marks_unsafe_ownership_inconsistency_degraded(
     client: TestClient, fake_docker_client
 ) -> None:
@@ -883,6 +944,30 @@ def test_orphans_route_reads_the_startup_report_without_a_docker_mutation(
 
     assert response.status_code == 200
     assert response.json()["resources"][0]["resource"] == "volume:sbx-reported-volume"
+
+
+def test_orphans_route_hides_a_reported_resource_now_claimed_by_a_manifest(
+    client: TestClient,
+) -> None:
+    sandbox = _create(client).json()
+    name = f"sbx-{sandbox['sandbox_id'][:12]}-late-claim"
+    store = get_controller_store()
+    store.event(
+        sandbox_id=None,
+        run_id=None,
+        kind="controller.unexpected_resource",
+        payload={
+            "resource": f"volume:{name}",
+            "resource_kind": "volume",
+            "resource_name": name,
+        },
+    )
+    store.record_sandbox_resource(sandbox["sandbox_id"], kind="volume", name=name)
+
+    response = client.get("/sandboxes/orphans")
+
+    assert response.status_code == 200
+    assert response.json() == {"count": 0, "resources": []}
 
 
 @pytest.mark.parametrize(
@@ -1099,6 +1184,7 @@ def test_publish_records_verified_git_and_pull_request_result(
             pushed=True,
         )
 
+    monkeypatch.setattr(sandbox_router, "reviewed_target", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(sandbox_router, "publish_reviewed_feature", publish)
     monkeypatch.setattr(
         sandbox_router,
@@ -1159,6 +1245,7 @@ def test_publish_failure_records_a_retryable_checkpoint(
             "actor": "jerome",
         },
     ).json()
+    monkeypatch.setattr(sandbox_router, "reviewed_target", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         sandbox_router,
         "publish_reviewed_feature",
@@ -1204,6 +1291,7 @@ def test_publish_push_failure_stores_a_safe_message(
         image="alpine/git:latest",
         stderr=stderr,
     )
+    monkeypatch.setattr(sandbox_router, "reviewed_target", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         sandbox_router,
         "publish_reviewed_feature",
@@ -1258,6 +1346,7 @@ def test_publish_pr_failure_keeps_the_pushed_commit_and_retry_creates_one_pr(
             raise sandbox_publish.GitHubApiError("GitHub pull request creation failed (HTTP 500)")
         return PullRequest(42, "https://github.com/owner/repo/pull/42", "open")
 
+    monkeypatch.setattr(sandbox_router, "reviewed_target", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(sandbox_router, "publish_reviewed_feature", publish)
     monkeypatch.setattr(sandbox_router, "discover_or_create_pull_request", pull_request)
 
@@ -1296,6 +1385,7 @@ def test_publish_api_failure_never_persists_or_returns_the_write_token(
             "commands_source": {"migrate": "makefile"}, "actor": "jerome",
         },
     ).json()
+    monkeypatch.setattr(sandbox_router, "reviewed_target", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         sandbox_router,
         "publish_reviewed_feature",

@@ -164,7 +164,9 @@ function SandboxPreviewSection({ sandboxId, busy }: SandboxPreviewSectionProps) 
               <div className="status status-warning">
                 {blockedProposal.approval_required && (
                   <p>
-                    Protected files changed: {blockedProposal.changes.length}. Human review is required.
+                    {blockedProposal.changes.length > 0
+                      ? `Protected files changed: ${blockedProposal.changes.length}. Human review is required.`
+                      : 'This sandbox has no approved preview configuration yet. Human review is required.'}
                   </p>
                 )}
                 {blockedProposal.missing_environment.length > 0 && (

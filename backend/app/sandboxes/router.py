@@ -60,6 +60,7 @@ from app.sandboxes.publish import (
     PublishError,
     discover_or_create_pull_request,
     publish_reviewed_feature,
+    reviewed_target,
 )
 from app.sandboxes.naming import (
     database_name,
@@ -452,7 +453,14 @@ def list_orphan_resources(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> OrphanResourcesResponse:
     """Read the startup report without claiming a lease or a mirror lock."""
-    resources = controller_store.unexpected_resources()
+    resources = []
+    for resource in controller_store.unexpected_resources():
+        try:
+            orphan = parse_orphan_resource_key(str(resource["resource"]))
+        except (KeyError, ValueError):
+            continue
+        if not resource_is_claimed(controller_store, orphan):
+            resources.append(resource)
     return OrphanResourcesResponse(count=len(resources), resources=resources)
 
 
@@ -803,6 +811,13 @@ def publish_sandbox(
     preview_settings = get_preview_settings()
 
     try:
+        # This reads the stored review only. It must run before the lifecycle
+        # lease, which can stop a requested blocking preview.
+        reviewed_target(
+            controller_store,
+            sandbox_id=sandbox_id,
+            feature_branch=manifest.feature_branch,
+        )
         # Lock order is fixed: sandbox lifecycle lease, then project mirror
         # lock. The mirror lock covers both local staging and network push.
         with lifecycle_lease(
@@ -1176,7 +1191,41 @@ def resume_sandbox(
                 return _sandbox_response(controller_store, sandbox)
             detection = controller_store.sandbox_engine_detection(sandbox_id)
             if not detection or not detection.get("confirmed_engine"):
-                raise RuntimeError("sandbox database engine is not confirmed")
+                if detection is None:
+                    detected = discover_engine(
+                        docker_client,
+                        image=get_preview_settings().git_image,
+                        volume_name=workspace_volume(sandbox_id),
+                    )
+                    if detected.tracked_database_paths:
+                        paths = ", ".join(detected.tracked_database_paths)
+                        raise ValueError(
+                            "Project tracks database file(s): "
+                            f"{paths}. Move the database out of Git before creating a sandbox."
+                        )
+                    detection = controller_store.record_sandbox_engine_detection(
+                        sandbox_id=sandbox_id,
+                        signals=[signal.as_dict() for signal in detected.signals],
+                        proposed_engine=detected.proposed_engine,
+                        migrate_commands=detected.migrate_commands,
+                        seed_commands=detected.seed_commands,
+                        commands_source=detected.commands_source,
+                        detected_at_commit=manifest.created_base_commit or "",
+                    )
+                refreshed = read_manifest(controller_store, sandbox_id)
+                if refreshed is None:
+                    raise RuntimeError("v1 sandbox manifest disappeared during resume")
+                write_manifest(
+                    controller_store,
+                    replace(
+                        refreshed,
+                        lifecycle_status="awaiting_engine_confirmation",
+                        operation="resume",
+                        operation_phase="awaiting_engine_confirmation",
+                        last_error=None,
+                    ),
+                )
+                return _sandbox_response(controller_store, sandbox)
             if detection.get("confirmed_engine") == NO_DATABASE:
                 refreshed = read_manifest(controller_store, sandbox_id) or manifest
                 write_manifest(

@@ -590,12 +590,10 @@ def test_sync_git_path_rebases_from_a_local_bare_remote() -> None:
             network.remove()
 
 
-def test_publish_preview_requires_opt_in_like_sync_does(
+def test_publish_requires_review_before_stopping_a_running_preview(
     client: TestClient, fake_docker_client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Publish took its lease without the preview opt-in every other
-    lifecycle operation has, so a running preview blocked it with no way
-    through short of stopping the preview by hand."""
+    """An unreviewed publish cannot stop a preview before it returns 409."""
     _register(fake_docker_client=fake_docker_client)
     store = get_controller_store()
     store.create_preview_run(
@@ -609,12 +607,53 @@ def test_publish_preview_requires_opt_in_like_sync_does(
         }
     )
 
+    stopped: list[str] = []
+
+    def stop(*_args: object, preview_id: str, **_kwargs: object) -> None:
+        stopped.append(preview_id)
+        store.update_preview_run(preview_id, status="stopped")
+
+    monkeypatch.setattr(sandbox_lifecycle, "_stop_blocking_preview", stop)
+
+    refused = client.post(
+        f"/sandboxes/{SANDBOX_ID}/publish", json={"stop_blocking_preview": True}
+    )
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == "An approved feature review is required before publish"
+    assert stopped == []
+    assert store.preview_run("preview-blocker")["status"] == "running"
+
+
+def test_reviewed_publish_reports_a_blocking_preview_and_takes_the_opt_in(
+    client: TestClient, fake_docker_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once reviewed, publish still names a blocking preview and honours the opt-in.
+
+    The review gate now runs first, so it hides this path from an unreviewed
+    sandbox. Prove the opt-in that 01f59c1 added still works behind it.
+    """
+    _register(fake_docker_client=fake_docker_client)
+    store = get_controller_store()
+    store.create_preview_run(
+        {
+            "id": "preview-blocker", "sandbox_id": SANDBOX_ID, "proposal_id": "proposal",
+            "mode": "native", "kind": "live", "task_id": None, "commit_sha": None,
+            "status": "running", "selected_service": None, "container_port": 3000,
+            "host_port": None, "config_json": "{}", "config_digest": "digest",
+            "network_name": None, "created_at": "", "started_at": None,
+            "expires_at": None, "last_activity_at": "",
+        }
+    )
+    monkeypatch.setattr(sandbox_router, "reviewed_target", lambda *_args, **_kwargs: None)
+
     refused = client.post(f"/sandboxes/{SANDBOX_ID}/publish", json={})
+
     assert refused.status_code == 409
     assert refused.json()["detail"]["blocking_writer"] == {
         "class": "preview",
         "id": "preview-blocker",
     }
+    assert store.preview_run("preview-blocker")["status"] == "running"
 
     stopped: list[str] = []
 
@@ -624,10 +663,6 @@ def test_publish_preview_requires_opt_in_like_sync_does(
 
     monkeypatch.setattr(sandbox_lifecycle, "_stop_blocking_preview", stop)
 
-    # The publish itself has no reviewed head here, so it stops at that
-    # check. Getting that far is the point: the lease was granted.
-    proceeded = client.post(
-        f"/sandboxes/{SANDBOX_ID}/publish", json={"stop_blocking_preview": True}
-    )
+    client.post(f"/sandboxes/{SANDBOX_ID}/publish", json={"stop_blocking_preview": True})
+
     assert stopped == ["preview-blocker"]
-    assert proceeded.json()["detail"] != refused.json()["detail"]
