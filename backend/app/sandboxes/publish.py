@@ -59,6 +59,7 @@ class PullRequest:
     number: int
     url: str
     state: str
+    merged_at: str | None = None
 
 
 class GitHubWriteCredentialSource(Protocol):
@@ -216,6 +217,7 @@ def pull_request_from_payload(payload: object) -> PullRequest:
     number = payload.get("number")
     url = payload.get("html_url")
     state = payload.get("state")
+    merged_at = payload.get("merged_at")
     if (
         not isinstance(number, int)
         or number < 1
@@ -225,7 +227,12 @@ def pull_request_from_payload(payload: object) -> PullRequest:
         or not state
     ):
         raise GitHubApiError("GitHub pull request response is missing observed fields")
-    return PullRequest(number=number, url=url, state=state)
+    return PullRequest(
+        number=number,
+        url=url,
+        state=state,
+        merged_at=merged_at if isinstance(merged_at, str) and merged_at else None,
+    )
 
 
 def discover_or_create_pull_request(

@@ -12,6 +12,7 @@ from docker.client import DockerClient
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
 from app.planning.config import PlanningSettings
+from app.planning.feature_status import derive_feature_status
 from app.planning.models import (
     TERMINAL_PLANNING_STATUSES,
     CreatePlanningSessionRequest,
@@ -144,6 +145,9 @@ def get_session(
     session_id: str,
 ) -> PlanningSessionDetail:
     session = _session_for_project(controller_store, project_name, session_id)
+    session_with_feature_facts = controller_store.planning_session_with_feature_facts(session_id)
+    if session_with_feature_facts is not None:
+        session = session_with_feature_facts
     messages = [_message_model(row) for row in controller_store.planning_messages(session_id)]
     return PlanningSessionDetail(
         **_session_data(session),
@@ -1010,7 +1014,7 @@ def _session_model(session: Mapping[str, Any]) -> PlanningSession:
 
 
 def _session_data(session: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+    data = {
         key: value
         for key, value in session.items()
         if key
@@ -1036,6 +1040,36 @@ def _session_data(session: Mapping[str, Any]) -> dict[str, Any]:
             "settled_at",
         }
     }
+    review_result = _json_object(session.get("review_result_json"))
+    review_approved = review_result.get("approved")
+    data["feature_status"] = derive_feature_status(
+        PlanningStatus(str(session["status"])),
+        context_status=_string_or_none(session.get("context_status")),
+        delegation_status=_string_or_none(session.get("delegation_status")),
+        review_status=_string_or_none(session.get("review_status")),
+        review_approved=review_approved if isinstance(review_approved, bool) else None,
+        source_merged_at=_string_or_none(session.get("review_source_merged_at")),
+        change_status=_string_or_none(session.get("change_status")),
+        pr_number=session.get("pr_number"),
+        pr_state=_string_or_none(session.get("pr_state")),
+        pr_merged_at=_string_or_none(session.get("pr_merged_at")),
+    )
+    return data
+
+
+def _string_or_none(value: Any) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    """Read a stored JSON object without trusting old rows to be valid JSON."""
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(str(value))
+    except ValueError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _message_model(row: Mapping[str, Any]) -> PlanningMessage:

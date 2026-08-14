@@ -123,6 +123,7 @@ export interface PublishSandboxResult {
   pr_number: number | null
   pr_url: string | null
   pr_state: string | null
+  pr_merged_at: string | null
 }
 
 export interface SandboxPublication {
@@ -133,6 +134,7 @@ export interface SandboxPublication {
   pr_number: number | null
   pr_url: string | null
   pr_state: string | null
+  pr_merged_at: string | null
   last_error: string | null
   updated_at: string
 }

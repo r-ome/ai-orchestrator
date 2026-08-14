@@ -777,6 +777,11 @@ def _add_project_mirror_fetched_at(connection: sqlite3.Connection) -> None:
     _add_column(connection, "projects", "mirror_fetched_at", "TEXT")
 
 
+def _add_publication_merged_at(connection: sqlite3.Connection) -> None:
+    """Record when GitHub reports that a pull request merged."""
+    _add_column(connection, "sandbox_publications", "pr_merged_at", "TEXT")
+
+
 def _create_sandbox_publications(connection: sqlite3.Connection) -> None:
     """Record observed Git publication facts, never publication intent."""
     connection.execute(
@@ -789,6 +794,7 @@ def _create_sandbox_publications(connection: sqlite3.Connection) -> None:
             pr_number INTEGER,
             pr_url TEXT,
             pr_state TEXT,
+            pr_merged_at TEXT,
             last_error TEXT,
             updated_at TEXT NOT NULL
         )
@@ -808,6 +814,7 @@ MIGRATIONS: Mapping[int, Callable[[sqlite3.Connection], None]] = {
     26: _create_sandbox_databases,
     27: _add_project_mirror_fetched_at,
     28: _create_sandbox_publications,
+    29: _add_publication_merged_at,
 }
 
 
@@ -828,6 +835,47 @@ def _apply_migrations(connection: sqlite3.Connection) -> None:
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                 (version, _now()),
             )
+
+
+_PLANNING_SESSION_FEATURE_FACTS_QUERY = """
+SELECT
+    session.*,
+    context.status AS context_status,
+    delegation.status AS delegation_status,
+    review.status AS review_status,
+    review.result_json AS review_result_json,
+    review.source_merged_at AS review_source_merged_at,
+    change_request.status AS change_status,
+    publication.pr_number AS pr_number,
+    publication.pr_state AS pr_state,
+    publication.pr_merged_at AS pr_merged_at
+FROM planning_sessions AS session
+LEFT JOIN implementation_contexts AS context
+    ON context.session_id = session.id
+LEFT JOIN delegations AS delegation
+    ON delegation.session_id = session.id
+    AND delegation.revision = (
+        SELECT MAX(revision)
+        FROM delegations
+        WHERE session_id = session.id
+    )
+LEFT JOIN delegation_reviews AS review
+    ON review.delegation_id = delegation.id
+    AND review.revision = (
+        SELECT MAX(revision)
+        FROM delegation_reviews
+        WHERE delegation_id = delegation.id
+    )
+LEFT JOIN delegation_change_requests AS change_request
+    ON change_request.delegation_id = delegation.id
+    AND change_request.revision = (
+        SELECT MAX(revision)
+        FROM delegation_change_requests
+        WHERE delegation_id = delegation.id
+    )
+LEFT JOIN sandbox_publications AS publication
+    ON publication.sandbox_id = session.sandbox_id
+"""
 
 
 class ControllerStore:
@@ -1227,6 +1275,7 @@ class ControllerStore:
         pr_number: int | None = None,
         pr_url: str | None = None,
         pr_state: str | None = None,
+        pr_merged_at: str | None = None,
     ) -> dict[str, Any]:
         """Upsert observed Git and PR state without asserting publication intent."""
         now = _now()
@@ -1235,8 +1284,8 @@ class ControllerStore:
                 """
                 INSERT INTO sandbox_publications(
                     sandbox_id, remote_branch, last_pushed_commit, remote_branch_sha,
-                    pr_number, pr_url, pr_state, last_error, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    pr_number, pr_url, pr_state, pr_merged_at, last_error, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(sandbox_id) DO UPDATE SET
                     remote_branch = excluded.remote_branch,
                     last_pushed_commit = excluded.last_pushed_commit,
@@ -1244,6 +1293,9 @@ class ControllerStore:
                     pr_number = COALESCE(excluded.pr_number, sandbox_publications.pr_number),
                     pr_url = COALESCE(excluded.pr_url, sandbox_publications.pr_url),
                     pr_state = COALESCE(excluded.pr_state, sandbox_publications.pr_state),
+                    pr_merged_at = COALESCE(
+                        excluded.pr_merged_at, sandbox_publications.pr_merged_at
+                    ),
                     last_error = excluded.last_error,
                     updated_at = excluded.updated_at
                 """,
@@ -1255,6 +1307,7 @@ class ControllerStore:
                     pr_number,
                     pr_url,
                     pr_state,
+                    pr_merged_at,
                     last_error,
                     now,
                 ),
@@ -1956,14 +2009,26 @@ class ControllerStore:
     def planning_sessions_for_project(self, project_id: str) -> list[dict[str, Any]]:
         with self._connection() as connection:
             rows = connection.execute(
-                """
-                SELECT * FROM planning_sessions
-                WHERE project_id = ?
-                ORDER BY created_at DESC
+                _PLANNING_SESSION_FEATURE_FACTS_QUERY
+                + """
+                WHERE session.project_id = ?
+                ORDER BY session.created_at DESC
                 """,
                 (project_id,),
             ).fetchall()
         return [_row(row) for row in rows if row is not None]
+
+    def planning_session_with_feature_facts(self, session_id: str) -> dict[str, Any] | None:
+        """Return one planning session with facts used for its feature status."""
+        with self._connection() as connection:
+            row = connection.execute(
+                _PLANNING_SESSION_FEATURE_FACTS_QUERY
+                + """
+                WHERE session.id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        return _row(row)
 
     def start_implementation_context(self, values: Mapping[str, Any]) -> str | None:
         """Open the session's one context for generation. None if one is running.

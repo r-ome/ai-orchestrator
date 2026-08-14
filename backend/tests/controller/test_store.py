@@ -305,6 +305,164 @@ def _seed_planning_delegation_tree(
         )
 
 
+def test_planning_sessions_for_project_includes_latest_feature_facts(tmp_path: Path) -> None:
+    store = _store_with_sandbox(
+        tmp_path,
+        sandbox_id="sandbox-feature-status",
+        project_id="project-feature-status",
+        lifecycle_version="v2",
+    )
+    now = "2026-08-14T00:00:00Z"
+    with store._connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO planning_sessions(
+                id, project_id, sandbox_id, project_name, title, status,
+                clarifier_provider, planner_provider, reviewer_provider,
+                credential_profile, max_review_turns, created_at, updated_at
+            ) VALUES (?, ?, ?, 'Feature status', 'Plan', 'plan_ready', 'test', 'test',
+                      'test', 'default', 1, ?, ?)
+            """,
+            ("session-feature-status", "project-feature-status", "sandbox-feature-status", now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO implementation_contexts(
+                id, session_id, sandbox_id, status, created_at, updated_at
+            ) VALUES ('context-feature-status', 'session-feature-status',
+                      'sandbox-feature-status', 'ready', ?, ?)
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO delegations(
+                id, session_id, sandbox_id, context_id, revision, status, created_at, updated_at
+            ) VALUES ('delegation-one', 'session-feature-status', 'sandbox-feature-status',
+                      'context-feature-status', 1, 'completed', ?, ?),
+                     ('delegation-two', 'session-feature-status', 'sandbox-feature-status',
+                      'context-feature-status', 2, 'running', ?, ?)
+            """,
+            (now, now, now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO delegation_reviews(
+                id, delegation_id, revision, status, result_json, source_merged_at,
+                created_at, updated_at
+            ) VALUES ('review-one', 'delegation-two', 1, 'completed', '{"approved": false}',
+                      NULL, ?, ?),
+                     ('review-two', 'delegation-two', 2, 'completed', '{"approved": true}',
+                      '2026-08-14T01:00:00Z', ?, ?)
+            """,
+            (now, now, now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO delegation_change_requests(
+                id, delegation_id, revision, status, instructions, provider, model,
+                task_id, created_at, updated_at
+            ) VALUES ('change-one', 'delegation-two', 1, 'failed', 'Fix it', 'test', 'test',
+                      NULL, ?, ?),
+                     ('change-two', 'delegation-two', 2, 'awaiting_review', 'Fix it again',
+                      'test', 'test', NULL, ?, ?)
+            """,
+            (now, now, now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO sandbox_publications(
+                sandbox_id, remote_branch, pr_number, pr_state, pr_merged_at, updated_at
+            ) VALUES ('sandbox-feature-status', 'feature/status', 42, 'open',
+                      '2026-08-14T02:00:00Z', ?)
+            """,
+            (now,),
+        )
+
+    rows = store.planning_sessions_for_project("project-feature-status")
+
+    assert len(rows) == 1
+    assert {
+        key: rows[0][key]
+        for key in {
+            "context_status",
+            "delegation_status",
+            "review_status",
+            "review_result_json",
+            "review_source_merged_at",
+            "change_status",
+            "pr_number",
+            "pr_state",
+            "pr_merged_at",
+        }
+    } == {
+        "context_status": "ready",
+        "delegation_status": "running",
+        "review_status": "completed",
+        "review_result_json": '{"approved": true}',
+        "review_source_merged_at": "2026-08-14T01:00:00Z",
+        "change_status": "awaiting_review",
+        "pr_number": 42,
+        "pr_state": "open",
+        "pr_merged_at": "2026-08-14T02:00:00Z",
+    }
+
+
+def test_publication_merge_fact_survives_later_observations(tmp_path: Path) -> None:
+    store = _store_with_sandbox(
+        tmp_path,
+        sandbox_id="sandbox-publication-merge",
+        project_id="project-publication-merge",
+        lifecycle_version="v2",
+    )
+    session_id = "session-publication-merge"
+    merged_at = "2026-08-14T00:00:00Z"
+    store.create_planning_session(
+        session_id=session_id,
+        project_id="project-publication-merge",
+        sandbox_id="sandbox-publication-merge",
+        project_name="Publication merge",
+        title="Plan",
+        status="plan_ready",
+        clarifier_provider="test",
+        planner_provider="test",
+        reviewer_provider="test",
+        credential_profile="default",
+        max_review_turns=1,
+    )
+
+    store.record_sandbox_publication(
+        sandbox_id="sandbox-publication-merge",
+        remote_branch="feature/publication-merge",
+        last_pushed_commit="a" * 40,
+        remote_branch_sha="a" * 40,
+        pr_number=42,
+        pr_url="https://github.com/owner/repository/pull/42",
+        pr_state="closed",
+        pr_merged_at=merged_at,
+        last_error=None,
+    )
+
+    facts = store.planning_session_with_feature_facts(session_id)
+
+    assert facts is not None
+    assert facts["pr_merged_at"] == merged_at
+
+    publication = store.record_sandbox_publication(
+        sandbox_id="sandbox-publication-merge",
+        remote_branch="feature/publication-merge",
+        last_pushed_commit="a" * 40,
+        remote_branch_sha="a" * 40,
+        last_error=None,
+        pr_merged_at=None,
+    )
+
+    assert publication["pr_merged_at"] == merged_at
+    facts = store.planning_session_with_feature_facts(session_id)
+    assert facts is not None
+    assert facts["pr_merged_at"] == merged_at
+
+
 def _planning_delegation_counts(
     store: ControllerStore,
     sandbox_id: str,
@@ -513,7 +671,7 @@ def test_fresh_database_applies_sandbox_migrations(tmp_path: Path) -> None:
 
     store.initialize()
 
-    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
 
 
 def test_migration_21_applies_when_22_and_23_are_already_stamped(
@@ -527,7 +685,7 @@ def test_migration_21_applies_when_22_and_23_are_already_stamped(
 
     store.initialize()
 
-    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
     with store._connection() as connection:
         assert connection.execute(
             """
@@ -636,6 +794,7 @@ def test_initialize_applies_migrations_in_order_once_and_skips_stamps(
         26,
         27,
         28,
+        29,
         101,
         102,
         103,
@@ -786,8 +945,8 @@ def test_add_column_is_idempotent_and_reraises_other_errors(tmp_path: Path) -> N
 @pytest.mark.parametrize(
     ("initial_versions", "upgraded_versions"),
     [
-        ([1], [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]),
-        (list(range(1, 18)), [*range(1, 29)]),
+        ([1], [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]),
+        (list(range(1, 18)), [*range(1, 30)]),
     ],
     ids=["initial-schema", "pre-squash-schema"],
 )
@@ -878,7 +1037,7 @@ def test_initialize_is_idempotent_and_legacy_backfill_is_guarded(tmp_path: Path)
     sandbox = store.sandboxes()[0]
     assert sandbox["lifecycle_version"] == "v1"
     assert sandbox["desired_state"] == "destroyed"
-    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
 
 
 def test_projects_rebuild_keeps_sandbox_foreign_key_schema_and_data(tmp_path: Path) -> None:
@@ -1149,11 +1308,12 @@ def test_initial_migration_creates_the_current_schema_once(tmp_path: Path) -> No
             "pr_number",
             "pr_url",
             "pr_state",
+            "pr_merged_at",
             "last_error",
             "updated_at",
         } == columns("sandbox_publications")
 
-    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
     assert {
         "tasks",
         "planning_sessions",

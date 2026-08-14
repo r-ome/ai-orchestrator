@@ -17,6 +17,24 @@ class PlanningStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class FeatureStatus(StrEnum):
+    CLARIFYING = "clarifying"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    PLANNING = "planning"
+    UNDER_REVIEW = "under_review"
+    PLAN_READY = "plan_ready"
+    BUILDING = "building"
+    BLOCKED = "blocked"
+    IN_REVIEW = "in_review"
+    APPROVED = "approved"
+    PUBLISHED = "published"
+    MERGED = "merged"
+    ABANDONED = "abandoned"
+    REVIEW_LIMIT_REACHED = "review_limit_reached"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class PlanningTurnState(StrEnum):
     IDLE = "idle"
     RUNNING = "running"
@@ -203,6 +221,7 @@ class PlanningSession(BaseModel):
     sandbox_id: str
     title: str
     status: PlanningStatus
+    feature_status: FeatureStatus
     turn_state: PlanningTurnState
     clarifier_provider: AgentProvider
     planner_provider: AgentProvider

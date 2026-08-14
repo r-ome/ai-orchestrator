@@ -15,7 +15,7 @@ import {
 } from '../api/planning'
 import { useApiResource } from '../hooks/useApiResource'
 import { formatRelativeTime, formatTimestamp } from '../utils/format'
-import PlanningStatusBadge from './PlanningStatusBadge'
+import FeatureStatusBadge from './FeatureStatusBadge'
 
 interface ProjectPlanningSectionProps {
   projectName: string
@@ -61,7 +61,12 @@ function ProjectPlanningSection({
       ),
     [data],
   )
-  const hasActiveSession = sessions.some((session) => !isPlanningTerminal(session.status))
+  const hasActiveSession = sessions.some(
+    (session) =>
+      !isPlanningTerminal(session.status) ||
+      session.feature_status === 'building' ||
+      session.feature_status === 'in_review',
+  )
   const canSubmit = projectReady && title.trim() !== '' && request.trim() !== '' && !busy
 
   useEffect(() => {
@@ -176,7 +181,7 @@ function ProjectPlanningSection({
                       </Link>
                     </td>
                     <td>
-                      <PlanningStatusBadge status={session.status} />
+                      <FeatureStatusBadge status={session.feature_status} />
                     </td>
                     <td className="mono">
                       {session.clarifier_provider} / {session.planner_provider} /{' '}

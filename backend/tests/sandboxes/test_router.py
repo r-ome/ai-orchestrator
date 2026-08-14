@@ -1167,7 +1167,8 @@ def test_publish_records_verified_git_and_pull_request_result(
         lambda **_kwargs: PullRequest(
             number=42,
             url="https://github.com/owner/repo/pull/42",
-            state="open",
+            state="closed",
+            merged_at="2026-08-14T00:00:00Z",
         ),
     )
 
@@ -1179,11 +1180,13 @@ def test_publish_records_verified_git_and_pull_request_result(
     assert body["last_pushed_commit"] == "b" * 40
     assert body["remote_branch_sha"] == "b" * 40
     assert body["pr_number"] == 42
+    assert body["pr_merged_at"] == "2026-08-14T00:00:00Z"
     publication = client.get(f"/sandboxes/{created['sandbox_id']}/publication")
     assert publication.status_code == 200
     assert publication.json()["remote_branch"] == "feature/add-sandbox-api"
     assert publication.json()["last_pushed_commit"] == "b" * 40
     assert publication.json()["pr_number"] == 42
+    assert publication.json()["pr_merged_at"] == "2026-08-14T00:00:00Z"
     manifest = read_manifest(get_controller_store(), created["sandbox_id"])
     assert manifest is not None
     assert manifest.operation == "publish"

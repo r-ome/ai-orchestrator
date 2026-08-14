@@ -73,6 +73,30 @@ def _publish(store: _Store) -> publish.PublishOutcome:
     )
 
 
+@pytest.mark.parametrize(
+    ("merged_at", "expected"),
+    [
+        ("2026-08-14T00:00:00Z", "2026-08-14T00:00:00Z"),
+        (None, None),
+        ("", None),
+        ({"unexpected": "value"}, None),
+    ],
+)
+def test_pull_request_payload_reads_only_a_nonempty_merged_timestamp(
+    merged_at: object, expected: str | None
+) -> None:
+    pull_request = publish.pull_request_from_payload(
+        {
+            "number": 42,
+            "html_url": "https://github.com/owner/repository/pull/42",
+            "state": "closed",
+            "merged_at": merged_at,
+        }
+    )
+
+    assert pull_request.merged_at == expected
+
+
 def test_publish_refuses_an_unreviewed_head_before_any_network_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

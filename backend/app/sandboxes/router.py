@@ -251,6 +251,7 @@ class PublishSandboxResponse(BaseModel):
     pr_number: int | None = None
     pr_url: str | None = None
     pr_state: str | None = None
+    pr_merged_at: str | None = None
 
 
 class SandboxPublicationResponse(BaseModel):
@@ -261,6 +262,7 @@ class SandboxPublicationResponse(BaseModel):
     pr_number: int | None = None
     pr_url: str | None = None
     pr_state: str | None = None
+    pr_merged_at: str | None = None
     last_error: str | None = None
     updated_at: str
 
@@ -950,6 +952,7 @@ def publish_sandbox(
                 pr_number=pull_request.number,
                 pr_url=pull_request.url,
                 pr_state=pull_request.state,
+                pr_merged_at=pull_request.merged_at,
                 last_error=None,
             )
             completed = read_manifest(controller_store, sandbox_id)
@@ -975,6 +978,7 @@ def publish_sandbox(
                 pr_number=publication.get("pr_number"),
                 pr_url=_optional_string(publication.get("pr_url")),
                 pr_state=_optional_string(publication.get("pr_state")),
+                pr_merged_at=_optional_string(publication.get("pr_merged_at")),
             )
     except SandboxAdmissionError as error:
         raise HTTPException(

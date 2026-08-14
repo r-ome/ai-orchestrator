@@ -11,6 +11,23 @@ export type PlanningStatus =
   | 'failed'
   | 'cancelled'
 
+export type FeatureStatus =
+  | 'clarifying'
+  | 'awaiting_confirmation'
+  | 'planning'
+  | 'under_review'
+  | 'plan_ready'
+  | 'building'
+  | 'blocked'
+  | 'in_review'
+  | 'approved'
+  | 'published'
+  | 'merged'
+  | 'abandoned'
+  | 'review_limit_reached'
+  | 'failed'
+  | 'cancelled'
+
 export type PlanningTurnState = 'idle' | 'running'
 
 export type PlanningRole = 'user' | 'clarifier' | 'planner' | 'reviewer' | 'system'
@@ -108,6 +125,7 @@ export interface PlanningSession {
   sandbox_id: string
   title: string
   status: PlanningStatus
+  feature_status: FeatureStatus
   turn_state: PlanningTurnState
   clarifier_provider: AgentProvider
   planner_provider: AgentProvider
