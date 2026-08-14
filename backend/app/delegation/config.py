@@ -17,6 +17,18 @@ class IntegrationReviewSettings:
     model: str
 
 
+@dataclass(frozen=True)
+class DriverSettings:
+    """The unattended driver's only budget.
+
+    A coding turn already caps itself at CODING_TURN_TIMEOUT_SECONDS, but a
+    delegation runs its items in sequence, so the total has no ceiling of its
+    own. This is the one the person who walked away actually cares about.
+    """
+
+    max_seconds: int
+
+
 # Each provider serves its own models, so the catalogues never overlap. Order
 # is best first; it is the order the model override dropdown shows.
 DEFAULT_CLAUDE_MODELS = (
@@ -113,6 +125,16 @@ def get_verification_settings() -> VerificationSettings:
 def get_delegator_settings() -> DelegatorSettings:
     return DelegatorSettings(
         model=os.getenv("DELEGATOR_MODEL", "claude-sonnet-5"),
+    )
+
+
+@lru_cache
+def get_driver_settings() -> DriverSettings:
+    return DriverSettings(
+        max_seconds=_positive_integer(
+            os.getenv("DELEGATION_DRIVER_MAX_SECONDS"),
+            7200,
+        ),
     )
 
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AgentProvider } from '../api/agents'
 import {
   clearItemRouting,
+  driveDelegation,
   fetchContext,
   fetchDelegation,
   fetchDelegations,
@@ -478,6 +479,18 @@ function RoutingControls({
  * status that actually gates it lives at the top of the panel, and the
  * dependency that gates it lives in another card.
  */
+/** Whether an unattended run has anything to do right now.
+ *
+ *  The backend refuses a drive on any other status, so this hides a control
+ *  that would only produce a 409. A halted delegation is deliberately excluded:
+ *  the resume card below is the correct next step, and offering both would
+ *  invite restarting the run without reading why it stopped. */
+function driveReady(delegation: DelegationView): boolean {
+  const status = delegation.delegation.status
+  if (status !== 'ready' && status !== 'running') return false
+  return delegation.ready.length > 0
+}
+
 function runBlockedReason(entry: WorkItemView, delegation: DelegationView): string | null {
   if (entry.state === 'running') return null
   if (entry.state === 'completed') return 'This work item is already complete.'
@@ -1154,6 +1167,64 @@ export function DelegationPanel({
                     projectName={projectName}
                     sessionId={sessionId}
                     kind="delegation"
+                    jobId={watching.jobId}
+                    title={watching.title}
+                    onFinished={() => {
+                      clearWatch()
+                      reload()
+                    }}
+                  />
+                )}
+              </div>
+            </section>
+          )}
+
+          {delegation && driveReady(delegation) && (
+            // The graph already knows the order and what is blocked, so this
+            // is the same work as clicking every Run button in turn — without
+            // needing somebody present between the items.
+            <section className="card">
+              <div className="card-header">
+                <h2>Run unattended</h2>
+                <span className="pill muted">
+                  {delegation.ready.length} ready
+                </span>
+              </div>
+              <div className="card-body">
+                <p>
+                  Runs every ready work item in wave order and merges each one
+                  that verifies. A failed item stops its dependents only —
+                  unrelated items keep going, and the delegation halts at the
+                  end with what failed.
+                </p>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={Boolean(busy) || watching !== null}
+                  onClick={() =>
+                    void watchTurn(
+                      'drive',
+                      'drive',
+                      `Unattended run: ${delegation.items.length} work items`,
+                      () =>
+                        driveDelegation(
+                          projectName,
+                          sessionId,
+                          delegation.delegation.id,
+                        ),
+                    )
+                  }
+                >
+                  {watching?.kind === 'drive'
+                    ? 'Running work items…'
+                    : `Run all ${delegation.items.length} work items`}
+                </button>
+
+                {watching?.kind === 'drive' && (
+                  <TurnConsole
+                    projectName={projectName}
+                    sessionId={sessionId}
+                    kind="drive"
                     jobId={watching.jobId}
                     title={watching.title}
                     onFinished={() => {

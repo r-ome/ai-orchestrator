@@ -20,7 +20,7 @@ from app.planning.runner import LABEL_ROLE, LABEL_SESSION_ID
 from app.tasks.runner import LABEL_TASK_ID
 
 
-TURN_KINDS = ("context", "delegation", "run", "review", "change")
+TURN_KINDS = ("context", "delegation", "run", "review", "change", "drive")
 
 #: The event kind each phase writes its progress under.
 EVENT_KINDS: Mapping[str, str] = {
@@ -29,6 +29,7 @@ EVENT_KINDS: Mapping[str, str] = {
     "run": "run.progress",
     "review": "review.progress",
     "change": "change.progress",
+    "drive": "drive.progress",
 }
 
 #: A progress step that means the turn is over, either way. A work-item run
@@ -48,6 +49,10 @@ class TurnLocator:
 
     event_kind: str
     labels: dict[str, str]
+    #: False for a turn that owns no container of its own. An empty label set
+    #: would otherwise filter on `controller-managed=true` alone and stream
+    #: every container on the host, including other sandboxes' work.
+    streams_containers: bool = True
 
     def filters(self) -> dict[str, Any]:
         labels = [f"{LABEL_CONTROLLER_MANAGED}=true"]
@@ -97,6 +102,16 @@ def locate(
                 LABEL_ROLE: "delegator",
             },
         )
+
+    if kind == "drive":
+        # The unattended driver runs no container itself: it starts one coding
+        # turn per item, each with its own task id, and each already readable
+        # under kind "run". So this streams the driver's own milestones only —
+        # which item started, how it ended, and why the drive stopped.
+        delegation = store.delegation(job_id)
+        if delegation is None or str(delegation["session_id"]) != session_id:
+            raise TurnNotFound("Delegation was not found")
+        return TurnLocator(event_kind, {}, streams_containers=False)
 
     if kind == "run":
         run = store.work_item_run(job_id)
@@ -151,6 +166,8 @@ def running_containers(
     locator: TurnLocator,
 ) -> list[Any]:
     """Containers currently running this turn. Empty when none are alive."""
+    if not locator.streams_containers:
+        return []
     try:
         return docker_client.containers.list(filters=locator.filters())
     except DockerException:

@@ -5,7 +5,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app import jobs
 from app.controller.store import ControllerStore, get_controller_store
+from app.docker_client import get_docker_client
 from app.main import app
 
 
@@ -220,10 +222,64 @@ def test_packet_route_returns_the_inspectable_run_input(
     assert response.json()["verification"][0]["command"] == "npm run build"
 
 
+def test_drive_route_accepts_and_hands_the_whole_graph_to_a_job(
+    store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submitted: list[str] = []
+    monkeypatch.setattr(
+        jobs,
+        "submit_docker_job",
+        lambda work, *, name, on_setup_error: submitted.append(name),
+    )
+    client, path = _client(store)
+    app.dependency_overrides[get_docker_client] = lambda: object()
+    try:
+        created = client.post(
+            path,
+            json={"items": [_item("a"), _item("b", dependencies=["a"])]},
+        ).json()
+        delegation_id = created["delegation"]["id"]
+        accepted = client.post(f"{path}/{delegation_id}/drive")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert accepted.status_code == 202
+    assert accepted.json()["kind"] == "drive"
+    assert accepted.json()["job_id"] == delegation_id
+    # One ready item now; 'b' is blocked until 'a' merges.
+    assert "1 ready work item(s)" in accepted.json()["detail"]
+    assert submitted == [f"drive:{delegation_id}"]
+
+
+def test_drive_route_refuses_a_settled_delegation(
+    store: ControllerStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        jobs,
+        "submit_docker_job",
+        lambda work, *, name, on_setup_error: pytest.fail("job must not start"),
+    )
+    client, path = _client(store)
+    app.dependency_overrides[get_docker_client] = lambda: object()
+    try:
+        created = client.post(path, json={"items": [_item("a")]}).json()
+        delegation_id = created["delegation"]["id"]
+        client.post(f"{path}/{delegation_id}/abandon")
+        refused = client.post(f"{path}/{delegation_id}/drive")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert refused.status_code == 409
+    assert "abandoned" in refused.json()["detail"]
+
+
 def test_execution_routes_are_project_session_and_delegation_scoped() -> None:
     paths = app.openapi()["paths"]
     prefix = "/projects/{project_name}/planning/sessions/{session_id}/delegations"
 
+    assert f"{prefix}/{{delegation_id}}/drive" in paths
     assert f"{prefix}/{{delegation_id}}/items/{{key}}/run" in paths
     assert f"{prefix}/{{delegation_id}}/runs/{{run_id}}/accept" in paths
     assert f"{prefix}/{{delegation_id}}/runs/{{run_id}}/reject" in paths

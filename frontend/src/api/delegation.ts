@@ -221,7 +221,7 @@ export interface RunOutcome {
   routing_warning: string | null
 }
 
-export type TurnKind = 'context' | 'delegation' | 'run' | 'review' | 'change'
+export type TurnKind = 'context' | 'delegation' | 'run' | 'review' | 'change' | 'drive'
 
 /** A turn the backend claimed and now runs in the background.
  *
@@ -325,6 +325,23 @@ export function startWorkItem(
   return postJson<AcceptedJob>(
     `${delegationPath(projectName, sessionId)}/${encodeURIComponent(delegationId)}` +
       `/items/${encodeURIComponent(key)}/run`,
+    {},
+  )
+}
+
+/** Run every ready work item to the end, unattended.
+ *
+ *  The graph decides what runs and in what order, and a failed item's
+ *  dependents stay blocked rather than being offered. The driver stops when
+ *  nothing is ready or DELEGATION_DRIVER_MAX_SECONDS elapses, then halts the
+ *  delegation with the reason. Follow it on the delegation's events. */
+export function driveDelegation(
+  projectName: string,
+  sessionId: string,
+  delegationId: string,
+) {
+  return postJson<AcceptedJob>(
+    `${delegationPath(projectName, sessionId)}/${encodeURIComponent(delegationId)}/drive`,
     {},
   )
 }

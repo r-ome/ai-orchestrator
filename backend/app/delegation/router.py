@@ -10,11 +10,14 @@ from app.agents.service import AgentOperationError
 from app.controller.store import ControllerStore, get_controller_store
 from app.delegation.config import (
     DelegatorSettings,
+    DriverSettings,
     IntegrationReviewSettings,
     get_delegator_settings,
+    get_driver_settings,
     get_integration_review_settings,
     get_verification_settings,
 )
+from app.delegation.driver import drive_delegation
 from app.delegation.change_requests import (
     claim_change_request,
     execute_change_request,
@@ -215,6 +218,101 @@ def start_delegation(
             project_name=project_name,
         )
     )
+
+
+@router.post(
+    "/{delegation_id}/drive",
+    response_model=AcceptedJob,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def drive(
+    project_name: str,
+    session_id: str,
+    delegation_id: str,
+    docker_client: Annotated[DockerClient, Depends(get_docker_client)],
+    settings: Annotated[CodingTurnSettings, Depends(get_coding_turn_settings)],
+    verification_settings: Annotated[
+        VerificationSettings,
+        Depends(get_verification_settings),
+    ],
+    driver_settings: Annotated[DriverSettings, Depends(get_driver_settings)],
+    store: StoreDep,
+) -> AcceptedJob:
+    """Run every ready work item to the end, unattended.
+
+    This outlives an HTTP request by more than any single turn does: it walks
+    the whole graph, and each item can wait CODING_TURN_TIMEOUT_SECONDS. So it
+    answers 202 immediately and reports progress on the delegation's events,
+    the same way `run_work_item` does.
+
+    `docker_client` is resolved but unused, so an unreachable Docker answers
+    503 here instead of failing inside the thread. The job builds its own.
+    """
+    current = _response(
+        lambda: view(
+            store,
+            delegation_id,
+            session_id=session_id,
+            project_name=project_name,
+        )
+    )
+    if current.delegation.status not in {
+        DelegationStatus.READY,
+        DelegationStatus.RUNNING,
+    }:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Delegation is '{current.delegation.status.value}' and cannot be driven",
+        )
+    jobs.submit_docker_job(
+        lambda client: drive_delegation(
+            client,
+            store,
+            delegation_id,
+            settings=settings,
+            driver_settings=driver_settings,
+            verification_settings=verification_settings,
+            session_id=session_id,
+            project_name=project_name,
+        ),
+        name=f"drive:{delegation_id}",
+        on_setup_error=lambda detail: _halt_undriveable(
+            store,
+            delegation_id,
+            detail,
+            session_id=session_id,
+            project_name=project_name,
+        ),
+    )
+    return AcceptedJob(
+        job_id=delegation_id,
+        kind="drive",
+        detail=(
+            f"Driving {len(current.ready)} ready work item(s) with a "
+            f"{driver_settings.max_seconds}s cap"
+        ),
+    )
+
+
+def _halt_undriveable(
+    store: ControllerStore,
+    delegation_id: str,
+    detail: str,
+    *,
+    session_id: str,
+    project_name: str,
+) -> None:
+    try:
+        transition(
+            store,
+            delegation_id,
+            DelegationStatus.HALTED,
+            error=f"driver could not start: {detail}",
+            session_id=session_id,
+            project_name=project_name,
+        )
+    except DelegationOperationError:
+        return
 
 
 @router.post("/{delegation_id}/halt", response_model=DelegationView)
