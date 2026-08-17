@@ -19,6 +19,10 @@ class PlanningSettings:
     codex_reasoning_effort: str
     turn_retries: int = 2
     turn_retry_backoff_seconds: int = 5
+    #: Caps the log a finished turn reads back. A turn that loops can print
+    #: without bound, and the whole log is held in memory before it is
+    #: summarised. Coding turns already cap the same way.
+    max_log_bytes: int = 2_000_000
 
 
 #: The reasoning efforts the planning dialog offers for a codex reviewer.
@@ -52,6 +56,7 @@ def get_planning_settings() -> PlanningSettings:
         claude_model=os.getenv("PLANNING_CLAUDE_MODEL", "opus"),
         codex_model=os.getenv("PLANNING_CODEX_MODEL", "gpt-5.6-terra"),
         codex_reasoning_effort=os.getenv("PLANNING_CODEX_REASONING_EFFORT", "high"),
+        max_log_bytes=_integer("PLANNING_MAX_LOG_BYTES", 2_000_000),
     )
 
 

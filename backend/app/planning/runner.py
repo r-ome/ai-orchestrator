@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from docker.errors import DockerException
+from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import ReadTimeout
 
 from app.agents.config import get_agent_settings
@@ -107,14 +108,16 @@ def run_planning_turn(
         container.start()
         try:
             status = container.wait(timeout=settings.turn_timeout_seconds)
-        except ReadTimeout as error:
-            container.kill()
+        except (ReadTimeout, RequestsConnectionError) as error:
+            # A dropped connection while waiting means the same thing to the
+            # operator as a read timeout: the turn never reported a result.
+            _kill(container)
             raise PlanningTurnError(
                 504,
                 f"{request.role.value} turn timed out after "
                 f"{settings.turn_timeout_seconds} seconds",
             ) from error
-        raw_output = _text(container.logs())
+        raw_output = _text(container.logs(), settings.max_log_bytes)
         exit_code = _exit_code(status)
         if exit_code != 0:
             raise PlanningTurnError(
@@ -151,6 +154,19 @@ def _failure_summary(raw_output: str) -> str:
     # A provider often prints the same error twice. The reader needs it once.
     chosen = list(dict.fromkeys(flagged or tail))[-_SUMMARY_LINES:]
     return " ".join(chosen)[-_SUMMARY_LIMIT:]
+
+
+def _kill(container: Any) -> None:
+    """Stops a timed-out turn without masking the timeout.
+
+    The caller raises a 504 straight after this returns. An exception raised
+    here would replace that 504 with a Docker error, which tells the operator
+    nothing about why the turn ended. Same reasoning as _remove_container.
+    """
+    try:
+        container.kill()
+    except DockerException:
+        pass
 
 
 def _remove_container(container: Any) -> None:
@@ -359,5 +375,12 @@ def _exit_code(status: Any) -> int:
     return int(status)
 
 
-def _text(value: bytes | str) -> str:
-    return value.decode(errors="replace") if isinstance(value, bytes) else value
+def _text(value: bytes | str, max_bytes: int) -> str:
+    """Decode a turn's log, keeping only its final max_bytes.
+
+    The end is kept because a failing turn explains itself immediately before
+    it exits, which is the same reason _failure_summary reads from the end.
+    """
+    if isinstance(value, bytes):
+        return value[-max_bytes:].decode(errors="replace")
+    return value[-max_bytes:]

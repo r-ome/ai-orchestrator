@@ -1,8 +1,11 @@
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from docker.errors import DockerException
+from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import ReadTimeout
 
 from app.agents.models import AgentProvider
@@ -25,10 +28,12 @@ class _StubContainer:
         output: bytes = b'{"message": "ok"}',
         status: int = 0,
         wait_error: Exception | None = None,
+        kill_error: Exception | None = None,
     ) -> None:
         self.output = output
         self.status = status
         self.wait_error = wait_error
+        self.kill_error = kill_error
         self.started = False
         self.killed = False
         self.removed = False
@@ -46,6 +51,8 @@ class _StubContainer:
 
     def kill(self) -> None:
         self.killed = True
+        if self.kill_error is not None:
+            raise self.kill_error
 
     def remove(self, *, force: bool) -> None:
         assert force is True
@@ -275,6 +282,50 @@ def test_timeout_kills_container_and_raises_504(settings: PlanningSettings) -> N
 
     assert error.value.status_code == 504
     assert container.killed is True
+
+
+def test_dropped_connection_while_waiting_is_reported_as_a_timeout(
+    settings: PlanningSettings,
+) -> None:
+    """A lost connection tells the operator the same thing as a read timeout.
+
+    Either way the turn never reported a result. Letting the requests error
+    escape instead would surface as an unhandled 500.
+    """
+    container = _StubContainer(wait_error=RequestsConnectionError("connection lost"))
+    docker_client = _StubDockerClient([container])
+
+    with pytest.raises(PlanningTurnError) as error:
+        run_planning_turn(docker_client, settings, _request())
+
+    assert error.value.status_code == 504
+    assert container.killed is True
+
+
+def test_a_failed_kill_does_not_mask_the_timeout(settings: PlanningSettings) -> None:
+    container = _StubContainer(
+        wait_error=ReadTimeout("timed out"),
+        kill_error=DockerException("daemon is gone"),
+    )
+    docker_client = _StubDockerClient([container])
+
+    with pytest.raises(PlanningTurnError) as error:
+        run_planning_turn(docker_client, settings, _request())
+
+    assert error.value.status_code == 504
+    assert container.removed is True
+
+
+def test_log_is_capped_to_max_log_bytes(settings: PlanningSettings) -> None:
+    """A turn that loops can print without bound, and the log is held in memory."""
+    payload = b'{"message": "ok"}'
+    capped = replace(settings, max_log_bytes=len(payload))
+    container = _StubContainer(output=b"x" * 5000 + payload)
+    docker_client = _StubDockerClient([container])
+
+    result = run_planning_turn(docker_client, capped, _request())
+
+    assert result.raw_output == payload.decode()
 
 
 def test_container_is_removed_when_payload_parsing_raises(settings: PlanningSettings) -> None:
