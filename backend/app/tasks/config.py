@@ -14,7 +14,6 @@ class CodingTurnSettings:
 
     timeout_seconds: int
     memory: str
-    pids_limit: int
     max_log_bytes: int
     claude_model: str
     codex_model: str
@@ -33,7 +32,6 @@ def get_coding_turn_settings() -> CodingTurnSettings:
             default=1800,
         ),
         memory=os.getenv("CODING_TURN_MEMORY", "4g"),
-        pids_limit=_positive_integer(os.getenv("CODING_TURN_PIDS_LIMIT"), default=512),
         max_log_bytes=_positive_integer(
             os.getenv("CODING_TURN_MAX_LOG_BYTES"),
             default=2_000_000,

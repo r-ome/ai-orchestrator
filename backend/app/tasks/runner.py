@@ -15,16 +15,12 @@ import json
 import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from time import monotonic
 from typing import Any
-
-from docker.errors import DockerException
-from requests.exceptions import ConnectionError as RequestsConnectionError
-from requests.exceptions import ReadTimeout
 
 from app.agents.config import get_agent_settings
 from app.agents.models import AgentProvider
 from app.agents.service import credential_volume
+from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
 from app.planning.runner import extract_payload
 from app.previews.service import LABEL_CONTROLLER_MANAGED, LABEL_KIND
 from app.tasks.config import CodingTurnSettings
@@ -144,25 +140,15 @@ def run_coding_turn(
     if database_runtime is not None:
         environment.update(database_runtime.environment)
         volumes.update(database_runtime.volumes)
-    container = None
-    started_at = monotonic()
-    try:
-        container = docker_client.containers.create(
+    result = run_hardened(
+        docker_client,
+        HardenedRunSpec(
             image=provider_config.image,
             command=_command(
                 provider,
                 resolved_model,
                 settings.codex_reasoning_effort,
             ),
-            auto_remove=False,
-            init=True,
-            # The container is the boundary, not the provider's own sandbox:
-            # read-only root, no capabilities, no new privileges, and only the
-            # sandbox volume writable. Keep in step with app/planning/runner.py.
-            read_only=True,
-            cap_drop=["ALL"],
-            security_opt=["no-new-privileges:true"],
-            pids_limit=settings.pids_limit,
             mem_limit=settings.memory,
             working_dir=CODING_WORKSPACE,
             environment=environment,
@@ -172,32 +158,27 @@ def run_coding_turn(
                 LABEL_TASK_ID: task_id,
             },
             volumes=volumes,
-            tmpfs={"/tmp": "rw,nosuid,size=512m"},
-        )
-        if database_runtime is not None and database_runtime.engine != "sqlite":
-            docker_client.networks.get(database_runtime.network_name).connect(container)
-        container.start()
-        timed_out = False
-        exit_code: int | None = None
-        try:
-            status = container.wait(timeout=settings.timeout_seconds)
-            exit_code = _exit_code(status)
-        except (ReadTimeout, RequestsConnectionError):
-            _kill(container)
-            timed_out = True
-        stdout = _logs(container, settings.max_log_bytes, stderr=False)
-        stderr = _logs(container, settings.max_log_bytes, stderr=True)
-    finally:
-        _remove(container)
+            timeout_seconds=settings.timeout_seconds,
+            max_log_bytes=settings.max_log_bytes,
+            tmpfs_size="512m",
+            egress=Egress.PROVIDER,
+            database_network=(
+                database_runtime.network_name
+                if database_runtime is not None and database_runtime.engine != "sqlite"
+                else None
+            ),
+            capture=Capture.SEPARATE,
+        ),
+    )
 
     return _result(
         provider=provider,
         model=resolved_model,
-        stdout=stdout,
-        stderr=stderr,
-        exit_code=exit_code,
-        timed_out=timed_out,
-        measured_duration_ms=round((monotonic() - started_at) * 1000),
+        stdout=result.stdout,
+        stderr=result.stderr,
+        exit_code=result.exit_code if result.exit_code is not None else 1,
+        timed_out=result.timed_out,
+        measured_duration_ms=result.duration_ms,
     )
 
 
@@ -591,39 +572,6 @@ def _reported_model(envelope: Mapping[str, Any] | None) -> str | None:
 
 def _integer(value: Any) -> int | None:
     return int(value) if isinstance(value, int) and not isinstance(value, bool) else None
-
-
-def _kill(container: Any) -> None:
-    try:
-        container.kill()
-    except DockerException:
-        pass
-
-
-def _logs(container: Any, max_bytes: int, *, stderr: bool) -> str:
-    try:
-        raw = container.logs(stdout=not stderr, stderr=stderr)
-    except DockerException:
-        return ""
-    if isinstance(raw, bytes):
-        return raw[-max_bytes:].decode("utf-8", errors="replace")
-    return str(raw)[-max_bytes:]
-
-
-def _remove(container: Any) -> None:
-    """Removes the container without masking why the turn failed."""
-    if container is None:
-        return
-    try:
-        container.remove(force=True)
-    except DockerException:
-        pass
-
-
-def _exit_code(status: Any) -> int:
-    if isinstance(status, dict):
-        return int(status.get("StatusCode", 1))
-    return int(status)
 
 
 def run_with_repair(

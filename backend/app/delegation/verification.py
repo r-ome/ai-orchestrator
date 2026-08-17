@@ -1,14 +1,12 @@
 """Run controller-confirmed verification commands inside the sandbox volume."""
 
 import shlex
-import time
 from dataclasses import dataclass
 from typing import Any
 
 from docker.errors import DockerException
-from requests.exceptions import ConnectionError as RequestsConnectionError
-from requests.exceptions import ReadTimeout
 
+from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
 from app.delegation.packet import ResolvedVerification
 from app.controller.store import ControllerStore
 from app.sandboxes.database import (
@@ -23,7 +21,6 @@ class VerificationSettings:
     image: str
     timeout_seconds: int
     memory: str
-    pids_limit: int
     max_output_bytes: int
 
 
@@ -92,100 +89,59 @@ def _run_command(
     if not command:
         raise VerificationOperationError(409, "Confirmed verification command is empty")
 
-    container = None
-    started = time.monotonic()
-    timed_out = False
-    exit_code: int | None = None
-    output = ""
     try:
         environment = {"HOME": "/tmp/home", "TERM": "dumb"}
         volumes = {volume_name: {"bind": "/workspace", "mode": "rw"}}
-        network_arguments: dict[str, Any] = {"network_mode": "none"}
         if database_runtime is not None:
             environment.update(database_runtime.environment)
             volumes.update(database_runtime.volumes)
-            if database_runtime.engine != "sqlite":
-                network_arguments = {"network": database_runtime.network_name}
-        container = docker_client.containers.create(
-            image=settings.image,
-            command=command,
-            entrypoint=[],
-            auto_remove=False,
-            init=True,
-            read_only=True,
-            cap_drop=["ALL"],
-            security_opt=["no-new-privileges:true"],
-            # Legacy and SQLite verification uses `network_mode="none"` rather
-            # than `network_disabled=True`, so localhost still resolves. A
-            # server-backed sandbox replaces this with its internal database
-            # network. Neither mode has egress.
-            **network_arguments,
-            pids_limit=settings.pids_limit,
-            mem_limit=settings.memory,
-            working_dir="/workspace",
-            environment=environment,
-            labels={
-                "orchestrator.managed": "true",
-                "orchestrator.kind": "delegation-verification",
-            },
-            volumes=volumes,
-            tmpfs={"/tmp": "rw,nosuid,size=256m"},
-        )
-        container.start()
-        try:
-            status = container.wait(timeout=settings.timeout_seconds)
-            value = status.get("StatusCode") if isinstance(status, dict) else status
-            exit_code = int(value) if value is not None else None
-        except (ReadTimeout, RequestsConnectionError):
-            timed_out = True
-            _kill(container)
-        raw = container.logs(stdout=True, stderr=True)
-        encoded = raw if isinstance(raw, bytes) else str(raw or "").encode()
-        output = encoded[-settings.max_output_bytes :].decode(
-            "utf-8",
-            errors="replace",
+        result = run_hardened(
+            docker_client,
+            HardenedRunSpec(
+                image=settings.image,
+                command=command,
+                entrypoint=[],
+                mem_limit=settings.memory,
+                working_dir="/workspace",
+                environment=environment,
+                labels={
+                    "orchestrator.managed": "true",
+                    "orchestrator.kind": "delegation-verification",
+                },
+                volumes=volumes,
+                timeout_seconds=settings.timeout_seconds,
+                max_log_bytes=settings.max_output_bytes,
+                egress=Egress.DENIED,
+                database_network=(
+                    database_runtime.network_name
+                    if database_runtime is not None and database_runtime.engine != "sqlite"
+                    else None
+                ),
+                capture=Capture.COMBINED,
+            ),
         )
     except DockerException as error:
         raise VerificationOperationError(
             503,
             f"Could not run verification command '{entry.command}': {error}",
         ) from error
-    finally:
-        _remove(container)
 
-    duration_ms = int((time.monotonic() - started) * 1000)
-    if timed_out:
+    if result.timed_out:
         detail = f"Timed out after {settings.timeout_seconds} seconds"
-    elif exit_code == 0:
+    elif result.exit_code == 0:
         detail = "Passed"
-    elif exit_code is None:
+    elif result.exit_code is None:
         detail = "Container returned no exit status"
     else:
-        detail = f"Exited with status {exit_code}"
+        detail = f"Exited with status {result.exit_code}"
     return {
         "command_kind": entry.command_kind,
         "command": entry.command,
         "reason": entry.reason,
-        "passed": not timed_out and exit_code == 0,
-        "exit_code": exit_code,
-        "timed_out": timed_out,
-        "duration_ms": duration_ms,
+        "passed": not result.timed_out and result.exit_code == 0,
+        "exit_code": result.exit_code,
+        "timed_out": result.timed_out,
+        "duration_ms": result.duration_ms,
         "detail": detail,
-        "output": output,
+        "output": result.stdout,
     }
-
-
-def _kill(container: Any) -> None:
-    try:
-        container.kill()
-    except DockerException:
-        pass
-
-
-def _remove(container: Any) -> None:
-    if container is None:
-        return
-    try:
-        container.remove(force=True)
-    except DockerException:
-        pass

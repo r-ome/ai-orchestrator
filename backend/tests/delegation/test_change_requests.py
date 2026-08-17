@@ -20,7 +20,6 @@ from app.tasks.models import Task, TaskRunResponse, TaskStatus, TurnUsageView
 SETTINGS = CodingTurnSettings(
     timeout_seconds=900,
     memory="4g",
-    pids_limit=512,
     max_log_bytes=2_000_000,
     claude_model="claude-sonnet-5",
     codex_model="gpt-5.6-terra",

@@ -40,7 +40,6 @@ MODEL = os.getenv("HEADLESS_TEST_MODEL", DEFAULT_MODEL)
 SETTINGS = CodingTurnSettings(
     timeout_seconds=900,
     memory="4g",
-    pids_limit=512,
     max_log_bytes=2_000_000,
     claude_model=MODEL if PROVIDER is AgentProvider.CLAUDE else "claude-sonnet-5",
     codex_model=MODEL if PROVIDER is AgentProvider.CODEX else "gpt-5.6-terra",

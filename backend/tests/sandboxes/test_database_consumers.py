@@ -273,7 +273,6 @@ def test_verification_container_receives_the_sandbox_sqlite_connection(
             image="verification:latest",
             timeout_seconds=60,
             memory="2g",
-            pids_limit=128,
             max_output_bytes=1024,
         ),
         volume_name=workspace_volume(sandbox_id),

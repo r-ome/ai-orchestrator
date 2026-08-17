@@ -46,8 +46,16 @@ The compact per-session record of every unresolved finding and its current state
 **Plan Spec**:
 The final planning-session document with scope, approach, risks, open questions, and reviewer outcome.
 
+**Hardened run**:
+One execution of one command in one short-lived container under the security
+boundary ADR-0006 sets. The boundary is a constant of the run, never an argument
+to it.
+_Avoid_: job, exec, container run
+
 **Turn**:
 One model invocation in one short-lived container.
+A Turn is a **Hardened run** that invokes a model. A verification command is a
+**Hardened run** that does not.
 
 **Preview proposal**:
 A non-executable suggestion for running the current sandbox, including protected-file changes and editable settings.

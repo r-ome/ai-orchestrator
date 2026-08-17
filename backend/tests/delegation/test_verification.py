@@ -8,7 +8,6 @@ SETTINGS = VerificationSettings(
     image="verification-image",
     timeout_seconds=60,
     memory="2g",
-    pids_limit=128,
     max_output_bytes=20,
 )
 

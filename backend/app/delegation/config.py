@@ -110,10 +110,6 @@ def get_verification_settings() -> VerificationSettings:
             600,
         ),
         memory=os.getenv("DELEGATION_VERIFICATION_MEMORY", "2g"),
-        pids_limit=_positive_integer(
-            os.getenv("DELEGATION_VERIFICATION_PIDS_LIMIT"),
-            512,
-        ),
         max_output_bytes=_positive_integer(
             os.getenv("DELEGATION_VERIFICATION_MAX_OUTPUT_BYTES"),
             100_000,

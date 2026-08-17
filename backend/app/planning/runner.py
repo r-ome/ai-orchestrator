@@ -4,13 +4,10 @@ import shlex
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from docker.errors import DockerException
-from requests.exceptions import ConnectionError as RequestsConnectionError
-from requests.exceptions import ReadTimeout
-
 from app.agents.config import get_agent_settings
 from app.agents.models import AgentProvider
 from app.agents.service import credential_volume
+from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
 from app.planning.config import PlanningSettings
 from app.planning.models import PlanningRole
 from app.previews.service import LABEL_CONTROLLER_MANAGED, LABEL_KIND
@@ -78,18 +75,11 @@ def run_planning_turn(
         LABEL_SESSION_ID: request.session_id,
         LABEL_ROLE: request.role.value,
     }
-    container = None
-    raw_output = ""
-    try:
-        container = docker_client.containers.create(
+    result = run_hardened(
+        docker_client,
+        HardenedRunSpec(
             image=provider.image,
             command=command,
-            auto_remove=False,
-            init=True,
-            read_only=True,
-            cap_drop=["ALL"],
-            security_opt=["no-new-privileges:true"],
-            pids_limit=512,
             mem_limit=settings.planning_memory,
             working_dir=PLANNING_WORKSPACE,
             environment={
@@ -103,36 +93,32 @@ def run_planning_turn(
                 request.project_volume: {"bind": PLANNING_WORKSPACE, "mode": "ro"},
                 credential.name: {"bind": PLANNING_CREDENTIALS, "mode": "rw"},
             },
-            tmpfs={"/tmp": "rw,nosuid,size=256m"},
+            timeout_seconds=settings.turn_timeout_seconds,
+            max_log_bytes=settings.max_log_bytes,
+            egress=Egress.PROVIDER,
+            capture=Capture.COMBINED,
+        ),
+    )
+    if result.timed_out:
+        raise PlanningTurnError(
+            504,
+            f"{request.role.value} turn timed out after "
+            f"{settings.turn_timeout_seconds} seconds",
         )
-        container.start()
-        try:
-            status = container.wait(timeout=settings.turn_timeout_seconds)
-        except (ReadTimeout, RequestsConnectionError) as error:
-            # A dropped connection while waiting means the same thing to the
-            # operator as a read timeout: the turn never reported a result.
-            _kill(container)
-            raise PlanningTurnError(
-                504,
-                f"{request.role.value} turn timed out after "
-                f"{settings.turn_timeout_seconds} seconds",
-            ) from error
-        raw_output = _text(container.logs(), settings.max_log_bytes)
-        exit_code = _exit_code(status)
-        if exit_code != 0:
-            raise PlanningTurnError(
-                502,
-                f"{request.role.value} turn exited with status {exit_code}: "
-                f"{_failure_summary(raw_output)}",
-                raw_output=raw_output,
-            )
-        return TurnResult(
+    raw_output = result.stdout
+    exit_code = result.exit_code if result.exit_code is not None else 1
+    if exit_code != 0:
+        raise PlanningTurnError(
+            502,
+            f"{request.role.value} turn exited with status {exit_code}: "
+            f"{_failure_summary(raw_output)}",
             raw_output=raw_output,
-            payload=extract_payload(raw_output, provider=request.provider),
-            model=turn_model(request.provider, settings),
         )
-    finally:
-        _remove_container(container)
+    return TurnResult(
+        raw_output=raw_output,
+        payload=extract_payload(raw_output, provider=request.provider),
+        model=turn_model(request.provider, settings),
+    )
 
 
 def _failure_summary(raw_output: str) -> str:
@@ -154,34 +140,6 @@ def _failure_summary(raw_output: str) -> str:
     # A provider often prints the same error twice. The reader needs it once.
     chosen = list(dict.fromkeys(flagged or tail))[-_SUMMARY_LINES:]
     return " ".join(chosen)[-_SUMMARY_LIMIT:]
-
-
-def _kill(container: Any) -> None:
-    """Stops a timed-out turn without masking the timeout.
-
-    The caller raises a 504 straight after this returns. An exception raised
-    here would replace that 504 with a Docker error, which tells the operator
-    nothing about why the turn ended. Same reasoning as _remove_container.
-    """
-    try:
-        container.kill()
-    except DockerException:
-        pass
-
-
-def _remove_container(container: Any) -> None:
-    """Removes the turn's container without masking why the turn failed.
-
-    This runs in a finally block, so an exception raised here would replace the
-    timeout or non-zero exit that actually ended the turn. Mirrors
-    _remove_created_container in app/agents/service.py.
-    """
-    if container is None:
-        return
-    try:
-        container.remove(force=True)
-    except DockerException:
-        pass
 
 
 def run_turn_with_repair(
@@ -367,20 +325,3 @@ def _repair_prompt(original: str, error: str, raw_output: str) -> str:
             "Reply again with one JSON object and nothing else.",
         ]
     )
-
-
-def _exit_code(status: Any) -> int:
-    if isinstance(status, dict):
-        return int(status.get("StatusCode", 1))
-    return int(status)
-
-
-def _text(value: bytes | str, max_bytes: int) -> str:
-    """Decode a turn's log, keeping only its final max_bytes.
-
-    The end is kept because a failing turn explains itself immediately before
-    it exits, which is the same reason _failure_summary reads from the end.
-    """
-    if isinstance(value, bytes):
-        return value[-max_bytes:].decode(errors="replace")
-    return value[-max_bytes:]

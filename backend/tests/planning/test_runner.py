@@ -46,7 +46,7 @@ class _StubContainer:
             raise self.wait_error
         return {"StatusCode": self.status}
 
-    def logs(self) -> bytes:
+    def logs(self, **_kwargs: Any) -> bytes:
         return self.output
 
     def kill(self) -> None:

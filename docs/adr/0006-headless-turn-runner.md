@@ -29,6 +29,13 @@ exit when every tool item failed.
 
 ## Consequences
 
+The hardening this ADR requires has one implementation, `app/containers/hardened.py`.
+The read-only root, dropped capabilities, no-new-privileges policy, process
+limit, forced init, and forced removal are constants inside that module rather
+than arguments, so a caller cannot weaken them. A test fails if any other module
+names `security_opt`. Sites that predate the module are listed in that test and
+are removed from the list as they migrate.
+
 The controller can measure failed and successful attempts. It can also keep
 provider claims separate from git and verification evidence.
 
