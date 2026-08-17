@@ -36,7 +36,9 @@ const PILL_CLASSES: Record<PlanningStatus, string> = {
 
 function PlanningStatusBadge({ status }: { status: PlanningStatus }) {
   return (
-    <span className={`pill ${PILL_CLASSES[status]}`}>
+    <span
+      className={`pill planning-status-badge planning-status-${status} ${PILL_CLASSES[status]}`}
+    >
       <span aria-hidden="true">{ICONS[status]}</span> {LABELS[status]}
     </span>
   )

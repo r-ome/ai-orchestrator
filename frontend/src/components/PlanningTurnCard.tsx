@@ -43,6 +43,12 @@ function turnLabel(message: PlanningMessage): string {
   return 'System'
 }
 
+function turnRole(message: PlanningMessage): string {
+  if (message.role === 'planner') return 'planner'
+  if (message.role === 'reviewer') return 'reviewer'
+  return 'system'
+}
+
 /**
  * One planner, reviewer or system turn, summarised.
  *
@@ -65,7 +71,17 @@ function PlanningTurnCard({
   return (
     <Wrapper className={bare ? 'turn-block' : 'card turn-card'}>
       <div className={bare ? 'turn-block-header' : 'card-header'}>
-        <h3>{turnLabel(message)}</h3>
+        <div className="planning-turn-identity">
+          <span className={`planning-turn-mark planning-turn-mark-${message.role}`} aria-hidden="true">
+            {message.role === 'planner' ? '✦' : message.role === 'reviewer' ? '◌' : '·'}
+          </span>
+          <div>
+            <h3>{turnLabel(message)}</h3>
+            <span className="mono planning-turn-model">
+              {turnRole(message)} · {message.model || provider}
+            </span>
+          </div>
+        </div>
         {isReviewer && message.approved !== null && (
           <span className={`pill ${message.approved ? 'ok' : 'warn'}`}>
             <span aria-hidden="true">{message.approved ? '✓' : '!'}</span>{' '}

@@ -183,7 +183,7 @@ function ProjectPlanningSection({
 
   return (
     <>
-      <section id="planning" className="card">
+      <section id="planning" className="card project-planning-section">
         <div className="card-header">
           <div className="card-header-title">
             <h2>Planning</h2>

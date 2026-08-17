@@ -57,7 +57,7 @@ const PILL_CLASSES: Record<FeatureStatus, string> = {
 
 function FeatureStatusBadge({ status }: { status: FeatureStatus }) {
   return (
-    <span className={`pill ${PILL_CLASSES[status]}`}>
+    <span className={`pill feature-status-badge ${PILL_CLASSES[status]}`}>
       <span aria-hidden="true">{ICONS[status]}</span> {LABELS[status]}
     </span>
   )

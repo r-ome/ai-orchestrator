@@ -40,7 +40,7 @@ function SandboxRecoverySection({
 
   return (
     <>
-      <div className="card">
+      <div className="card sandbox-recovery-section">
         <div className="card-header"><h2>Recovery</h2></div>
         <div className="card-body">
           {sandbox.pending_base_commit && (

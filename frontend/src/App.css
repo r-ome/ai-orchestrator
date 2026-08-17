@@ -1,7 +1,8 @@
 .page {
   max-width: 1080px;
-  margin: 0 auto;
-  padding: 26px 30px 44px;
+  margin: 0;
+  padding: var(--space-8) calc(var(--space-8) + var(--space-3))
+    calc(var(--space-8) * 2);
   text-align: left;
 }
 
@@ -32,8 +33,8 @@
 .app-rail-brand {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  padding: 1.1rem 1rem;
+  gap: var(--space-4);
+  padding: var(--space-6) calc(var(--space-6) + var(--space-1));
   border-bottom: 1px solid var(--line);
 }
 
@@ -43,8 +44,8 @@
   width: 27px;
   height: 27px;
   flex-shrink: 0;
-  border-radius: 7px;
-  background: linear-gradient(135deg, var(--accent), oklch(0.6 0.2 320));
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--accent), var(--color-accent-400));
   color: var(--mark-text);
   font-weight: 700;
   font-size: 16.5px;
@@ -60,17 +61,17 @@
 .app-rail-nav {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  padding: 0.75rem 0.6rem;
-  font-size: 14.9px;
+  gap: var(--space-1);
+  padding: var(--space-4) var(--space-3);
+  font-size: 0.965rem;
 }
 
 .app-rail-nav a {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
-  padding: 0.5rem 0.6rem;
-  border-radius: 8px;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
   color: var(--text);
   text-decoration: none;
 }
@@ -83,10 +84,11 @@
 /* Active state pairs a background tint with an accent color, so the
    current item never rests on color alone. */
 .app-rail-nav a.active {
-  background: var(--accent);
-  color: var(--mark-text);
-  font-weight: 600;
-  box-shadow: 0 6px 16px -8px var(--accent);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 500;
+  box-shadow: var(--shadow-sm);
 }
 
 .rail-icon {
@@ -98,12 +100,12 @@
 }
 
 .rail-icon-square {
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .rail-icon-bars {
   position: relative;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .rail-icon-bars span {
@@ -118,18 +120,20 @@
 }
 
 .app-rail-foot {
-  margin-top: auto;
+  order: 3;
 }
 
 .rail-current {
-  padding: 0.9rem;
-  border-bottom: 1px solid var(--line);
+  order: 2;
+  margin-top: auto;
+  padding: var(--space-6);
+  border-top: 1px solid var(--line);
 }
 
 /* --- Appearance control ----------------------------------------------- */
 
 .rail-theme {
-  padding: 0.9rem;
+  padding: var(--space-6);
   border-top: 1px solid var(--line);
 }
 
@@ -147,14 +151,14 @@
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   background: var(--panel2);
 }
 
 .rail-theme-options button {
   padding: 5px 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted);
   font: inherit;
@@ -178,7 +182,7 @@
 }
 
 .rail-current-label {
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-3);
   font-size: 12.1px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -188,7 +192,7 @@
 .rail-current-name {
   overflow: hidden;
   font-family: var(--mono);
-  font-size: 13.2px;
+  font-size: 0.86rem;
   color: var(--text-h);
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -196,14 +200,14 @@
 
 /* The sandbox rail stacks two labelled names, project then sandbox. */
 .rail-current-name + .rail-current-label {
-  margin-top: 0.65rem;
+  margin-top: var(--space-4);
 }
 
 .rail-current-stats {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 9px;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
   font-family: var(--mono);
   font-size: 12.7px;
 }
@@ -233,6 +237,13 @@
   overflow-y: auto;
 }
 
+/* The shared focus ring makes every existing native control visible without
+   changing its keyboard behaviour. */
+.app-shell :focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
 /* --- Shared surfaces ----------------------------------------------------
    Conventions the next stage builds page content on top of: a panel
    surface, a table treatment, a pill/badge, and a section heading. */
@@ -243,8 +254,10 @@
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 13px;
-  margin-top: 1.25rem;
+  border-radius: var(--radius-lg);
+  margin-top: var(--space-8);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
 }
 
 /* A card's own body already pads its contents, so a bare .detail-grid
@@ -266,10 +279,11 @@
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.25rem 0.65rem;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
   border-radius: 999px;
   background: var(--soft);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
   color: var(--accent);
   font-family: var(--mono);
   font-size: 12.7px;
@@ -279,23 +293,27 @@
 /* Status-colored pill variants. Meaning still comes from the word inside,
    never the color alone — callers pair these with a status word or icon. */
 .pill.ok {
-  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
   color: var(--ok);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok) 45%, transparent);
 }
 
 .pill.warn {
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
   color: var(--warn);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent);
 }
 
 .pill.err {
-  background: color-mix(in srgb, var(--err) 14%, transparent);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
   color: var(--err);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--err) 45%, transparent);
 }
 
 .pill.muted {
   background: var(--panel2);
   color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 /* --- Card header / body --------------------------------------------------
@@ -307,15 +325,16 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--space-4);
   flex-wrap: wrap;
-  padding: 0.85rem 1.1rem;
+  padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--line);
 }
 
 .card-header h2 {
   margin: 0;
-  font-size: 1.045rem;
+  font-size: 1rem;
+  font-weight: 500;
 }
 
 .card-header-title {
@@ -325,7 +344,7 @@
 }
 
 .card-body {
-  padding: 1rem 1.1rem;
+  padding: var(--space-6);
 }
 
 .project-support-grid {
@@ -350,12 +369,20 @@
 .metric-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.75rem;
-  margin: 1.25rem 0 0.25rem;
+  gap: var(--space-4);
+  margin: var(--space-8) 0 var(--space-2);
+}
+
+.sandbox-metric-strip {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.sandbox-metric-strip .metric-value {
+  white-space: normal;
 }
 
 .metric-card {
-  padding: 0.85rem 1rem;
+  padding: var(--space-4) var(--space-6);
 }
 
 .metric-card .section-heading {
@@ -365,7 +392,7 @@
 .metric-value {
   overflow: hidden;
   font-family: var(--mono);
-  font-size: 1.045rem;
+  font-size: 1rem;
   color: var(--text-h);
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -381,30 +408,31 @@
 .detail-status-row {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--space-4);
   flex-wrap: wrap;
-  margin-top: 0.6rem;
+  margin-top: var(--space-4);
 }
 
 .chrome-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.99rem;
+  font-size: 0.93rem;
 }
 
 .chrome-table th {
-  padding: 0.6rem 1rem;
+  padding: var(--space-3) var(--space-6);
   text-align: left;
   font-size: 12.1px;
-  font-weight: 600;
+  font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
+  background: var(--panel2);
   border-bottom: 1px solid var(--line);
 }
 
 .chrome-table td {
-  padding: 0.75rem 1rem;
+  padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--line);
 }
 
@@ -420,13 +448,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--space-6);
   flex-wrap: wrap;
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-4);
 }
 
 .page-header h1 {
-  font-size: 33px;
+  font-size: 2.15rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
   margin: 0;
 }
 
@@ -434,13 +464,13 @@
    than the line gap between them. Every page header shares the offset rather
    than each page choosing its own. */
 .page-header .breadcrumb {
-  padding-bottom: 10px;
+  padding-bottom: var(--space-3);
 }
 
 /* Repeats the project under the title. The breadcrumb already carries it, but
    the title is where the eye lands, and that is where the question is asked. */
 .page-subtitle {
-  margin: 6px 0 0;
+  margin: var(--space-2) 0 0;
   font-size: 0.95rem;
   color: var(--muted);
 }
@@ -454,16 +484,16 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.4rem;
+  gap: var(--space-2);
   box-sizing: border-box;
-  min-height: 2.1rem;
-  padding: 0.4rem 0.9rem;
+  min-height: calc(var(--space-8) + var(--space-2));
+  padding: var(--space-3) var(--space-6);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 0.99rem;
+  font-size: 0.93rem;
   line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
@@ -500,13 +530,14 @@
 /* The one affirmative action in a form or dialog. */
 .page button.primary {
   border-color: var(--accent-border);
-  background: var(--accent);
-  color: var(--mark-text);
-  font-weight: 600;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 500;
+  box-shadow: 0 0 var(--space-6) color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .page button.primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 88%, white);
+  background: var(--accent-bg);
   border-color: var(--accent);
 }
 
@@ -518,7 +549,7 @@
   box-sizing: border-box;
   padding: 0.4rem 0.9rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: inherit;
   font-size: 0.99rem;
   line-height: 1.2;
@@ -527,13 +558,14 @@
 
 .button-link.primary {
   border-color: var(--accent-border);
-  background: var(--accent);
-  color: var(--mark-text);
-  font-weight: 600;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 500;
+  box-shadow: 0 0 var(--space-6) color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .status {
-  margin: 0.5rem 0 1rem;
+  margin: var(--space-3) 0 var(--space-6);
   opacity: 0.8;
 }
 
@@ -556,11 +588,11 @@
 .breadcrumb {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin: 0 0 0.25rem;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-1);
   color: var(--muted);
   font-family: var(--mono);
-  font-size: 13.2px;
+  font-size: 0.86rem;
 }
 
 .breadcrumb a {
@@ -581,7 +613,7 @@
 .button-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 
 /* --- Sandbox preview -------------------------------------------------- */
@@ -590,7 +622,7 @@
   margin: 2rem 0;
   padding: 1.25rem;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 
 .preview-current,
@@ -621,7 +653,7 @@
   box-sizing: border-box;
   padding: 0.4rem 0.55rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   color: inherit;
   font: inherit;
@@ -631,7 +663,7 @@
 .dependency-settings {
   padding: 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .dependency-settings > .checkbox-label {
@@ -716,7 +748,7 @@
   margin-top: 0.75rem;
   padding: 0.75rem;
   border: 1px solid var(--err);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 @media (max-width: 720px) {
@@ -738,9 +770,9 @@
 .detail-grid {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 0.4rem 1.25rem;
-  margin: 0 0 1.5rem;
-  font-size: 0.99rem;
+  gap: var(--space-3) var(--space-8);
+  margin: 0 0 var(--space-8);
+  font-size: 0.93rem;
 }
 
 .detail-grid dt {
@@ -755,24 +787,24 @@
 .file-form {
   display: flex;
   align-items: flex-end;
-  gap: 0.75rem;
+  gap: var(--space-4);
   flex-wrap: wrap;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-3);
 }
 
 .file-form label {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  font-size: 0.935rem;
+  gap: var(--space-2);
+  font-size: 0.9rem;
 }
 
 .file-form input,
 .file-form select {
   font: inherit;
-  font-size: 0.99rem;
-  padding: 0.35rem 0.5rem;
-  border-radius: 8px;
+  font-size: 0.93rem;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg);
   color: inherit;
@@ -786,7 +818,7 @@
   max-height: 420px;
   overflow: auto;
   padding: 0.75rem 1rem;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--code-bg);
   font-family: var(--mono);
   font-size: 0.88rem;
@@ -801,8 +833,9 @@
   inset: 0;
   display: grid;
   place-items: center;
-  padding: 1rem;
-  background: var(--scrim);
+  padding: var(--space-8);
+  background: var(--scrim-strong);
+  backdrop-filter: blur(var(--space-1));
   z-index: 10;
 }
 
@@ -810,10 +843,11 @@
   width: min(480px, 100%);
   max-height: 90vh;
   overflow-y: auto;
-  padding: 1.25rem 1.5rem 1.5rem;
-  border-radius: 10px;
-  background: var(--bg);
-  box-shadow: var(--shadow);
+  padding: var(--space-8);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
   text-align: left;
 }
 
@@ -824,8 +858,9 @@
 }
 
 .dialog h2 {
-  margin: 0 0 0.75rem;
-  font-size: 1.265rem;
+  margin: 0 0 var(--space-4);
+  font-size: 1.15rem;
+  font-weight: 500;
 }
 
 .dialog-header {
@@ -856,9 +891,9 @@
 .dialog-field {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  margin: 1rem 0;
-  font-size: 0.935rem;
+  gap: var(--space-2);
+  margin: var(--space-6) 0;
+  font-size: 0.9rem;
 }
 
 .planning-override-row {
@@ -889,9 +924,9 @@
 
 .dialog-field input {
   font: inherit;
-  font-size: 0.99rem;
-  padding: 0.4rem 0.6rem;
-  border-radius: 8px;
+  font-size: 0.93rem;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg);
   color: inherit;
@@ -899,9 +934,9 @@
 
 .dialog-field select {
   font: inherit;
-  font-size: 0.99rem;
-  padding: 0.4rem 0.6rem;
-  border-radius: 8px;
+  font-size: 0.93rem;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg);
   color: inherit;
@@ -921,7 +956,7 @@
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 
 .preview-modal-backdrop {
@@ -974,7 +1009,7 @@
   overflow-y: auto;
   padding: 1.25rem 1.5rem 1.5rem;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   box-shadow: var(--shadow);
 }
@@ -1106,7 +1141,7 @@
 .picker-path {
   margin: 0 0 0.75rem;
   padding: 0.4rem 0.6rem;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--code-bg);
   font-size: 0.88rem;
   overflow-wrap: anywhere;
@@ -1119,7 +1154,7 @@
   max-height: 320px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .picker-list li {
@@ -1287,7 +1322,7 @@
 .legend-swatch {
   width: 10px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: calc(var(--radius-sm) / 2);
 }
 
 .legend-swatch.in-use,
@@ -1304,7 +1339,7 @@
 .meter-cell {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--space-3);
 }
 
 .meter-cell .mono {
@@ -1314,17 +1349,17 @@
 .meter {
   flex: 1;
   min-width: 60px;
-  height: 14px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--info) 18%, transparent);
+  height: calc(var(--space-3) - var(--space-1));
+  border-radius: var(--radius-sm);
+  background: var(--panel2);
   overflow: hidden;
 }
 
 .meter-fill {
   display: block;
   height: 100%;
-  border-radius: 2px 4px 4px 2px;
-  background: var(--series-in-use);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
 }
 
 .storage-table .bar-column {
@@ -1336,8 +1371,11 @@
 .storage-bar {
   display: flex;
   /* Bars grow from a shared baseline at the left edge. */
-  height: 14px;
+  height: calc(var(--space-3) - var(--space-1));
   width: 100%;
+  border-radius: var(--radius-sm);
+  background: var(--panel2);
+  overflow: hidden;
 }
 
 .storage-bar-segment {
@@ -1346,20 +1384,20 @@
 
 /* 2px surface gap separates the two stacked segments. */
 .storage-bar-segment + .storage-bar-segment {
-  margin-left: 2px;
+  margin-left: var(--space-1);
 }
 
 /* Square at the baseline, 4px rounded at the data end. */
 .storage-bar-segment:first-child {
-  border-radius: 2px 0 0 2px;
+  border-radius: calc(var(--radius-sm) / 2) 0 0 calc(var(--radius-sm) / 2);
 }
 
 .storage-bar-segment:last-child {
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 .storage-bar-segment:only-child {
-  border-radius: 2px 4px 4px 2px;
+  border-radius: calc(var(--radius-sm) / 2) var(--radius-sm) var(--radius-sm) calc(var(--radius-sm) / 2);
 }
 
 /* --- Agents ----------------------------------------------------------- */
@@ -1395,10 +1433,11 @@
 .agent-terminal {
   height: 65vh;
   min-height: 320px;
-  padding: 0.5rem;
+  padding: var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
+  border-radius: var(--radius-lg);
+  background: var(--terminal-bg);
+  box-shadow: var(--shadow-sm);
   overflow: hidden;
 }
 
@@ -1415,8 +1454,8 @@
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  margin: 0.5rem 0;
+  gap: var(--space-4);
+  margin: var(--space-3) 0;
 }
 
 .section-toolbar .status {
@@ -1442,36 +1481,50 @@
 .container-badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  font-size: 0.935rem;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.82rem;
   white-space: nowrap;
   text-transform: capitalize;
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 .container-running {
   color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok) 45%, transparent);
 }
 
 .container-restarting,
 .container-removing {
   color: var(--info);
+  background: color-mix(in srgb, var(--info) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--info) 45%, transparent);
 }
 
 .container-created,
 .container-paused {
   color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent);
 }
 
 .container-exited {
-  opacity: 0.7;
+  color: var(--muted);
+  background: var(--panel2);
 }
 
 .container-dead {
   color: var(--err);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--err) 45%, transparent);
 }
 
 .container-unknown {
-  opacity: 0.7;
+  color: var(--muted);
+  background: var(--panel2);
 }
 
 /* --- Filter chips ------------------------------------------------------ */
@@ -1479,13 +1532,13 @@
 .filter-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  margin: 0.5rem 0;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
 }
 
 .filter-chip {
-  font-size: 0.935rem;
-  padding: 0.25rem 0.7rem;
+  font-size: 0.86rem;
+  padding: var(--space-2) var(--space-4);
   border-radius: 999px;
   opacity: 0.7;
 }
@@ -1650,7 +1703,7 @@
 .markdown h6 {
   margin: 1.25rem 0 0.5rem;
   color: var(--text-h);
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.3;
 }
 
@@ -1685,7 +1738,7 @@
   font-size: 0.85em;
   padding: 0.1em 0.35em;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--code-bg);
   word-break: break-word;
 }
@@ -1695,7 +1748,7 @@
   margin: 0 0 0.75rem;
   padding: 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--code-bg);
   overflow-x: auto;
 }
@@ -1744,27 +1797,22 @@
    fighting it. The row carries no rule under it — the selected pill already
    says which panel is open. */
 
-/* Pinned to the top of `.app-main`, the scroll container, so a long panel
-   scrolls under the tabs instead of carrying them off-screen. The background
-   is opaque for the same reason: content passes behind this row. Tabs wrap
-   rather than scroll — a hidden tab is a tab nobody finds. */
+/* Tabs remain in the document flow. The control uses the same outlined
+   hierarchy as actions, so it does not compete with a page header. */
 .tablist {
-  position: sticky;
-  top: 0;
-  z-index: 3;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  margin: 0 0 1rem;
-  padding: 0.6rem 0 0.75rem;
-  background: var(--bg);
+  gap: var(--space-2);
+  margin: 0 0 var(--space-6);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
 }
 
 .tablist .tab {
-  gap: 0.5rem;
-  border-color: transparent;
+  gap: var(--space-2);
+  border-color: var(--border);
   color: var(--muted);
-  font-size: 0.99rem;
+  font-size: 0.9rem;
 }
 
 .tablist .tab:hover:not(:disabled) {
@@ -1786,21 +1834,21 @@
   border-color: var(--accent-border);
   background: var(--accent-bg);
   color: var(--accent);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .tablist .tab-active::before {
   content: '';
-  width: 6px;
-  height: 6px;
+  width: var(--space-2);
+  height: var(--space-2);
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--accent);
 }
 
 .tab-badge {
-  padding: 0.1rem 0.45rem;
-  font-size: 11.6px;
+  padding: var(--space-1) var(--space-3);
+  font-size: 0.78rem;
 }
 
 /* --- Planning threads and turns ----------------------------------------- */
@@ -1934,7 +1982,7 @@
   padding: 0.75rem;
   overflow-x: auto;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--code-bg);
   font-family: var(--mono);
   font-size: 0.86rem;
@@ -2011,11 +2059,11 @@
 
 .collapsible-summary:hover {
   background: var(--panel2);
-  border-radius: 12px 12px 0 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
 .collapsible-card:not([open]) > .collapsible-summary:hover {
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
 }
 
 .collapsible-title {
@@ -2103,7 +2151,7 @@ details[open] > summary > * > .collapsible-caret {
 .turn-raw {
   margin-top: 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -2178,19 +2226,19 @@ details[open] > summary > * > .collapsible-caret {
   overflow: auto;
   padding: 0.7rem 0.85rem;
   background: var(--terminal-bg);
-  color: #c9c9d2;
+  color: var(--terminal-text);
 }
 
 .terminal-note {
   margin: 0 0 0.6rem;
-  color: #7d7d8a;
+  color: color-mix(in srgb, var(--terminal-text) 55%, var(--terminal-bg));
   font-family: var(--mono);
   font-size: 0.825rem;
   line-height: 1.5;
 }
 
 .terminal-note-error {
-  color: #f0616d;
+  color: var(--terminal-err);
 }
 
 .terminal-stream {
@@ -2234,7 +2282,7 @@ details[open] > summary > * > .collapsible-caret {
   margin: 0.75rem 0 1rem;
   padding: 0.8rem;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: var(--panel2);
 }
 
@@ -2254,7 +2302,7 @@ details[open] > summary > * > .collapsible-caret {
   min-height: 2.1rem;
   padding: 0.35rem 0.5rem;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--text);
   font: inherit;
@@ -2298,7 +2346,7 @@ details[open] > summary > * > .collapsible-caret {
 .feature-diff-files {
   margin: 0.75rem 0;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -2365,7 +2413,7 @@ button.feature-diff-file-toggle:hover {
   padding: 0.75rem;
   overflow: auto;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--code-bg);
   font-family: var(--mono);
   font-size: 0.84rem;
@@ -2406,7 +2454,7 @@ button.feature-diff-file-toggle:hover {
   margin-top: 1rem;
   padding: 1rem;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--panel2);
 }
 
@@ -2484,6 +2532,255 @@ button.feature-diff-file-toggle:hover {
   word-break: break-word;
 }
 
+/* --- Planning session ---------------------------------------------------
+   The app rail remains the application's only permanent rail. This narrow
+   column belongs to one planning session and moves with its page on narrow
+   screens, so it gives the long-running loop its own map without duplicating
+   global navigation. */
+
+.planning-status-badge {
+  padding-inline: var(--space-4);
+}
+
+.planning-status-planning,
+.planning-status-under_review {
+  box-shadow: inset 0 0 0 1px var(--accent-border), 0 0 var(--space-4) var(--accent-bg);
+}
+
+/* A planning message is deliberately not another card. The avatar, narrow
+   measure and quiet gaps keep a human reply distinct from agent prose. */
+.planning-thread-panel {
+  max-width: 48rem;
+}
+
+.planning-thread-body {
+  padding: var(--space-2) 0;
+}
+
+.planning-thread > li + li {
+  margin-top: var(--space-8);
+  padding-top: 0;
+  border-top: 0;
+}
+
+.planning-message {
+  display: grid;
+  grid-template-columns: calc(var(--space-8) + var(--space-2)) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.planning-message-avatar {
+  display: grid;
+  place-items: center;
+  width: calc(var(--space-8) + var(--space-2));
+  height: calc(var(--space-8) + var(--space-2));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel2);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+.planning-message-clarifier .planning-message-avatar {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.planning-message-content {
+  min-width: 0;
+  color: var(--text);
+}
+
+.planning-message-author {
+  margin-bottom: var(--space-2);
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.planning-message-clarifier .planning-message-author {
+  color: var(--accent);
+}
+
+.planning-message-content .markdown p,
+.planning-message-content .planning-questions {
+  font-size: 0.94rem;
+}
+
+.planning-message-content .markdown p {
+  line-height: 1.6;
+}
+
+.planning-thinking {
+  margin-top: var(--space-8);
+  padding-top: var(--space-6);
+}
+
+.planning-questions {
+  color: var(--text);
+}
+
+.planning-session-main .planning-thread-panel + .card,
+.planning-session-main .planning-thread-panel + .card + .card {
+  max-width: 48rem;
+}
+
+/* The newest review round is a bordered working surface. Older rounds close
+   into thin index rows, matching the planning loop rather than a card stack. */
+.planning-session-main .collapsible-card {
+  box-shadow: none;
+}
+
+.planning-session-main .collapsible-card[open] {
+  border-color: var(--accent-border);
+}
+
+.planning-session-main .collapsible-card[open] > .collapsible-summary {
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+}
+
+.planning-turn-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.planning-turn-mark {
+  display: grid;
+  place-items: center;
+  width: calc(var(--space-6) + var(--space-3));
+  height: calc(var(--space-6) + var(--space-3));
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 0.78rem;
+}
+
+.planning-turn-identity h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.planning-turn-model {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.turn-block-header {
+  margin-bottom: var(--space-4);
+}
+
+.turn-block-body .section-heading {
+  margin-top: var(--space-6);
+}
+
+.turn-block-body > .section-heading:first-child {
+  margin-top: 0;
+}
+
+.planning-raw-output {
+  margin-top: var(--space-4);
+}
+
+.planning-raw-output .terminal-summary {
+  padding: var(--space-3) var(--space-4);
+  font-size: 0.78rem;
+}
+
+.planning-turn-console {
+  border-color: var(--accent-border);
+}
+
+.plan-spec-section + .plan-spec-section {
+  margin-top: var(--space-8);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--line);
+}
+
+.plan-spec-components {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.plan-spec-components li {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.65fr) minmax(0, 1.35fr);
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel2);
+}
+
+.plan-spec-components li + li {
+  border-top: 1px solid var(--line);
+}
+
+.plan-spec-components .kv-key {
+  color: var(--text-h);
+}
+
+.planning-session-main .delegation-wave {
+  margin-top: var(--space-8);
+}
+
+.planning-session-main .delegation-wave-heading {
+  justify-content: flex-start;
+  gap: var(--space-3);
+}
+
+.planning-session-main .delegation-wave-heading h2 {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.planning-session-main .delegation-wave > .card {
+  margin-top: var(--space-3);
+}
+
+.planning-session-main .delegation-run-summary {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.planning-work-status {
+  width: min(100%, 52rem);
+  margin: 0 0 var(--space-6);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.planning-work-progress {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+@media (max-width: 560px) {
+  .planning-message {
+    grid-template-columns: var(--space-8) minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+
+  .planning-message-avatar {
+    width: var(--space-8);
+    height: var(--space-8);
+  }
+
+  .plan-spec-components li {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 720px) {
   .delegation-routing {
     grid-template-columns: 1fr;
@@ -2491,5 +2788,672 @@ button.feature-diff-file-toggle:hover {
 
   .turn-progress li {
     grid-template-columns: 1fr;
+  }
+}
+
+/* --- Planning agent roster ---------------------------------------------
+   The session still exposes every phase, but the agent responsible for that
+   work is the first navigation choice. This keeps the workflow readable when
+   planning and implementation overlap. */
+
+.page:has(.planning-session-page) {
+  max-width: none;
+  min-height: 100%;
+  padding: 0;
+}
+
+.planning-session-page {
+  display: flex;
+  min-height: 100%;
+  background: var(--bg);
+}
+
+.planning-sidebar {
+  display: flex;
+  flex: 0 0 250px;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border-right: 1px solid var(--border-subtle);
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.planning-sidebar .app-rail-brand {
+  flex-shrink: 0;
+  gap: 10px;
+  padding: 16px 16px 12px;
+  border-bottom-color: var(--border-subtle);
+}
+
+.planning-sidebar .app-rail-mark {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--accent), var(--color-accent-600));
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.planning-sidebar .app-rail-wordmark {
+  color: var(--color-neutral-100);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.planning-sidebar-breadcrumb {
+  margin: 0;
+  padding: 12px 16px 8px;
+  color: var(--color-neutral-600);
+  font-family: 'Fira Code', var(--mono);
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.planning-sidebar-breadcrumb a {
+  color: var(--color-neutral-400);
+  text-decoration: none;
+}
+
+.planning-sidebar-breadcrumb > span:last-child {
+  color: var(--color-neutral-400);
+}
+
+.planning-sidebar-breadcrumb a:hover {
+  color: var(--accent);
+}
+
+.planning-sidebar-section {
+  padding: 4px 12px 10px;
+}
+
+.planning-sidebar-section h2 {
+  margin: 0 0 6px;
+  padding: 0 4px;
+  color: var(--color-neutral-500);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  line-height: 1.55;
+  text-transform: uppercase;
+}
+
+.planning-session-links,
+.planning-phase-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.planning-session-links {
+  gap: 4px;
+}
+
+.planning-session-links a {
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-neutral-300);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: left;
+  text-decoration: none;
+}
+
+.planning-session-links a small,
+.planning-phase-list small {
+  color: var(--color-neutral-600);
+  font-family: 'Fira Code', var(--mono);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.planning-session-links a:hover {
+  background: var(--panel2);
+}
+
+/* The active SESSION stays a tinted card. */
+.planning-session-links a.is-active {
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.planning-session-links a.is-active small {
+  color: var(--color-neutral-500);
+}
+
+.planning-phase-section {
+  flex: 1;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* A phase and its agents share one box, so the selected phase reads as a
+   single unit rather than a header with a detached list beneath it. */
+.planning-phase {
+  margin-bottom: 2px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.planning-phase:not(.is-active):hover {
+  background: var(--panel2);
+}
+
+.planning-phase.is-active {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: var(--accent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.page .planning-sidebar button.planning-phase-button,
+.page .planning-sidebar button.planning-phase-agent-button {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+
+.page .planning-sidebar button.planning-phase-button:hover:not(:disabled),
+.page .planning-sidebar button.planning-phase-agent-button:hover:not(:disabled) {
+  background: transparent;
+}
+
+.page .planning-sidebar button.planning-phase-button {
+  color: var(--color-neutral-500);
+}
+
+.page .planning-sidebar .planning-phase.is-active button.planning-phase-button {
+  color: #fff;
+  font-weight: 500;
+}
+
+.planning-phase.is-active .planning-phase-row small {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.page .planning-sidebar .planning-phase.is-current:not(.is-active) button.planning-phase-button,
+.page .planning-sidebar .planning-phase:has(.planning-agent-dot.is-done):not(.is-active) button.planning-phase-button {
+  color: var(--color-neutral-300);
+}
+
+.planning-phase.is-current:not(.is-active) .planning-phase-row small {
+  color: var(--accent);
+}
+
+.planning-phase-row,
+.planning-phase-agent {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.planning-phase-row {
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.planning-phase-row small,
+.planning-phase-agent small {
+  margin-left: auto;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planning-phase-row small {
+  font-size: 10px;
+}
+
+.planning-phase-icon {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
+}
+
+.planning-phase.is-active .planning-phase-icon {
+  border-color: currentcolor;
+}
+
+.planning-phase.is-current:not(.is-active) .planning-phase-icon,
+.planning-phase:has(.planning-agent-dot.is-done):not(.is-active) .planning-phase-icon {
+  border-color: var(--accent);
+}
+
+/* The rule between a phase and its agents sits inside the shared box, so it
+   stops short of the sidebar edges. */
+.planning-phase-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.planning-phase.is-active .planning-phase-agents {
+  border-top-color: rgba(255, 255, 255, 0.2);
+}
+
+.planning-phase-agent {
+  padding: 3px 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-neutral-400);
+  font-size: 11px;
+  font-weight: 500;
+  gap: 6px;
+  line-height: 1.55;
+}
+
+.planning-phase-agent-button:hover .planning-phase-agent,
+.planning-phase-agent-button.is-selected .planning-phase-agent {
+  background: transparent;
+  color: var(--color-neutral-400);
+}
+
+.planning-phase.is-active .planning-phase-agent {
+  color: #fff;
+}
+
+.planning-phase.is-active .planning-phase-agent small {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.planning-phase.is-active .planning-phase-agent-button:hover .planning-phase-agent,
+.planning-phase.is-active .planning-phase-agent-button.is-selected .planning-phase-agent {
+  background: transparent;
+  color: #fff;
+}
+
+.planning-agent-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-neutral-600);
+}
+
+.planning-agent-dot.is-done {
+  background: var(--color-neutral-600);
+}
+
+.planning-agent-dot.is-active {
+  background: var(--accent);
+  animation: planning-agent-pulse 1.6s ease-in-out infinite;
+}
+
+.planning-phase.is-active .planning-agent-dot {
+  background: #fff;
+}
+
+@keyframes planning-agent-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.planning-session-center {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.planning-session-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-6) var(--space-8);
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.planning-session-bar h1 {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 500;
+}
+
+.planning-session-bar-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.planning-session-bar .button-row {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.planning-session-bar .status {
+  margin: 0;
+}
+
+.planning-session-main {
+  width: min(100%, 45rem);
+  min-width: 0;
+  padding: var(--space-8);
+}
+
+.planning-session-center > .planning-session-main {
+  margin-right: auto;
+  margin-left: var(--space-8);
+}
+
+.planning-agent-inspector {
+  display: flex;
+  flex: 0 0 340px;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border-left: 1px solid var(--border-subtle);
+}
+
+.planning-inspector-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.planning-inspector-icon {
+  display: grid;
+  width: calc(var(--space-8) + var(--space-2));
+  height: calc(var(--space-8) + var(--space-2));
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-900);
+  color: var(--color-accent-300);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.planning-inspector-identity {
+  min-width: 0;
+  flex: 1;
+}
+
+.planning-inspector-identity h2,
+.planning-inspector-identity p {
+  margin: 0;
+}
+
+.planning-inspector-identity h2 {
+  color: var(--text-h);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.planning-inspector-identity p {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planning-inspector-close {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.planning-inspector-close:hover {
+  border-color: var(--color-neutral-700);
+  background: var(--panel2);
+  color: var(--text);
+}
+
+.planning-inspector-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+}
+
+.planning-inspector-stats dt,
+.planning-inspector-controls dt {
+  color: var(--muted);
+}
+
+.planning-inspector-stats dd,
+.planning-inspector-controls dd {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.planning-inspector-tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-6) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.planning-inspector-tabs button {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.planning-inspector-tabs button:hover,
+.planning-inspector-tabs button.is-active {
+  border-color: var(--border-subtle);
+  background: var(--color-neutral-900);
+  color: var(--text-h);
+}
+
+.planning-inspector-content {
+  flex: 1;
+  padding: var(--space-6);
+}
+
+.planning-inspector-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.planning-inspector-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.planning-inspector-history li {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.planning-inspector-history-line {
+  width: var(--space-1);
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm);
+  background: var(--color-neutral-700);
+}
+
+.planning-inspector-history li > div {
+  min-width: 0;
+}
+
+.planning-inspector-turn-label {
+  margin: 0 0 var(--space-1);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+}
+
+.planning-inspector-turn-text {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-neutral-300);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+}
+
+.planning-inspector-approved {
+  display: inline-block;
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  color: var(--ok);
+  font-size: 0.66rem;
+}
+
+.planning-inspector-raw {
+  margin: 0;
+  overflow-x: auto;
+  color: var(--color-neutral-300);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.planning-inspector-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.planning-inspector-controls > div {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-neutral-900);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .planning-agent-dot.is-active {
+    animation: none;
+  }
+}
+
+.project-planning-section,
+.sandbox-preview-section,
+.sandbox-publication-section,
+.sandbox-staleness-section,
+.sandbox-recovery-section {
+  position: relative;
+}
+
+.project-planning-section > .card-header,
+.sandbox-preview-section > .card-header,
+.sandbox-publication-section > .card-header,
+.sandbox-staleness-section > .card-header,
+.sandbox-recovery-section > .card-header {
+  border-bottom: 1px solid var(--line);
+}
+
+.feature-status-badge {
+  white-space: nowrap;
+}
+
+@media (max-width: 960px) {
+  .planning-sidebar {
+    flex-basis: 220px;
+  }
+
+  .planning-agent-inspector {
+    flex-basis: 280px;
+  }
+}
+
+@media (max-width: 640px) {
+  .planning-session-page {
+    display: block;
+  }
+
+  .planning-sidebar {
+    width: 100%;
+    max-height: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .planning-agent-inspector {
+    width: 100%;
+    max-height: none;
+    border-top: 1px solid var(--border-subtle);
+    border-left: 0;
+  }
+
+  .planning-phase-section {
+    max-height: 19rem;
+    overflow-y: auto;
+  }
+
+  .planning-session-bar {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: var(--space-6);
+  }
+
+  .planning-session-bar .button-row {
+    justify-content: flex-start;
+  }
+
+  .planning-session-main {
+    padding: var(--space-6);
+  }
+
+  .planning-session-center > .planning-session-main {
+    margin-left: 0;
   }
 }

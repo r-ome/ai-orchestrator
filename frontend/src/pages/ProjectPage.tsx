@@ -114,7 +114,7 @@ function ProjectPage() {
   }
 
   return (
-    <section>
+    <section className="project-page">
       <header className="page-header">
         <div>
           <p className="breadcrumb">

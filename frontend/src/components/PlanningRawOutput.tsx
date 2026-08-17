@@ -56,7 +56,7 @@ function PlanningRawOutput({
   }
 
   return (
-    <details className="turn-raw" onToggle={onToggle}>
+    <details className="turn-raw planning-raw-output" onToggle={onToggle}>
       <summary className="terminal-summary">
         <span className="collapsible-caret" aria-hidden="true" />
         <span className="terminal-lights" aria-hidden="true">

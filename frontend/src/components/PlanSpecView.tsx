@@ -118,53 +118,61 @@ function PlanSpecView({ planSpec, understanding, onImplementPlan }: PlanSpecView
       )}
 
       <CollapsibleCard title="Specification" defaultOpen>
-        <div className="section-heading">Scope</div>
-        <Markdown source={planSpec.scope} />
+        <div className="plan-spec-section">
+          <div className="section-heading">Scope</div>
+          <Markdown source={planSpec.scope} />
+        </div>
 
-        <div className="section-heading">Approach</div>
-        <Markdown source={planSpec.approach} />
+        <div className="plan-spec-section">
+          <div className="section-heading">Approach</div>
+          <Markdown source={planSpec.approach} />
+        </div>
 
-        <div className="section-heading">Components</div>
-        {planSpec.components.length > 0 ? (
-          <ul className="kv-rows">
-            {planSpec.components.map((component) => (
-              <li key={component.name}>
-                <span className="kv-key mono">{component.name}</span>
-                <span className="kv-value">{component.responsibility}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p>No components were recorded.</p>
-        )}
+        <div className="plan-spec-section">
+          <div className="section-heading">Components</div>
+          {planSpec.components.length > 0 ? (
+            <ul className="kv-rows plan-spec-components">
+              {planSpec.components.map((component) => (
+                <li key={component.name}>
+                  <span className="kv-key mono">{component.name}</span>
+                  <span className="kv-value">{component.responsibility}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No components were recorded.</p>
+          )}
+        </div>
 
-        <div className="section-heading">Top risks</div>
-        {topRisks.length > 0 ? (
-          <ul className="kv-rows">
-            {topRisks.map((risk) => (
-              <li key={`${risk.severity}-${risk.text}`}>
-                <span className="kv-key">
-                  <span className={`pill ${RISK_PILL[risk.severity] ?? ''}`}>
-                    {risk.severity}
+        <div className="plan-spec-section">
+          <div className="section-heading">Top risks</div>
+          {topRisks.length > 0 ? (
+            <ul className="kv-rows">
+              {topRisks.map((risk) => (
+                <li key={`${risk.severity}-${risk.text}`}>
+                  <span className="kv-key">
+                    <span className={`pill ${RISK_PILL[risk.severity] ?? ''}`}>
+                      {risk.severity}
+                    </span>
                   </span>
-                </span>
-                <span className="kv-value">{risk.text}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p>No risks were recorded.</p>
-        )}
+                  <span className="kv-value">{risk.text}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No risks were recorded.</p>
+          )}
+        </div>
 
         {planSpec.open_questions.length > 0 && (
-          <>
+          <div className="plan-spec-section">
             <div className="section-heading">Open questions</div>
             <ul>
               {planSpec.open_questions.map((question) => (
                 <li key={question}>{question}</li>
               ))}
             </ul>
-          </>
+          </div>
         )}
       </CollapsibleCard>
 

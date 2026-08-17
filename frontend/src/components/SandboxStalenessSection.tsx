@@ -38,7 +38,7 @@ function SandboxStalenessSection({
   }
 
   return (
-    <div className="card">
+    <div className="card sandbox-staleness-section">
       <div className="card-header"><h2>Base staleness</h2></div>
       <div className="card-body">
         {staleness.loading && <p className="status">Loading staleness…</p>}

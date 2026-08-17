@@ -129,7 +129,7 @@ function SandboxPreviewSection({ sandboxId, busy }: SandboxPreviewSectionProps) 
   const disabled = busy || loading
 
   return (
-    <div className="card">
+    <div className="card sandbox-preview-section">
       <div className="card-header">
         <h2>Preview</h2>
         <button type="button" onClick={() => void loadCurrent()} disabled={disabled}>

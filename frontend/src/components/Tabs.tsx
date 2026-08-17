@@ -1,10 +1,12 @@
-import { useRef, type KeyboardEvent } from 'react'
+import { useRef, type KeyboardEvent, type ReactNode } from 'react'
 
 export interface TabDefinition<Id extends string> {
   id: Id
   label: string
   /** Optional count or state shown as a pill beside the label. */
   badge?: string
+  /** Optional phase-specific detail, such as the assigned planning roles. */
+  meta?: ReactNode
   disabled?: boolean
 }
 
@@ -59,8 +61,11 @@ function Tabs<Id extends string>({ label, tabs, active, onSelect }: TabsProps<Id
             disabled={tab.disabled}
             onClick={() => onSelect(tab.id)}
           >
-            {tab.label}
-            {tab.badge && <span className="pill muted tab-badge">{tab.badge}</span>}
+            <span className="tab-label-row">
+              <span>{tab.label}</span>
+              {tab.badge && <span className="pill muted tab-badge">{tab.badge}</span>}
+            </span>
+            {tab.meta && <span className="tab-meta">{tab.meta}</span>}
           </button>
         )
       })}

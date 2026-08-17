@@ -4,18 +4,20 @@ import {
   cancelPlanningSession,
   confirmPlanningUnderstanding,
   correctPlanningUnderstanding,
+  fetchPlanningMessageRaw,
   fetchPlanningSession,
+  fetchPlanningSessions,
   isPlanningTerminal,
   proceedPlanningSession,
   sendPlanningMessage,
   type PlanningMessage,
+  type PlanningSession,
   type PlanningSessionDetail,
   type PlanningStatus,
 } from '../api/planning'
 import {
   fetchSandbox,
   projectLabel,
-  sandboxLabel,
   type Sandbox,
 } from '../api/sandboxes'
 import { ApiError } from '../api/client'
@@ -32,22 +34,220 @@ import PlanSpecView from '../components/PlanSpecView'
 import PlanningRawOutput from '../components/PlanningRawOutput'
 import PlanningStatusBadge from '../components/PlanningStatusBadge'
 import PlanningTurnCard from '../components/PlanningTurnCard'
-import Tabs, { type TabDefinition } from '../components/Tabs'
 import { useApiResource } from '../hooks/useApiResource'
 
 type PendingDialog = 'proceed' | 'cancel' | null
 
-/** The planning phases, which own the left half of the tab strip. */
-type PlanningTabId = 'clarifier' | 'review' | 'spec'
-
 /**
- * Every phase of the session, planning and delegation alike, in one strip.
+ * Every phase of the session, planning and delegation alike, in one sidebar.
  *
  * The delegation phases were their own page. They are the same session though:
  * a plan is only worth reading next to what is being built from it, and the
  * reader who approves a plan is the reader who then runs its work items.
  */
-type TabId = 'clarifier' | 'review' | 'spec' | DelegationTabId
+type TabId = 'clarifier' | 'review' | 'spec' | DelegationTabId | 'preview'
+
+interface PhaseAgent {
+  id: string
+  role: InspectorAgentRole
+  label: string
+  detail: string
+  provider: string | null
+  model: string | null
+  reasoningEffort?: string | null
+  state: 'active' | 'done' | 'pending'
+}
+
+type InspectorAgentRole = 'clarifier' | 'planner' | 'reviewer' | 'work-item'
+type InspectorTab = 'history' | 'raw' | 'controls'
+
+function messageKind(message: PlanningMessage): string {
+  if (message.questions.length > 0) return 'question'
+  if (message.revision !== null) return 'revision'
+  if (message.approved !== null) return 'review'
+  return 'understanding'
+}
+
+function inspectorStatus(state: PhaseAgent['state']): string {
+  if (state === 'active') return 'active'
+  if (state === 'done') return 'done'
+  return 'pending'
+}
+
+function InspectorIcon({ role }: { role: InspectorAgentRole }) {
+  if (role === 'clarifier') return <span aria-hidden="true">◌</span>
+  if (role === 'planner') return <span aria-hidden="true">◇</span>
+  if (role === 'reviewer') return <span aria-hidden="true">✓</span>
+  return <span aria-hidden="true">›_</span>
+}
+
+interface PlanningAgentInspectorProps {
+  agent: PhaseAgent
+  messages: PlanningMessage[]
+  confirmed: boolean
+  projectName: string
+  sessionId: string
+  onClose: () => void
+}
+
+function PlanningAgentInspector({
+  agent,
+  messages,
+  confirmed,
+  projectName,
+  sessionId,
+  onClose,
+}: PlanningAgentInspectorProps) {
+  const [tab, setTab] = useState<InspectorTab>('history')
+  const agentMessages = useMemo(
+    () =>
+      agent.role === 'work-item'
+        ? []
+        : messages
+            .filter((message) => message.role === agent.role)
+            .sort((left, right) => left.sequence - right.sequence),
+    [agent.role, messages],
+  )
+  const latestRawSequence = useMemo(
+    () => [...agentMessages].reverse().find((message) => message.has_raw_output)?.sequence,
+    [agentMessages],
+  )
+  const [rawOutput, setRawOutput] = useState<string | null>(null)
+  const [rawError, setRawError] = useState<string | null>(null)
+  const [rawLoading, setRawLoading] = useState(false)
+
+  useEffect(() => {
+    setTab('history')
+  }, [agent.role])
+
+  useEffect(() => {
+    if (tab !== 'raw' || latestRawSequence === undefined) return
+
+    const controller = new AbortController()
+    setRawOutput(null)
+    setRawError(null)
+    setRawLoading(true)
+    fetchPlanningMessageRaw(projectName, sessionId, latestRawSequence, controller.signal)
+      .then((result) => {
+        if (!controller.signal.aborted) setRawOutput(result.raw_output)
+      })
+      .catch((err: unknown) => {
+        if (!controller.signal.aborted) {
+          setRawError(err instanceof Error ? err.message : 'Unknown error')
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setRawLoading(false)
+      })
+
+    return () => controller.abort()
+  }, [latestRawSequence, projectName, sessionId, tab])
+
+  // TODO(redesign): planning API exposes no cost/token usage.
+  const stats = [
+    ['provider', agent.provider ?? ''],
+    ['model', agent.model ?? ''],
+    ['turns', String(agentMessages.length)],
+    ['cost', '—'],
+    ['tokens in', '—'],
+    ['tokens out', '—'],
+  ]
+  const subtitle = [agent.role, agent.provider].filter(Boolean).join(' · ')
+
+  return (
+    <aside className="planning-agent-inspector" aria-label={`${agent.label} inspector`}>
+      <header className="planning-inspector-header">
+        <span className="planning-inspector-icon"><InspectorIcon role={agent.role} /></span>
+        <div className="planning-inspector-identity">
+          <h2>{agent.label}</h2>
+          <p>{subtitle}</p>
+        </div>
+        <span className={`planning-agent-dot is-${inspectorStatus(agent.state)}`} aria-label={agent.state} />
+        <button type="button" className="planning-inspector-close" onClick={onClose} aria-label="Close agent inspector">
+          ✕
+        </button>
+      </header>
+
+      <dl className="planning-inspector-stats">
+        {stats.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className="planning-inspector-tabs" role="tablist" aria-label="Agent inspector views">
+        {([
+          ['history', 'History'],
+          ['raw', 'Raw output'],
+          ['controls', 'Controls'],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={tab === id}
+            className={tab === id ? 'is-active' : undefined}
+            onClick={() => setTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="planning-inspector-content" role="tabpanel">
+        {tab === 'history' && (
+          agentMessages.length === 0 ? (
+            <p className="planning-inspector-empty">No turns recorded.</p>
+          ) : (
+            <ol className="planning-inspector-history">
+              {agentMessages.map((entry, index) => {
+                const isConfirmed = agent.role === 'clarifier' && confirmed && index === agentMessages.length - 1
+                const approved = entry.approved === true
+                return (
+                  <li key={entry.sequence}>
+                    <span className="planning-inspector-history-line" aria-hidden="true" />
+                    <div>
+                      <p className="planning-inspector-turn-label">Turn {index + 1} · {messageKind(entry)}</p>
+                      {entry.text && <p className="planning-inspector-turn-text">{entry.text}</p>}
+                      {(approved || isConfirmed) && (
+                        <span className="planning-inspector-approved">{approved ? 'approved' : 'confirmed'}</span>
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
+            </ol>
+          )
+        )}
+
+        {tab === 'raw' && (
+          latestRawSequence === undefined ? (
+            <p className="planning-inspector-empty">No raw output recorded.</p>
+          ) : (
+            <>
+              {rawLoading && <p className="planning-inspector-empty">Loading raw output…</p>}
+              {rawError && <p className="status status-error" role="alert">Failed to load raw output: {rawError}</p>}
+              {rawOutput !== null && <pre className="planning-inspector-raw">{rawOutput}</pre>}
+            </>
+          )
+        )}
+
+        {tab === 'controls' && (
+          // TODO(redesign): planning API does not support per-agent overrides after a session starts.
+          <dl className="planning-inspector-controls">
+            <div><dt>Provider</dt><dd>{agent.provider ?? ''}</dd></div>
+            <div><dt>Model</dt><dd>{agent.model ?? ''}</dd></div>
+            {agent.role === 'reviewer' && (
+              <div><dt>Reasoning effort</dt><dd>{agent.reasoningEffort ?? ''}</dd></div>
+            )}
+          </dl>
+        )}
+      </div>
+    </aside>
+  )
+}
 
 function thinkingRole(status: PlanningStatus): string | null {
   if (status === 'clarifying' || status === 'awaiting_confirmation') {
@@ -64,7 +264,7 @@ function thinkingRole(status: PlanningStatus): string | null {
  * Used only until the reader picks a tab themselves, so an open page follows a
  * running session from clarification through to the finished spec.
  */
-function phaseTab(status: PlanningStatus): PlanningTabId {
+function phaseTab(status: PlanningStatus): TabId {
   if (status === 'plan_ready' || status === 'review_limit_reached') return 'spec'
   if (status === 'planning' || status === 'under_review') return 'review'
   return 'clarifier'
@@ -173,6 +373,18 @@ function providerFor(
   return session.clarifier_provider
 }
 
+function sessionStatusLine(session: PlanningSession): string {
+  if (session.feature_status === 'building') {
+    return `building · ${session.review_turn}/${session.max_review_turns}`
+  }
+  if (session.status === 'under_review') return `under review · rev ${session.plan_revision}`
+  if (session.status === 'plan_ready') return 'plan ready'
+  if (session.status === 'planning') return `planning · rev ${session.plan_revision}`
+  if (session.status === 'review_limit_reached') return 'review limit reached'
+  if (session.status === 'awaiting_confirmation') return 'awaiting confirmation'
+  return session.status
+}
+
 function PlanningSessionPage() {
   // Planning is reachable from two places, so the route supplies one of two
   // params. Both land in the same API position: for a v1 sandbox that
@@ -185,10 +397,6 @@ function PlanningSessionPage() {
   } = useParams()
   const projectName = sandboxId ?? localName ?? ''
   const [sandbox, setSandbox] = useState<Sandbox | null>(null)
-  const projectPath = sandbox
-    ? `/sandboxes/${encodeURIComponent(sandbox.sandbox_id)}`
-    : `/local/${encodeURIComponent(projectName)}`
-  const sandboxCrumb = sandbox ? sandboxLabel(sandbox) : projectName
   const projectCrumb = sandbox ? projectLabel(sandbox.remote_url) : null
   const projectHref = sandbox
     ? `/projects/${encodeURIComponent(sandbox.project_id)}`
@@ -201,6 +409,11 @@ function PlanningSessionPage() {
     projectName,
     sessionId,
   ])
+  const sessionsFetcher = useCallback(
+    (signal: AbortSignal) => fetchPlanningSessions(projectName, signal),
+    [projectName],
+  )
+  const sessionsResource = useApiResource(sessionsFetcher, [projectName])
   const [message, setMessage] = useState('')
   const [addingClarification, setAddingClarification] = useState(false)
   const [pendingDialog, setPendingDialog] = useState<PendingDialog>(null)
@@ -208,6 +421,7 @@ function PlanningSessionPage() {
   const [actionError, setActionError] = useState<string | null>(null)
   // Null until the reader picks a tab; the session's phase chooses until then.
   const [chosenTab, setChosenTab] = useState<TabId | null>(null)
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
 
   const terminal = data ? isPlanningTerminal(data.status) : false
   const turnRunning = data?.turn_state === 'running'
@@ -234,18 +448,133 @@ function PlanningSessionPage() {
   // Delegation has nothing to show, and nothing to ask the backend, until the
   // plan it works from has settled.
   const delegation = useDelegationWorkspace(projectName, sessionId, settled)
-  const disabledTabs: Record<TabId, boolean> = {
-    clarifier: false,
-    review: threads.review.length === 0,
-    spec: !data?.plan_spec,
-    ...delegation.disabledTabs,
-  }
-  // The phase can point at a tab with nothing in it yet — status turns to
-  // `planning` before the planner's first turn lands. Fall back rather than
-  // leave a disabled tab selected.
   const preferredTab = chosenTab ?? (data ? phaseTab(data.status) : 'clarifier')
-  const activeTab: TabId = disabledTabs[preferredTab] ? 'clarifier' : preferredTab
+  const activeTab: TabId = preferredTab
   const isDelegationTab = activeTab === 'items' || activeTab === 'feature-review'
+  const implementationItem =
+    delegation.runningItem ?? delegation.delegation?.items.find((entry) => entry.runs.length > 0) ?? null
+  const implementationRun = implementationItem?.runs[implementationItem.runs.length - 1] ?? null
+  const implementationProvider = implementationRun?.provider ?? implementationItem?.routing?.provider ?? null
+  const implementationModel = implementationRun?.model ?? implementationItem?.routing?.model ?? null
+  const sessionList = useMemo(() => {
+    if (!data) return []
+    const listed = sessionsResource.data?.sessions ?? []
+    return listed.some((session) => session.id === data.id) ? listed : [data]
+  }, [data, sessionsResource.data])
+  const phaseAgents: Partial<Record<TabId, PhaseAgent[]>> = data
+    ? {
+        clarifier: [
+          {
+            id: 'clarifier:clarifier',
+            role: 'clarifier',
+            label: 'Echo',
+            // The sidebar carries the state word only. Provider and model are
+            // too long for a 250px rail, and the inspector already lists them.
+            detail:
+              data.status === 'clarifying' && data.turn_state === 'running'
+                ? 'active'
+                : data.confirmed
+                  ? 'done'
+                  : 'pending',
+            state:
+              data.status === 'clarifying' && data.turn_state === 'running'
+                ? 'active'
+                : data.confirmed
+                  ? 'done'
+                  : 'pending',
+            provider: data.clarifier_provider,
+            model: data.clarifier_model,
+          },
+        ],
+        review: [
+          {
+            id: 'review:planner',
+            role: 'planner',
+            label: 'Compass',
+            detail:
+              data.status === 'planning' && data.turn_state === 'running'
+                ? 'active'
+                : data.plan_revision > 0
+                  ? `rev ${data.plan_revision}`
+                  : 'pending',
+            state:
+              data.status === 'planning' && data.turn_state === 'running'
+                ? 'active'
+                : data.plan_revision > 0
+                  ? 'done'
+                  : 'pending',
+            provider: data.planner_provider,
+            model: data.planner_model,
+          },
+          {
+            id: 'review:reviewer',
+            role: 'reviewer',
+            label: 'Sentinel',
+            detail:
+              data.status === 'under_review' && data.turn_state === 'running'
+                ? 'reviewing'
+                : data.status === 'plan_ready'
+                  ? 'approved'
+                  : data.status === 'review_limit_reached'
+                    ? 'limit'
+                    : 'pending',
+            state:
+              data.status === 'under_review' && data.turn_state === 'running'
+                ? 'active'
+                : ['plan_ready', 'review_limit_reached'].includes(data.status)
+                  ? 'done'
+                  : 'pending',
+            provider: data.reviewer_provider,
+            model: data.reviewer_model,
+            reasoningEffort: data.reviewer_reasoning_effort,
+          },
+        ],
+        items: [
+          {
+            id: 'items:work-item',
+            role: 'work-item',
+            label: 'Spark',
+            detail:
+              delegation.delegation?.delegation.status === 'running'
+                ? 'active'
+                : delegation.delegation?.delegation.status === 'completed'
+                  ? 'done'
+                  : 'pending',
+            state:
+              delegation.delegation?.delegation.status === 'running'
+                ? 'active'
+                : delegation.delegation?.delegation.status === 'completed'
+                  ? 'done'
+                  : 'pending',
+            // TODO(redesign): no session-level work-item routing exists before a run.
+            provider: implementationProvider,
+            model: implementationModel,
+          },
+        ],
+        'feature-review': [
+          {
+            id: 'feature-review:reviewer',
+            role: 'reviewer',
+            label: 'Sentinel',
+            detail:
+              data.feature_status === 'in_review'
+                ? 'reviewing'
+                : data.feature_status === 'approved'
+                  ? 'approved'
+                  : 'pending',
+            state:
+              data.feature_status === 'in_review'
+                ? 'active'
+                : data.feature_status === 'approved'
+                  ? 'done'
+                  : 'pending',
+            provider: data.reviewer_provider,
+            model: data.reviewer_model,
+            reasoningEffort: data.reviewer_reasoning_effort,
+          },
+        ],
+      }
+    : {}
 
   useEffect(() => {
     if (!data || isPlanningTerminal(data.status)) return
@@ -277,7 +606,13 @@ function PlanningSessionPage() {
     setMessage('')
     setActionError(null)
     setChosenTab(null)
+    setSelectedAgentId(null)
   }, [sessionId])
+
+  const selectPhase = (tab: TabId) => {
+    setChosenTab(tab)
+    setSelectedAgentId(phaseAgents[tab]?.[0]?.id ?? null)
+  }
 
   const runAction = async (action: () => Promise<unknown>) => {
     setBusy(true)
@@ -313,77 +648,167 @@ function PlanningSessionPage() {
     setActionError(null)
   }
 
-  const tabs: TabDefinition<TabId>[] = [
+  const phases: { id: TabId; label: string; badge?: string }[] = [
     {
       id: 'clarifier',
       label: 'Clarifier',
-      badge: threads.clarifier.length > 0 ? String(threads.clarifier.length) : undefined,
+      badge: data?.confirmed ? '✓' : undefined,
     },
     {
       id: 'review',
       label: 'Plan & Review',
-      badge:
-        data && data.plan_revision > 0 ? `rev ${data.plan_revision}` : undefined,
-      disabled: disabledTabs.review,
+      badge: data && data.review_turn > 0 ? `round ${data.review_turn}` : undefined,
+    },
+    { id: 'spec', label: 'Plan Spec' },
+    {
+      id: 'items',
+      label: 'Work Items',
+      badge: delegation.tabs.find((tab) => tab.id === 'items')?.badge,
     },
     {
-      id: 'spec',
-      label: 'Plan Spec',
-      disabled: disabledTabs.spec,
+      id: 'feature-review',
+      label: 'Feature Review',
+      badge: delegation.tabs.find((tab) => tab.id === 'feature-review')?.badge,
     },
-    ...delegation.tabs,
+    { id: 'preview', label: 'Preview' },
   ]
+  const currentPhase: TabId = delegation.preview
+    ? 'preview'
+    : delegation.delegation
+      ? delegation.phaseTab
+      : data
+        ? phaseTab(data.status)
+        : 'clarifier'
+  const activePhase = phases.find((phase) => phase.id === activeTab) ?? phases[0]
+  const selectedAgent = selectedAgentId
+    ? Object.values(phaseAgents)
+        .flat()
+        .find((agent) => agent?.id === selectedAgentId) ?? null
+    : null
 
   return (
-    <section>
-      <header className="page-header">
-        <div>
-          <p className="breadcrumb">
-            <Link to="/projects">Projects</Link>
-            <span className="breadcrumb-separator" aria-hidden="true">
-              /
-            </span>
-            {projectCrumb && (
-              <>
-                <Link to={projectHref}>{projectCrumb}</Link>
-                <span className="breadcrumb-separator" aria-hidden="true">
-                  /
-                </span>
-              </>
-            )}
-            <Link to={projectPath}>{sandboxCrumb}</Link>
-            <span className="breadcrumb-separator" aria-hidden="true">
-              /
-            </span>
-            <span className="breadcrumb-current" aria-current="page">
-              {data?.title ?? 'Planning session'}
-            </span>
-          </p>
-          <h1>{data?.title ?? 'Planning session'}</h1>
+    <section className="planning-session-page">
+      <aside className="planning-sidebar" aria-label="Planning navigation">
+        <div className="app-rail-brand">
+          <div className="app-rail-mark" aria-hidden="true">O</div>
+          <div className="app-rail-wordmark">Orchestrator</div>
         </div>
-        {data && (
-          <div className="button-row">
-            <PlanningStatusBadge status={data.status} />
-            {/* The clarifier's own wait is shown at the foot of its thread,
-                where the reader is already looking. The header keeps the
-                later roles, which have no thread of their own here. */}
-            {turnRunning && activeRole && activeRole !== 'Clarifier' && (
-              <span className="status">{activeRole} is thinking…</span>
-            )}
-            <button
-              type="button"
-              className="danger"
-              onClick={() => {
-                setActionError(null)
-                setPendingDialog('cancel')
-              }}
-              disabled={terminal || busy}
-            >
-              Cancel session
-            </button>
+        <p className="planning-sidebar-breadcrumb">
+          {/* The backend fills project_name with an opaque id, so the repo
+              name from the remote URL is the readable first crumb. */}
+          <Link to={projectHref}>{projectCrumb ?? data?.project_name ?? 'Unknown project'}</Link>
+          <span aria-hidden="true"> / </span>
+          <span>{sandbox?.feature_key ?? sandbox?.feature_title ?? data?.title ?? 'Planning session'}</span>
+        </p>
+        <section className="planning-sidebar-section" aria-labelledby="planning-sessions-label">
+          <h2 id="planning-sessions-label">Sessions</h2>
+          <div className="planning-session-links">
+            {sessionList.map((session) => (
+              <Link
+                key={session.id}
+                className={session.id === data?.id ? 'is-active' : undefined}
+                to={`/sandboxes/${encodeURIComponent(session.sandbox_id)}/plans/${encodeURIComponent(session.id)}`}
+                aria-current={session.id === data?.id ? 'page' : undefined}
+              >
+                <span>{session.title}</span>
+                <small>{sessionStatusLine(session)}</small>
+              </Link>
+            ))}
           </div>
-        )}
-      </header>
+        </section>
+        <section className="planning-sidebar-section planning-phase-section" aria-labelledby="planning-phases-label">
+          <h2 id="planning-phases-label">Phases</h2>
+          <div className="planning-phase-list">
+            {/* A phase and the agents that run it share one box. Selecting the
+                phase fills that box, so the pair reads as one unit instead of
+                a header with a list floating under it. */}
+            {phases.map((phase) => {
+              const agents = phaseAgents[phase.id] ?? []
+              const active = phase.id === activeTab
+              const current = phase.id === currentPhase
+              return (
+                <div
+                  key={phase.id}
+                  className={`planning-phase${active ? ' is-active' : ''}${current ? ' is-current' : ''}`}
+                >
+                  <button
+                    type="button"
+                    className="planning-phase-button"
+                    aria-pressed={active}
+                    onClick={() => selectPhase(phase.id)}
+                  >
+                    <span className="planning-phase-row">
+                      <span className="planning-phase-icon" aria-hidden="true" />
+                      <span>{phase.label}</span>
+                      {phase.badge && <small>{phase.badge}</small>}
+                    </span>
+                  </button>
+                  {agents.length > 0 && (
+                    <div className="planning-phase-agents">
+                      {agents.map((agent) => (
+                        <button
+                          key={agent.id}
+                          type="button"
+                          className={
+                            selectedAgentId === agent.id
+                              ? 'planning-phase-agent-button is-selected'
+                              : 'planning-phase-agent-button'
+                          }
+                          aria-pressed={selectedAgentId === agent.id}
+                          onClick={() => {
+                            setChosenTab(phase.id)
+                            setSelectedAgentId(agent.id)
+                          }}
+                        >
+                          <span className="planning-phase-agent">
+                            <span
+                              className={`planning-agent-dot is-${agent.state}`}
+                              aria-hidden="true"
+                            />
+                            <span>{agent.label}</span>
+                            <small>{agent.detail}</small>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      </aside>
+
+      <main className="planning-session-center">
+        <header className="planning-session-bar">
+          <div className="planning-session-bar-info">
+            <h1>{activePhase.label}</h1>
+            {data && <PlanningStatusBadge status={data.status} />}
+          </div>
+          {data && (
+            <div className="button-row">
+              {turnRunning && activeRole && activeRole !== 'Clarifier' && (
+                <span className="status">{activeRole} is thinking…</span>
+              )}
+              <button type="button" onClick={reload} disabled={loading || busy}>
+                Refresh
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => {
+                  setActionError(null)
+                  setPendingDialog('cancel')
+                }}
+                disabled={terminal || busy}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </header>
+
+        <div className="planning-session-main">
 
       {error && (
         <p className="status status-error" role="alert">
@@ -407,50 +832,48 @@ function PlanningSessionPage() {
             </p>
           )}
 
-          <Tabs
-            label="Planning and delegation phases"
-            tabs={tabs}
-            active={activeTab}
-            onSelect={setChosenTab}
-          />
-
           {activeTab === 'clarifier' && (
             <div role="tabpanel" id="panel-clarifier" aria-labelledby="tab-clarifier">
-              <section className="card">
-                <div className="card-header">
-                  <h2>Conversation with the clarifier</h2>
-                </div>
-                <div className="card-body">
+              <section className="planning-thread-panel" aria-label="Conversation with the clarifier">
+                <div className="planning-thread-body">
                   {threads.clarifier.length === 0 ? (
                     <p className="status">No messages have been recorded yet.</p>
                   ) : (
                     <ol className="planning-thread">
                       {threads.clarifier.map((entry) => (
-                        <li key={entry.sequence}>
-                          <div className="section-heading">
-                            {entry.role === 'user'
-                              ? 'Human'
-                              : entry.role === 'clarifier'
-                                ? 'Clarifier'
-                                : 'System'}
+                        <li
+                          key={entry.sequence}
+                          className={`planning-message planning-message-${entry.role}`}
+                        >
+                          <span className="planning-message-avatar" aria-hidden="true">
+                            {entry.role === 'user' ? 'U' : entry.role === 'clarifier' ? '◌' : '·'}
+                          </span>
+                          <div className="planning-message-content">
+                            <div className="planning-message-author">
+                              {entry.role === 'user'
+                                ? 'Human'
+                                : entry.role === 'clarifier'
+                                  ? 'Clarifier · clarifier'
+                                  : 'System'}
+                            </div>
+                            {entry.text && <Markdown source={entry.text} />}
+                            {entry.questions.length > 0 && (
+                              <ol className="planning-questions">
+                                {entry.questions.map((question, index) => (
+                                  <li key={`${entry.sequence}-${index}`}>{question}</li>
+                                ))}
+                              </ol>
+                            )}
+                            {entry.has_raw_output && (
+                              <PlanningRawOutput
+                                projectName={projectName}
+                                sessionId={sessionId}
+                                sequence={entry.sequence}
+                                provider={providerFor(data, entry)}
+                                model={entry.model}
+                              />
+                            )}
                           </div>
-                          {entry.text && <Markdown source={entry.text} />}
-                          {entry.questions.length > 0 && (
-                            <ol className="planning-questions">
-                              {entry.questions.map((question, index) => (
-                                <li key={`${entry.sequence}-${index}`}>{question}</li>
-                              ))}
-                            </ol>
-                          )}
-                          {entry.has_raw_output && (
-                            <PlanningRawOutput
-                              projectName={projectName}
-                              sessionId={sessionId}
-                              sequence={entry.sequence}
-                              provider={providerFor(data, entry)}
-                              model={entry.model}
-                            />
-                          )}
                         </li>
                       ))}
                     </ol>
@@ -472,7 +895,11 @@ function PlanningSessionPage() {
                 <section className="card">
                   <div className="card-header">
                     <h2>Understanding</h2>
-                    {data.status === 'awaiting_confirmation' ? (
+                    {data.confirmed ? (
+                      <span className="pill ok">
+                        <span aria-hidden="true">✓</span> confirmed
+                      </span>
+                    ) : data.status === 'awaiting_confirmation' ? (
                       <div className="button-row">
                         <button
                           type="button"
@@ -499,12 +926,7 @@ function PlanningSessionPage() {
                       </div>
                     ) : (
                       data.status !== 'clarifying' && (
-                        <span className={`pill ${data.confirmed ? 'ok' : 'warn'}`}>
-                          <span aria-hidden="true">{data.confirmed ? '✓' : '!'}</span>{' '}
-                          {data.confirmed
-                            ? 'Confirmed and sent to the planner'
-                            : 'Sent without confirmation'}
-                        </span>
+                        <span className="pill warn"><span aria-hidden="true">!</span> Sent without confirmation</span>
                       )
                     )}
                   </div>
@@ -775,13 +1197,33 @@ function PlanningSessionPage() {
               <DelegationPanel tab={activeTab} workspace={delegation} />
             </div>
           )}
+
+          {activeTab === 'preview' && (
+            <div role="tabpanel" id="panel-preview" aria-labelledby="tab-preview">
+              {delegation.preview ? (
+                <p>
+                  Preview is {delegation.preview.status} at{' '}
+                  <a href={delegation.preview.url} target="_blank" rel="noreferrer">
+                    {delegation.preview.url}
+                  </a>
+                </p>
+              ) : (
+                <p className="status">
+                  No preview yet. Start one after the feature review completes.
+                </p>
+              )}
+            </div>
+          )}
         </>
       )}
+        </div>
 
       {delegation.contextModalOpen && (
         <ContextModal
           workspace={delegation}
-          onReady={() => setChosenTab('items')}
+          onReady={() => {
+            setChosenTab('items')
+          }}
         />
       )}
 
@@ -811,6 +1253,17 @@ function PlanningSessionPage() {
         >
           <p>This ends the planning session. It does not change the project.</p>
         </ConfirmDialog>
+      )}
+      </main>
+      {data && selectedAgent && (
+        <PlanningAgentInspector
+          agent={selectedAgent}
+          messages={data.messages}
+          confirmed={data.confirmed}
+          projectName={projectName}
+          sessionId={sessionId}
+          onClose={() => setSelectedAgentId(null)}
+        />
       )}
     </section>
   )

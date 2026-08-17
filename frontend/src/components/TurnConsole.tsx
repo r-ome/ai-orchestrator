@@ -124,7 +124,7 @@ function TurnConsole({
   if (!jobId) return null
 
   return (
-    <div className="turn-console">
+    <div className="turn-console planning-turn-console">
       <div className="turn-console-header">
         <span className="section-heading">{title}</span>
         <span className={`pill ${connected ? 'warn' : finished ? 'ok' : 'muted'}`}>

@@ -54,7 +54,7 @@ function SandboxPublicationSection({
 
   return (
     <>
-      <div className="card">
+      <div className="card sandbox-publication-section">
         <div className="card-header"><h2>Publication</h2></div>
         <div className="card-body">
           {publication.loading && <p className="status">Loading publication…</p>}

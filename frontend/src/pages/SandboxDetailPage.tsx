@@ -234,21 +234,34 @@ function SandboxDetailPage() {
             <span className="pill">{data.lifecycle_status ?? 'creating'}</span>
             <span className="mono">{data.sandbox_id}</span>
           </div>
+          {/* TODO(redesign): the sandbox API does not expose copied file count,
+              byte size, copy mode, or workspace mountpoint from the reference. */}
+          <div className="metric-strip sandbox-metric-strip">
+            <div className="card metric-card">
+              <div className="section-heading">Data volume</div>
+              <div className="metric-value">{data.db_data_volume || '—'}</div>
+            </div>
+            <div className="card metric-card">
+              <div className="section-heading">Database</div>
+              {/* A bare "none" would read as "not confirmed yet". These are
+                  different states, and only the latter needs operator action. */}
+              <div className="metric-value">
+                {data.db_engine === 'none'
+                  ? 'none — no database'
+                  : data.db_engine || 'Not confirmed'}
+              </div>
+            </div>
+            <div className="card metric-card">
+              <div className="section-heading">Feature branch</div>
+              <div className="metric-value">{data.feature_branch || '—'}</div>
+            </div>
+          </div>
           <div className="card">
             <div className="card-header"><h2>Lifecycle</h2></div>
             <dl className="detail-grid">
               <dt>Project</dt><dd>{projectLabel(data.remote_url)}</dd>
               <dt>Feature key</dt><dd>{data.feature_key || '—'}</dd>
               <dt>Remote</dt><dd className="mono">{data.remote_url || '—'}</dd>
-              {/* A bare "none" here would read as "not confirmed yet". Those are
-                  different states, and only one of them needs operator action. */}
-              <dt>Database engine</dt>
-              <dd>
-                {data.db_engine === 'none'
-                  ? 'none — no database'
-                  : data.db_engine || 'Not confirmed'}
-              </dd>
-              <dt>Feature branch</dt><dd className="mono">{data.feature_branch || '—'}</dd>
             </dl>
           </div>
 

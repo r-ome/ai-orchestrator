@@ -41,6 +41,7 @@ function ContainerShell({ containerId, onPhase, onError }: ContainerShellProps) 
     const { onPhase: phase, onError: fail } = handlersRef.current
     phase('connecting')
     fail(null)
+    const theme = getComputedStyle(document.documentElement)
 
     const terminal = new Terminal({
       convertEol: false,
@@ -48,7 +49,11 @@ function ContainerShell({ containerId, onPhase, onError }: ContainerShellProps) 
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
       fontSize: 13,
       scrollback: 10_000,
-      theme: { background: '#16171d', foreground: '#e6e6e6' },
+      theme: {
+        background: theme.getPropertyValue('--terminal-bg').trim(),
+        foreground: theme.getPropertyValue('--terminal-text').trim(),
+        cursor: theme.getPropertyValue('--terminal-text').trim(),
+      },
     })
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)

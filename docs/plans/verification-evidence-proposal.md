@@ -115,10 +115,81 @@ files. This wants pinning down before implementation — see open questions.
    **This is the substantive decision.** Without it, change 2 weakens the gate:
    the reviewer would trust a self-report it cannot check.
 
+   **Decided 2026-08-14 (Jerome): route through the verification runner.** The
+   system executes the check and records it, so the agent never self-reports.
+   See "What the runner imposes" below — the route is sound but the obvious
+   implementation does not work.
+
+## What the runner imposes
+
+Reading `backend/app/delegation/verification.py` and
+`backend/app/implementation_context/inventory.py` against the decision above.
+
+Each verification command runs in a **fresh container**: rootfs `read_only`,
+`/workspace` mounted rw from the sandbox volume, `/tmp` a per-container tmpfs,
+`network_mode="none"` (loopback resolves, no egress), `entrypoint=[]`, and the
+command produced by `shlex.split`. Consequences:
+
+- **No shell.** `sh -lc "start app && run browser"` is not available; the
+  command is an argv executed directly. A behavioural check must therefore be a
+  single self-contained program.
+- **`/tmp` is not shared.** A harness the agent writes to `/tmp` during its turn
+  is gone before the runner starts. Only `/workspace` survives, which is the
+  worktree.
+- **The command is not free text.** `confirm_command` accepts only a known
+  program: an npm-family runner naming a script `package.json` declares, a
+  Makefile target, a Python tool or runner, `cargo`, or `go`. Plain `node` is
+  not on that list. `COMMAND_KINDS` is closed at
+  `("build", "test", "lint", "typecheck", "format")` — there is no behavioural
+  kind.
+
+**So the obvious implementation is self-defeating.** The only confirmable way to
+run a browser harness is `npm run <script>`, which requires a script line in
+`package.json` pointing at a harness file — putting the harness back in git,
+which is the problem this proposal exists to solve.
+
+**Recommended shape instead:** a `behavior` command whose text is a *system
+constant*, not agent-authored. The controller runs its own entrypoint against a
+harness the agent leaves at a conventional untracked path under `/workspace`.
+The trust property holds — the system still chooses and records the command —
+and the repository stays clean. This bypasses `confirm_command` deliberately,
+because there is nothing agent-supplied left to confirm.
+
+### The image is fine — measured, 2026-08-14
+
+`get_verification_settings` (`backend/app/delegation/config.py:81-88`) defaults
+`DELEGATION_VERIFICATION_IMAGE` to `TASK_GIT_IMAGE`, and that to
+`orchestrator-agent-claude:latest`. The runner and the agent share one image, so
+what the sandbox provides, the runner provides. Probed directly against that
+image under the runner's full constraint set — `read_only`, `cap_drop ALL`,
+`no-new-privileges`, `network none`, `pids_limit 512`, `mem 2g`, tmpfs `/tmp`:
+
+- `playwright` is at `/usr/local/lib/node_modules/playwright`, on `NODE_PATH`.
+- Browsers are baked in at `/ms-playwright` (`chromium-1234`,
+  `chromium_headless_shell-1234`, `ffmpeg-1011`). No download needed, which
+  matters because the runner has no egress.
+- Chromium **launches and drives a page**: `PLAYWRIGHT_LAUNCH_OK`.
+- A harness may **start its own server and browse it over loopback** in the same
+  container: served `127.0.0.1:5173`, read the button text back, `LOOPBACK_OK`.
+
+So the route needs no image change, and the "one self-contained program"
+constraint is satisfiable: the harness starts the app and drives the browser
+itself.
+
+**One trap found.** `NODE_PATH` applies to CommonJS `require` only. An ESM
+harness fails with `ERR_MODULE_NOT_FOUND: Cannot find package 'playwright'`.
+Harnesses must be `.cjs` using `require`, or import by absolute path. The
+original failing harness was `verify_action_bar.js` — worth checking whether
+this trap contributed. Whatever prompt tells the agent to write a harness must
+state it.
+
 2. **Detecting a test suite** reliably across project types.
 
-3. **Where harnesses live.** `/tmp` inside the sandbox works and is discarded
-   with the container. Confirm nothing depends on them persisting between turns.
+3. **Where harnesses live.** ~~`/tmp` inside the sandbox works~~ — **answered by
+   the decision above, and the answer is no.** Once the runner executes the
+   check, `/tmp` is the wrong home: the runner gets a fresh tmpfs and cannot see
+   what the agent's turn wrote. A harness must sit at an untracked path under
+   `/workspace`.
 
 ## Related defects found alongside this
 

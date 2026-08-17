@@ -52,7 +52,7 @@ function PlanDiff({ before, after, previousRevision }: PlanDiffProps) {
   const { added, removed } = diffTally(lines)
 
   return (
-    <details className="plan-diff">
+    <details className="plan-diff planning-plan-diff">
       <summary>
         Changes from revision {previousRevision} (+{added} / −{removed} lines)
       </summary>

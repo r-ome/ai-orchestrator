@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #0d0d10; }
+  a { color: inherit; }
+  button { font-family: inherit; }
+  @keyframes om-blink { 0%,49% { opacity: 1 } 50%,100% { opacity: 0 } }
+  @keyframes om-pulse { 0%,100% { transform: scale(1); opacity: 1 } 50% { transform: scale(1.55); opacity: .3 } }
+  @keyframes om-fill { 0% { width: 6% } 60% { width: 74% } 100% { width: 92% } }
+  @keyframes om-spin { to { transform: rotate(360deg) } }
+  @keyframes om-rise { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+  .om-scroll::-webkit-scrollbar { width: 10px; height: 10px }
+  .om-scroll::-webkit-scrollbar-thumb { background: rgba(140,140,160,.28); border-radius: 8px }
+  .om-scroll::-webkit-scrollbar-track { background: transparent }
+</style>
+</helmet>
+
+<div style="height: 100vh; min-height: 720px; background: #0d0d10;">
+<div style="--bg:#0d0d10; --panel:#16161c; --panel2:#1c1c23; --border:#282832; --line:#20202a; --text:#c9c9d2; --head:#f3f3f7; --muted:#7d7d8a; --accent:#a855f7; --soft:rgba(168,85,247,.12); --ok:#3ecf8e; --warn:#e6a23c; --err:#f0616d; --mono:'JetBrains Mono',monospace; height: 100%; background: var(--bg); color: var(--text); font-family: 'Space Grotesk', system-ui, sans-serif; display: flex; overflow: hidden;">
+
+  <!-- ============ LEFT RAIL ============ -->
+  <aside style="width: 236px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column;">
+    <div style="padding: 20px 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line);">
+      <div style="width: 27px; height: 27px; border-radius: 7px; background: linear-gradient(135deg,var(--accent),oklch(0.6 0.2 320)); display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 15px;">O</div>
+      <div style="font-weight: 600; color: var(--head); font-size: 15px; letter-spacing: -.01em;">Orchestrator</div>
+    </div>
+    <nav style="padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; font-size: 13.5px;">
+      <sc-if value="{{ navProjectsOn }}" hint-placeholder-val="{{ false }}"><button onClick="{{ goProjects }}" style="all:unset; box-sizing:border-box; cursor:pointer; padding:9px 12px; border-radius:8px; display:flex; align-items:center; gap:11px; background:var(--accent); color:#fff; font-weight:600; box-shadow: 0 6px 16px -8px var(--accent);"><span style="width:16px;height:16px;border:1.6px solid currentColor;border-radius:4px;display:inline-block;flex-shrink:0;"></span>Projects</button></sc-if>
+      <sc-if value="{{ navProjectsOff }}" hint-placeholder-val="{{ true }}"><button onClick="{{ goProjects }}" style="all:unset; box-sizing:border-box; cursor:pointer; padding:9px 12px; border-radius:8px; display:flex; align-items:center; gap:11px; color:var(--muted);"><span style="width:16px;height:16px;border:1.6px solid currentColor;border-radius:4px;display:inline-block;flex-shrink:0;"></span>Projects</button></sc-if>
+      <sc-if value="{{ navSandboxOn }}" hint-placeholder-val="{{ true }}"><button onClick="{{ goSandbox }}" style="all:unset; box-sizing:border-box; cursor:pointer; padding:9px 12px; border-radius:8px; display:flex; align-items:center; gap:11px; background:var(--accent); color:#fff; font-weight:600; box-shadow: 0 6px 16px -8px var(--accent);"><span style="width:16px;height:16px;border:1.6px solid currentColor;border-radius:4px;display:inline-block;position:relative;flex-shrink:0;"><span style="position:absolute;inset:3px 4px auto 3px;height:1.6px;background:currentColor;"></span></span>Sandboxes</button></sc-if>
+      <sc-if value="{{ navSandboxOff }}" hint-placeholder-val="{{ false }}"><button onClick="{{ goSandbox }}" style="all:unset; box-sizing:border-box; cursor:pointer; padding:9px 12px; border-radius:8px; display:flex; align-items:center; gap:11px; color:var(--muted);"><span style="width:16px;height:16px;border:1.6px solid currentColor;border-radius:4px;display:inline-block;position:relative;flex-shrink:0;"><span style="position:absolute;inset:3px 4px auto 3px;height:1.6px;background:currentColor;"></span></span>Sandboxes</button></sc-if>
+      <sc-if value="{{ navContainersOn }}" hint-placeholder-val="{{ false }}"><button onClick="{{ goContainers }}" style="all:unset; box-sizing:border-box; cursor:pointer; padding:9px 12px; border-radius:8px; display:flex; align-items:center; gap:11px; background:var(--accent); color:#fff; font-weight:600; box-shadow: 0 6px 16px -8px var(--accent);"><span style="width:16px;height:16px;border:1.6px solid currentColor;border-radius:4px;display:inline-block;flex-shrink:0;"></span>Containers</button></sc-if>
+      <sc-if value="{{ navContainersOff }}" hint-placeholder-val="{{ true }}"><button onClick="{{ goContainers }}" style="all:unset; box-sizing:border-box; cursor:pointer; padding:9px 12px; border-radius:8px; display:flex; align-items:center; gap:11px; color:var(--muted);"><span style="width:16px;height:16px;border:1.6px solid currentColor;border-radius:4px;display:inline-block;flex-shrink:0;"></span>Containers</button></sc-if>
+      <sc-if value="{{ navMountsOn }}" hint-placeholder-val="{{ false }}"><button onClick="{{ goMounts }}" style="all:unset; box-sizing:border-box; cursor:pointer; padding:9px 12px; border-radius:8px; display:flex; align-items:center; gap:11px; background:var(--accent); color:#fff; font-weight:600; box-shadow: 0 6px 16px -8px var(--accent);"><span style="width:16px;height:11px;border:1.6px solid currentColor;border-radius:3px;display:inline-block;margin:2px 0;flex-shrink:0;"></span>Mounts</button></sc-if>
+      <sc-if value="{{ navMountsOff }}" hint-placeholder-val="{{ true }}"><button onClick="{{ goMounts }}" style="all:unset; box-sizing:border-box; cursor:pointer; padding:9px 12px; border-radius:8px; display:flex; align-items:center; gap:11px; color:var(--muted);"><span style="width:16px;height:11px;border:1.6px solid currentColor;border-radius:3px;display:inline-block;margin:2px 0;flex-shrink:0;"></span>Mounts</button></sc-if>
+      <sc-if value="{{ navStorageOn }}" hint-placeholder-val="{{ false }}"><button onClick="{{ goStorage }}" style="all:unset; box-sizing:border-box; cursor:pointer; padding:9px 12px; border-radius:8px; display:flex; align-items:center; gap:11px; background:var(--accent); color:#fff; font-weight:600; box-shadow: 0 6px 16px -8px var(--accent);"><span style="width:16px;height:16px;border:1.6px solid currentColor;border-radius:50%;display:inline-block;flex-shrink:0;"></span>Storage</button></sc-if>
+      <sc-if value="{{ navStorageOff }}" hint-placeholder-val="{{ true }}"><button onClick="{{ goStorage }}" style="all:unset; box-sizing:border-box; cursor:pointer; padding:9px 12px; border-radius:8px; display:flex; align-items:center; gap:11px; color:var(--muted);"><span style="width:16px;height:16px;border:1.6px solid currentColor;border-radius:50%;display:inline-block;flex-shrink:0;"></span>Storage</button></sc-if>
+    </nav>
+    <div style="margin-top: auto; padding: 14px; border-top: 1px solid var(--line);">
+      <div style="font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 8px;">Current sandbox</div>
+      <div style="font-family: var(--mono); font-size: 12px; color: var(--head); margin-bottom: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">checkout-service-sandbox-3</div>
+      <div style="display: flex; flex-direction: column; gap: 6px; font-family: var(--mono); font-size: 11.5px;">
+        <div style="display:flex; justify-content:space-between;"><span style="color:var(--muted);">files</span><span>4,182</span></div>
+        <div style="display:flex; justify-content:space-between;"><span style="color:var(--muted);">size</span><span>168 MB</span></div>
+        <div style="display:flex; justify-content:space-between;"><span style="color:var(--muted);">agents</span><span style="color:var(--ok);">1 live</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main class="om-scroll" style="flex: 1; min-width: 0; overflow-y: auto;">
+
+    <!-- SANDBOX DETAIL -->
+    <sc-if value="{{ isSandbox }}" hint-placeholder-val="{{ true }}">
+    <div style="padding: 26px 30px 44px; max-width: 1080px;">
+      <div style="font-family: var(--mono); font-size: 12px; color: var(--muted); margin-bottom: 12px;">Projects <span style="opacity:.5;">/</span> <span style="color:var(--text);">checkout-service-sandbox-3</span></div>
+      <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 20px;">
+        <div>
+          <h1 style="margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -.02em; color: var(--head);">checkout-service-sandbox-3</h1>
+          <div style="display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap;">
+            <span style="display:inline-flex; align-items:center; gap:7px; font-size:12.5px; font-family:var(--mono); background:rgba(62,207,142,.12); color:var(--ok); padding:5px 10px; border-radius:999px; box-shadow: inset 0 0 0 1px rgba(62,207,142,.3);"><span style="width:7px;height:7px;border-radius:50%;background:var(--ok);"></span>Ready</span>
+            <span style="font-size:12.5px; font-family:var(--mono); background:var(--soft); color:var(--accent); padding:5px 10px; border-radius:999px; box-shadow: inset 0 0 0 1px rgba(168,85,247,.3);">copy · completed</span>
+            <span style="font-size:12.5px; font-family:var(--mono); color:var(--muted);">registered 2h ago</span>
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; flex-shrink: 0;">
+          <button style="all:unset; box-sizing:border-box; cursor:pointer; font-size:13px; padding:8px 14px; border-radius:8px; color:var(--text); border:1px solid var(--border); background:var(--panel2); display:inline-flex; align-items:center; gap:8px;"><span style="width:13px;height:13px;border:1.6px solid currentColor;border-top-color:transparent;border-radius:50%;display:inline-block;"></span>Refresh</button>
+          <button style="all:unset; box-sizing:border-box; cursor:pointer; font-size:13px; font-weight:600; padding:8px 16px; border-radius:8px; color:#fff; background:var(--accent); box-shadow: 0 6px 16px -6px var(--accent);">Summon agent</button>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin: 24px 0 6px;">
+        <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 11px; padding: 14px 16px;"><div style="font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);">Sandbox ID</div><div style="font-family: var(--mono); font-size: 14px; color: var(--head); margin-top: 7px;">sbx_9f3c…a1</div></div>
+        <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 11px; padding: 14px 16px;"><div style="font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);">Volume</div><div style="font-family: var(--mono); font-size: 14px; color: var(--accent); margin-top: 7px;">checkout…-vol</div></div>
+        <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 11px; padding: 14px 16px;"><div style="font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);">Copy mode</div><div style="font-family: var(--mono); font-size: 14px; color: var(--head); margin-top: 7px;">snapshot</div></div>
+        <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 11px; padding: 14px 16px;"><div style="font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);">Mountpoint</div><div style="font-family: var(--mono); font-size: 14px; color: var(--head); margin-top: 7px;">/workspace</div></div>
+      </div>
+
+      <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 13px; margin-top: 20px; overflow: hidden;">
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid var(--line);">
+          <div style="display: flex; align-items: center; gap: 10px;"><h2 style="margin:0; font-size:15px; font-weight:600; color:var(--head);">Coding agents</h2><span style="font-size:11px; font-family:var(--mono); color:var(--muted); background:var(--panel2); padding:2px 8px; border-radius:999px;">1 active</span></div>
+          <div style="font-size: 12px; color: var(--muted); font-family: var(--mono);">read-write · /workspace</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-bottom: 1px solid var(--line);">
+          <span style="width: 9px; height: 9px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px rgba(62,207,142,.15); animation: om-pulse 2s infinite;"></span>
+          <div style="flex: 1; min-width: 0;"><div style="font-family: var(--mono); font-size: 13.5px; color: var(--head);">brave-otter-7c2f</div><div style="font-size: 12px; color: var(--muted); margin-top: 2px;">claude · profile <span style="font-family:var(--mono); color:var(--text);">default</span> · running 41m</div></div>
+          <span style="font-size: 11.5px; font-family: var(--mono); color: var(--accent); background: var(--soft); padding: 4px 10px; border-radius: 999px;">attached</span>
+          <button onClick="{{ goTerminal }}" style="all:unset; cursor:pointer; font-size:12.5px; padding:6px 12px; border-radius:7px; color:#fff; background:var(--accent); font-weight:600;">Open</button>
+          <button style="all:unset; cursor:pointer; font-size:12.5px; padding:6px 12px; border-radius:7px; color:var(--err); border:1px solid rgba(240,97,109,.4);">Stop</button>
+        </div>
+        <div style="display: flex; align-items: center; gap: 14px; padding: 14px 18px;">
+          <span style="width: 9px; height: 9px; border-radius: 50%; background: var(--muted);"></span>
+          <div style="flex: 1; min-width: 0;"><div style="font-family: var(--mono); font-size: 13.5px; color: var(--text);">calm-pine-04b8</div><div style="font-size: 12px; color: var(--muted); margin-top: 2px;">codex · profile <span style="font-family:var(--mono); color:var(--text);">review</span> · reviewer · exited</div></div>
+          <span style="font-size: 11.5px; font-family: var(--mono); color: var(--muted);">exited (0)</span>
+          <button style="all:unset; cursor:pointer; font-size:12.5px; padding:6px 12px; border-radius:7px; color:var(--text); border:1px solid var(--border);">Replace</button>
+        </div>
+      </div>
+
+      <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 13px; margin-top: 18px; overflow: hidden;">
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid var(--line);">
+          <div style="display: flex; align-items: center; gap: 10px;"><h2 style="margin:0; font-size:15px; font-weight:600; color:var(--head);">Preview stack</h2><span style="display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-family:var(--mono); color:var(--ok);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok);"></span>running</span></div>
+          <div style="display: flex; gap: 8px;"><button style="all:unset; cursor:pointer; font-size:12.5px; padding:7px 13px; border-radius:8px; color:var(--accent); background:var(--soft); box-shadow: inset 0 0 0 1px var(--soft); display:inline-flex; align-items:center; gap:7px;"><span style="width:12px;height:12px;border:1.6px solid currentColor;border-top-color:transparent;border-radius:50%;display:inline-block;"></span>Inspect for rebuild</button><button style="all:unset; cursor:pointer; font-size:12.5px; padding:7px 13px; border-radius:8px; color:var(--text); border:1px solid var(--border); background:var(--panel2);" onClick="{{ openRebuild }}">Rebuild</button><button style="all:unset; cursor:pointer; font-size:12.5px; font-weight:600; padding:7px 13px; border-radius:8px; color:#fff; background:var(--accent);">Open preview ↗</button></div>
+        </div>
+        <div style="padding: 16px 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+          <div>
+            <div style="font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 10px;">Preview proposal · rev 4</div>
+            <div style="display: flex; flex-direction: column; gap: 8px; font-family: var(--mono); font-size: 12.5px;">
+              <div style="display:flex; justify-content:space-between;"><span style="color:var(--muted);">command</span><span style="color:var(--text);">npm run dev</span></div>
+              <div style="display:flex; justify-content:space-between;"><span style="color:var(--muted);">port</span><span style="color:var(--text);">5173 → 8080</span></div>
+              <div style="display:flex; justify-content:space-between;"><span style="color:var(--muted);">containers</span><span style="color:var(--text);">web · db</span></div>
+            </div>
+          </div>
+          <div style="border-left: 1px solid var(--line); padding-left: 16px;">
+            <div style="font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--warn); margin-bottom: 10px;">Protected runtime files · 2 changed</div>
+            <div style="display: flex; flex-direction: column; gap: 8px; font-family: var(--mono); font-size: 12.5px;">
+              <div style="color: var(--text);"><span style="color:var(--warn);">~</span> Dockerfile</div>
+              <div style="color: var(--text);"><span style="color:var(--warn);">~</span> compose.yaml</div>
+            </div>
+            <label style="display: flex; align-items: center; gap: 9px; margin-top: 14px; font-size: 12.5px; color: var(--text); cursor: pointer;"><span style="width:16px;height:16px;border-radius:4px;background:var(--accent); display:grid;place-items:center; color:#fff; font-size:11px;">✓</span>I approve this exact revision</label>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px;">
+        <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 15px 18px;">
+          <h2 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--head);">Secrets</h2>
+          <div style="display: flex; flex-direction: column; gap: 9px; font-family: var(--mono); font-size: 12.5px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:var(--text);">DATABASE_URL</span><span style="color:var(--muted);">••••••••</span></div>
+            <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:var(--text);">STRIPE_KEY</span><span style="color:var(--muted);">••••••••</span></div>
+            <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:var(--text);">JWT_SECRET</span><span style="color:var(--muted);">••••••••</span></div>
+          </div>
+        </div>
+        <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 15px 18px;">
+          <h2 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--head);">Database guest</h2>
+          <p style="margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.5;">Writing to schema <span style="font-family:var(--mono); color:var(--text);">checkout-service-sandbox-1</span> on the shared server. This sandbox never migrates or seeds it.</p>
+          <button style="all:unset; cursor:pointer; margin-top:14px; font-size:12.5px; padding:6px 13px; border-radius:8px; color:var(--text); border:1px solid var(--border);">Detach guest</button>
+        </div>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- PROJECTS -->
+    <sc-if value="{{ isProjects }}" hint-placeholder-val="{{ false }}">
+    <div style="padding: 26px 30px 44px; max-width: 1080px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 20px;">
+        <h1 style="margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -.02em; color: var(--head);">Projects</h1>
+        <button style="all:unset; box-sizing:border-box; cursor:pointer; font-size:13px; font-weight:600; padding:8px 16px; border-radius:8px; color:#fff; background:var(--accent); box-shadow: 0 6px 16px -6px var(--accent);">Create sandbox</button>
+      </div>
+      <p style="margin: 14px 0 0; font-size: 13.5px; color: var(--muted); line-height: 1.6; max-width: 640px;">Each sandbox is a one-time snapshot of a host folder copied into a dedicated Docker volume. Later edits to the source folder do not sync.</p>
+
+      <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 13px; margin-top: 22px; overflow: hidden;">
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line);">
+          <div style="display: flex; align-items: center; gap: 10px;"><h2 style="margin:0; font-size:15px; font-weight:600; color:var(--head);">Project sandboxes</h2><span style="font-size:11px; font-family:var(--mono); color:var(--muted); background:var(--panel2); padding:2px 8px; border-radius:999px;">4</span></div>
+          <button style="all:unset; cursor:pointer; font-size:12.5px; padding:6px 12px; border-radius:7px; color:var(--text); border:1px solid var(--border);">Refresh</button>
+        </div>
+        <div style="display: grid; grid-template-columns: 1.6fr 1fr 1.1fr 0.7fr 0.7fr 0.9fr; padding: 10px 18px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); border-bottom: 1px solid var(--line);"><div>Name</div><div>Source folder</div><div>Volume</div><div style="text-align:right;">Files</div><div style="text-align:right;">Size</div><div>Copy</div></div>
+        <button onClick="{{ goSandbox }}" style="all:unset; box-sizing:border-box; cursor:pointer; width:100%; display: grid; grid-template-columns: 1.6fr 1fr 1.1fr 0.7fr 0.7fr 0.9fr; align-items:center; padding: 13px 18px; border-bottom: 1px solid var(--line); background: var(--soft);"><div style="font-family:var(--mono); font-size:13px; color:var(--accent);">checkout-service-sandbox-3</div><div style="font-family:var(--mono); font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">/Users/ren/dev/checkout…</div><div style="font-family:var(--mono); font-size:12px; color:var(--text);">checkout…-vol</div><div style="font-family:var(--mono); font-size:12.5px; color:var(--text); text-align:right;">4,182</div><div style="font-family:var(--mono); font-size:12.5px; color:var(--text); text-align:right;">168 MB</div><div><span style="display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-family:var(--mono); color:var(--ok);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok);"></span>done</span></div></button>
+        <div style="display: grid; grid-template-columns: 1.6fr 1fr 1.1fr 0.7fr 0.7fr 0.9fr; align-items:center; padding: 13px 18px; border-bottom: 1px solid var(--line);"><div style="font-family:var(--mono); font-size:13px; color:var(--text);">web-dashboard-sandbox-2</div><div style="font-family:var(--mono); font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">/Users/ren/dev/dashboard</div><div style="font-family:var(--mono); font-size:12px; color:var(--text);">web-dash…-vol</div><div style="font-family:var(--mono); font-size:12.5px; color:var(--text); text-align:right;">2,913</div><div style="font-family:var(--mono); font-size:12.5px; color:var(--text); text-align:right;">94 MB</div><div><span style="display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-family:var(--mono); color:var(--ok);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok);"></span>done</span></div></div>
+        <div style="display: grid; grid-template-columns: 1.6fr 1fr 1.1fr 0.7fr 0.7fr 0.9fr; align-items:center; padding: 13px 18px; border-bottom: 1px solid var(--line);"><div style="font-family:var(--mono); font-size:13px; color:var(--text);">payments-api-sandbox-5</div><div style="font-family:var(--mono); font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">/Users/ren/dev/payments</div><div style="font-family:var(--mono); font-size:12px; color:var(--text);">payments…-vol</div><div style="font-family:var(--mono); font-size:12.5px; color:var(--text); text-align:right;">—</div><div style="font-family:var(--mono); font-size:12.5px; color:var(--text); text-align:right;">—</div><div><span style="display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-family:var(--mono); color:var(--warn);"><span style="width:6px;height:6px;border-radius:50%;background:var(--warn); animation: om-pulse 2s infinite;"></span>copying</span></div></div>
+        <div style="display: grid; grid-template-columns: 1.6fr 1fr 1.1fr 0.7fr 0.7fr 0.9fr; align-items:center; padding: 13px 18px;"><div style="font-family:var(--mono); font-size:13px; color:var(--text);">docs-site-sandbox-1</div><div style="font-family:var(--mono); font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">/Users/ren/dev/docs-site</div><div style="font-family:var(--mono); font-size:12px; color:var(--text);">docs-site-vol</div><div style="font-family:var(--mono); font-size:12.5px; color:var(--text); text-align:right;">640</div><div style="font-family:var(--mono); font-size:12.5px; color:var(--text); text-align:right;">22 MB</div><div><span style="display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-family:var(--mono); color:var(--ok);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok);"></span>done</span></div></div>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- CONTAINERS -->
+    <sc-if value="{{ isContainers }}" hint-placeholder-val="{{ false }}">
+    <div style="padding: 26px 30px 44px; max-width: 1080px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 20px;">
+        <h1 style="margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -.02em; color: var(--head);">Containers</h1>
+        <button style="all:unset; cursor:pointer; font-size:12.5px; padding:8px 14px; border-radius:8px; color:var(--text); border:1px solid var(--border); background:var(--panel2);">Refresh</button>
+      </div>
+      <div style="display: flex; gap: 8px; margin: 18px 0 4px; flex-wrap: wrap;">
+        <span style="font-size:12.5px; font-family:var(--mono); padding:5px 12px; border-radius:999px; color:var(--head); background:var(--soft); box-shadow: inset 0 0 0 1px rgba(168,85,247,.3);">all · 6</span>
+        <span style="font-size:12.5px; font-family:var(--mono); padding:5px 12px; border-radius:999px; color:var(--muted); box-shadow: inset 0 0 0 1px var(--border);">running · 4</span>
+        <span style="font-size:12.5px; font-family:var(--mono); padding:5px 12px; border-radius:999px; color:var(--muted); box-shadow: inset 0 0 0 1px var(--border);">exited · 2</span>
+      </div>
+      <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 13px; margin-top: 16px; overflow: hidden;">
+        <div style="display: grid; grid-template-columns: 1.7fr 1.3fr 0.9fr 1.4fr 0.9fr; padding: 11px 18px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); border-bottom: 1px solid var(--line);"><div>Container</div><div>Image</div><div>Status</div><div>CPU · Mem</div><div>Sandbox</div></div>
+        <div style="display:grid; grid-template-columns: 1.7fr 1.3fr 0.9fr 1.4fr 0.9fr; align-items:center; padding: 13px 18px; border-bottom: 1px solid var(--line);"><div style="font-family:var(--mono); font-size:12.5px; color:var(--head);">preview-web-3f1a</div><div style="font-family:var(--mono); font-size:12px; color:var(--muted);">node:20-slim</div><div><span style="display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-family:var(--mono); color:var(--ok);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok);"></span>running</span></div><div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; height:6px; border-radius:3px; background:rgba(168,85,247,.18); overflow:hidden;"><div style="width:34%; height:100%; background:var(--accent);"></div></div><span style="font-family:var(--mono); font-size:11px; color:var(--muted); white-space:nowrap;">34% · 412M</span></div><div style="font-family:var(--mono); font-size:11.5px; color:var(--text);">checkout-3</div></div>
+        <div style="display:grid; grid-template-columns: 1.7fr 1.3fr 0.9fr 1.4fr 0.9fr; align-items:center; padding: 13px 18px; border-bottom: 1px solid var(--line);"><div style="font-family:var(--mono); font-size:12.5px; color:var(--head);">preview-db-3f1a</div><div style="font-family:var(--mono); font-size:12px; color:var(--muted);">postgres:16</div><div><span style="display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-family:var(--mono); color:var(--ok);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok);"></span>running</span></div><div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; height:6px; border-radius:3px; background:rgba(168,85,247,.18); overflow:hidden;"><div style="width:12%; height:100%; background:var(--accent);"></div></div><span style="font-family:var(--mono); font-size:11px; color:var(--muted); white-space:nowrap;">12% · 208M</span></div><div style="font-family:var(--mono); font-size:11.5px; color:var(--text);">checkout-3</div></div>
+        <div style="display:grid; grid-template-columns: 1.7fr 1.3fr 0.9fr 1.4fr 0.9fr; align-items:center; padding: 13px 18px; border-bottom: 1px solid var(--line);"><div style="font-family:var(--mono); font-size:12.5px; color:var(--head);">agent-brave-otter</div><div style="font-family:var(--mono); font-size:12px; color:var(--muted);">claude-code:latest</div><div><span style="display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-family:var(--mono); color:var(--ok);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok);"></span>running</span></div><div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; height:6px; border-radius:3px; background:rgba(168,85,247,.18); overflow:hidden;"><div style="width:58%; height:100%; background:var(--accent);"></div></div><span style="font-family:var(--mono); font-size:11px; color:var(--muted); white-space:nowrap;">58% · 690M</span></div><div style="font-family:var(--mono); font-size:11.5px; color:var(--text);">checkout-3</div></div>
+        <div style="display:grid; grid-template-columns: 1.7fr 1.3fr 0.9fr 1.4fr 0.9fr; align-items:center; padding: 13px 18px; border-bottom: 1px solid var(--line);"><div style="font-family:var(--mono); font-size:12.5px; color:var(--head);">shared-db-server</div><div style="font-family:var(--mono); font-size:12px; color:var(--muted);">postgres:16</div><div><span style="display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-family:var(--mono); color:var(--ok);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok);"></span>running</span></div><div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; height:6px; border-radius:3px; background:rgba(168,85,247,.18); overflow:hidden;"><div style="width:22%; height:100%; background:var(--accent);"></div></div><span style="font-family:var(--mono); font-size:11px; color:var(--muted); white-space:nowrap;">22% · 340M</span></div><div style="font-family:var(--mono); font-size:11.5px; color:var(--muted);">shared</div></div>
+        <div style="display:grid; grid-template-columns: 1.7fr 1.3fr 0.9fr 1.4fr 0.9fr; align-items:center; padding: 13px 18px; border-bottom: 1px solid var(--line);"><div style="font-family:var(--mono); font-size:12.5px; color:var(--text);">preview-web-9b22</div><div style="font-family:var(--mono); font-size:12px; color:var(--muted);">node:20-slim</div><div><span style="display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-family:var(--mono); color:var(--muted);"><span style="width:6px;height:6px;border-radius:50%;background:var(--muted);"></span>exited</span></div><div style="font-family:var(--mono); font-size:11px; color:var(--muted);">—</div><div style="font-family:var(--mono); font-size:11.5px; color:var(--text);">dashboard-2</div></div>
+        <div style="display:grid; grid-template-columns: 1.7fr 1.3fr 0.9fr 1.4fr 0.9fr; align-items:center; padding: 13px 18px;"><div style="font-family:var(--mono); font-size:12.5px; color:var(--text);">copy-helper-payments</div><div style="font-family:var(--mono); font-size:12px; color:var(--muted);">alpine:3.20</div><div><span style="display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-family:var(--mono); color:var(--muted);"><span style="width:6px;height:6px;border-radius:50%;background:var(--muted);"></span>exited</span></div><div style="font-family:var(--mono); font-size:11px; color:var(--muted);">—</div><div style="font-family:var(--mono); font-size:11.5px; color:var(--text);">payments-5</div></div>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- MOUNTS -->
+    <sc-if value="{{ isMounts }}" hint-placeholder-val="{{ false }}">
+    <div style="padding: 26px 30px 44px; max-width: 1080px;">
+      <h1 style="margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -.02em; color: var(--head);">Mounts</h1>
+      <p style="margin: 14px 0 0; font-size: 13.5px; color: var(--muted); line-height: 1.6; max-width: 640px;">Docker volumes mounted into sandboxes and preview stacks. Managed volumes hold sandbox snapshots; credential volumes hold provider logins.</p>
+      <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 13px; margin-top: 20px; overflow: hidden;">
+        <div style="display: grid; grid-template-columns: 1.8fr 1fr 0.9fr 1fr; padding: 11px 18px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); border-bottom: 1px solid var(--line);"><div>Volume</div><div>Kind</div><div style="text-align:right;">Size</div><div>Mounted by</div></div>
+        <div style="display:grid; grid-template-columns: 1.8fr 1fr 0.9fr 1fr; align-items:center; padding: 13px 18px; border-bottom: 1px solid var(--line);"><div style="font-family:var(--mono); font-size:12.5px; color:var(--accent);">checkout-service-sandbox-3-vol</div><div style="font-family:var(--mono); font-size:12px; color:var(--text);">managed</div><div style="font-family:var(--mono); font-size:12.5px; color:var(--text); text-align:right;">168 MB</div><div style="font-family:var(--mono); font-size:11.5px; color:var(--text);">agent · web</div></div>
+        <div style="display:grid; grid-template-columns: 1.8fr 1fr 0.9fr 1fr; align-items:center; padding: 13px 18px; border-bottom: 1px solid var(--line);"><div style="font-family:var(--mono); font-size:12.5px; color:var(--text);">cred-claude-default</div><div style="font-family:var(--mono); font-size:12px; color:var(--text);">credential</div><div style="font-family:var(--mono); font-size:12.5px; color:var(--text); text-align:right;">3 MB</div><div style="font-family:var(--mono); font-size:11.5px; color:var(--text);">agent</div></div>
+        <div style="display:grid; grid-template-columns: 1.8fr 1fr 0.9fr 1fr; align-items:center; padding: 13px 18px; border-bottom: 1px solid var(--line);"><div style="font-family:var(--mono); font-size:12.5px; color:var(--text);">web-dashboard-sandbox-2-vol</div><div style="font-family:var(--mono); font-size:12px; color:var(--text);">managed</div><div style="font-family:var(--mono); font-size:12.5px; color:var(--text); text-align:right;">94 MB</div><div style="font-family:var(--mono); font-size:11.5px; color:var(--muted);">—</div></div>
+        <div style="display:grid; grid-template-columns: 1.8fr 1fr 0.9fr 1fr; align-items:center; padding: 13px 18px;"><div style="font-family:var(--mono); font-size:12.5px; color:var(--text);">shared-db-data</div><div style="font-family:var(--mono); font-size:12px; color:var(--text);">shared-db</div><div style="font-family:var(--mono); font-size:12.5px; color:var(--text); text-align:right;">1.2 GB</div><div style="font-family:var(--mono); font-size:11.5px; color:var(--text);">shared-db-server</div></div>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- STORAGE -->
+    <sc-if value="{{ isStorage }}" hint-placeholder-val="{{ false }}">
+    <div style="padding: 26px 30px 44px; max-width: 1080px;">
+      <h1 style="margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -.02em; color: var(--head);">Storage status</h1>
+      <div style="display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; margin-top: 22px;">
+        <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 18px 20px;"><div style="font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);">Total volumes</div><div style="font-size: 40px; font-weight: 600; color: var(--head); margin-top: 6px; letter-spacing: -.02em;">1.5 <span style="font-size:18px; color:var(--muted); font-weight:400;">GB</span></div><div style="font-size: 12px; color: var(--muted); margin-top: 4px; font-family: var(--mono);">across 6 volumes</div></div>
+        <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 18px 20px;"><div style="font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);">In use</div><div style="font-size: 40px; font-weight: 600; color: var(--head); margin-top: 6px; letter-spacing: -.02em;">1.16 <span style="font-size:18px; color:var(--muted); font-weight:400;">GB</span></div><div style="display:flex; align-items:center; gap:7px; margin-top:8px; font-size:12px; color:var(--muted); font-family:var(--mono);"><span style="width:10px;height:10px;border-radius:2px;background:var(--accent);"></span>active sandboxes</div></div>
+        <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 18px 20px;"><div style="font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);">Reclaimable</div><div style="font-size: 40px; font-weight: 600; color: var(--head); margin-top: 6px; letter-spacing: -.02em;">340 <span style="font-size:18px; color:var(--muted); font-weight:400;">MB</span></div><div style="display:flex; align-items:center; gap:7px; margin-top:8px; font-size:12px; color:var(--muted); font-family:var(--mono);"><span style="width:10px;height:10px;border-radius:2px;background:var(--warn);"></span>dangling · exited</div></div>
+      </div>
+      <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 13px; margin-top: 18px; overflow: hidden;">
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid var(--line);"><h2 style="margin:0; font-size:15px; font-weight:600; color:var(--head);">By volume</h2><button style="all:unset; cursor:pointer; font-size:12.5px; padding:6px 12px; border-radius:7px; color:var(--warn); border:1px solid rgba(230,162,60,.4);">Prune reclaimable</button></div>
+        <div style="padding: 8px 18px 16px;">
+          <div style="display:flex; align-items:center; gap:14px; padding: 12px 0; border-bottom: 1px solid var(--line);"><div style="width:220px; font-family:var(--mono); font-size:12.5px; color:var(--text);">checkout…-vol</div><div style="flex:1; display:flex; height:14px;"><div style="width:70%; height:100%; background:var(--accent); border-radius:3px 0 0 3px;"></div><div style="width:6%; height:100%; background:var(--warn); border-radius:0 3px 3px 0; margin-left:2px;"></div></div><span style="font-family:var(--mono); font-size:12px; color:var(--muted); width:64px; text-align:right;">168 MB</span></div>
+          <div style="display:flex; align-items:center; gap:14px; padding: 12px 0; border-bottom: 1px solid var(--line);"><div style="width:220px; font-family:var(--mono); font-size:12.5px; color:var(--text);">shared-db-data</div><div style="flex:1; display:flex; height:14px;"><div style="width:88%; height:100%; background:var(--accent); border-radius:3px;"></div></div><span style="font-family:var(--mono); font-size:12px; color:var(--muted); width:64px; text-align:right;">1.2 GB</span></div>
+          <div style="display:flex; align-items:center; gap:14px; padding: 12px 0; border-bottom: 1px solid var(--line);"><div style="width:220px; font-family:var(--mono); font-size:12.5px; color:var(--text);">web-dash…-vol</div><div style="flex:1; display:flex; height:14px;"><div style="width:40%; height:100%; background:var(--accent); border-radius:3px;"></div></div><span style="font-family:var(--mono); font-size:12px; color:var(--muted); width:64px; text-align:right;">94 MB</span></div>
+          <div style="display:flex; align-items:center; gap:14px; padding: 12px 0;"><div style="width:220px; font-family:var(--mono); font-size:12.5px; color:var(--text);">copy-helper (dangling)</div><div style="flex:1; display:flex; height:14px;"><div style="width:18%; height:100%; background:var(--warn); border-radius:3px;"></div></div><span style="font-family:var(--mono); font-size:12px; color:var(--muted); width:64px; text-align:right;">40 MB</span></div>
+        </div>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- FULL-SCREEN AGENT TERMINAL -->
+    <sc-if value="{{ isTerminal }}" hint-placeholder-val="{{ false }}">
+    <div style="height: 100vh; min-height: 720px; display: flex; flex-direction: column; background: #0a0a0d;">
+      <header style="display: flex; align-items: center; gap: 16px; padding: 14px 22px; border-bottom: 1px solid var(--border); background: var(--panel);">
+        <button onClick="{{ goSandbox }}" style="all:unset; cursor:pointer; font-size:12.5px; font-family:var(--mono); color:var(--muted);">← checkout-service-sandbox-3</button>
+        <div style="width:1px; height:20px; background:var(--border);"></div>
+        <span style="width: 9px; height: 9px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px rgba(62,207,142,.15); animation: om-pulse 2s infinite;"></span>
+        <div>
+          <div style="font-family: var(--mono); font-size: 14px; color: var(--head);">brave-otter-7c2f</div>
+          <div style="font-size: 11.5px; color: var(--muted); font-family: var(--mono);">claude · profile default · workspace /workspace · started 41m ago</div>
+        </div>
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 10px;">
+          <span style="display:inline-flex; align-items:center; gap:7px; font-size:12px; font-family:var(--mono); color:var(--ok); background:rgba(62,207,142,.1); padding:6px 11px; border-radius:999px;"><span style="width:7px;height:7px;border-radius:50%;background:var(--ok);"></span>Connected · 168×48</span>
+          <button style="all:unset; cursor:pointer; font-size:12.5px; font-family:var(--mono); padding:7px 13px; border-radius:8px; color:var(--text); border:1px solid var(--border);">↻ Reconnect</button>
+          <button onClick="{{ goSandbox }}" style="all:unset; cursor:pointer; font-size:12.5px; font-family:var(--mono); padding:7px 13px; border-radius:8px; color:var(--text); border:1px solid var(--border);">⤡ Restore</button>
+        </div>
+      </header>
+      <div class="om-scroll" style="flex: 1; overflow-y: auto; padding: 20px 26px; font-family: var(--mono); font-size: 13px; line-height: 1.75; color: #d4d4dd;">
+        <div style="color: var(--muted);">Last login: agent session reattached · pty 168×48</div>
+        <div style="height: 10px;"></div>
+        <div style="color: var(--accent);">brave-otter@/workspace<span style="color:var(--muted);">$</span> claude</div>
+        <div style="color: var(--muted);">● Analyzing checkout-service…</div>
+        <div>I'll add idempotency keys to the charge endpoint so retried requests don't double-charge.</div>
+        <div style="height: 10px;"></div>
+        <div style="color: var(--ok);">● Read <span style="color:#d4d4dd;">src/routes/charge.ts</span> (142 lines)</div>
+        <div style="color: var(--ok);">● Read <span style="color:#d4d4dd;">src/lib/idempotency.ts</span> (61 lines)</div>
+        <div style="color: var(--ok);">● Edited <span style="color:#d4d4dd;">src/routes/charge.ts</span></div>
+        <div style="color: var(--muted); padding-left: 16px;">   const router = Router()</div>
+        <div style="color: var(--ok); padding-left: 16px;">+  const key = req.header('Idempotency-Key')</div>
+        <div style="color: var(--ok); padding-left: 16px;">+  if (!key) return res.status(400).json({ error: 'missing key' })</div>
+        <div style="color: var(--ok); padding-left: 16px;">+  const cached = await store.seen(key)</div>
+        <div style="color: var(--ok); padding-left: 16px;">+  if (cached) return res.json(cached)</div>
+        <div style="height: 10px;"></div>
+        <div style="color: var(--ok);">● Ran <span style="color:#d4d4dd;">npm test -- charge</span></div>
+        <div style="color: var(--muted); padding-left: 16px;">PASS  src/routes/charge.test.ts</div>
+        <div style="color: var(--muted); padding-left: 16px;">  ✓ rejects requests without a key (4 ms)</div>
+        <div style="color: var(--muted); padding-left: 16px;">  ✓ returns cached result for a repeated key (7 ms)</div>
+        <div style="color: var(--ok); padding-left: 16px;">Tests:  12 passed, 0 failed  (3.1s)</div>
+        <div style="height: 10px;"></div>
+        <div>Tests pass. Want me to open a preview to verify the flow end to end, or commit this first?</div>
+        <div style="margin-top: 8px; color: var(--accent);">brave-otter@/workspace<span style="color:var(--muted);">$</span> <span style="display:inline-block; width:9px; height:16px; background:var(--accent); vertical-align:-2px; animation: om-blink 1.1s step-end infinite;"></span></div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; padding: 11px 22px; border-top: 1px solid var(--border); background: var(--panel); font-family: var(--mono); font-size: 11.5px; color: var(--muted);">
+        <span style="display:inline-flex; align-items:center; gap:6px; color:var(--ok);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok);"></span>live</span>
+        <span>ws · agent socket · binary frames</span>
+        <span style="margin-left: auto;">Leaving detaches the terminal — the agent keeps running.</span>
+      </div>
+    </div>
+    </sc-if>
+
+  </main>
+
+  <!-- ============ RIGHT TERMINAL DOCK ============ -->
+  <sc-if value="{{ showDock }}" hint-placeholder-val="{{ true }}">
+  <aside style="width: 500px; flex-shrink: 0; background: #0a0a0d; border-left: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0;">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--line); background: var(--panel);">
+      <span style="width: 9px; height: 9px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(62,207,142,.18);"></span>
+      <div style="min-width: 0; flex: 1;">
+        <div style="font-family: var(--mono); font-size: 12.5px; color: var(--head); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">brave-otter-7c2f</div>
+        <div style="font-size: 10.5px; color: var(--muted); font-family: var(--mono);">claude · Connected · 96×34</div>
+      </div>
+      <div style="display: flex; gap: 4px;">
+        <button onClick="{{ goTerminal }}" title="Maximize" style="all:unset; cursor:pointer; width:26px; height:26px; border-radius:7px; display:grid; place-items:center; color:var(--muted); border:1px solid var(--border);">⤢</button>
+        <button title="Reconnect" style="all:unset; cursor:pointer; width:26px; height:26px; border-radius:7px; display:grid; place-items:center; color:var(--muted); border:1px solid var(--border);">↻</button>
+        <button onClick="{{ closeDock }}" title="Collapse" style="all:unset; cursor:pointer; width:26px; height:26px; border-radius:7px; display:grid; place-items:center; color:var(--muted); border:1px solid var(--border);">✕</button>
+      </div>
+    </div>
+    <div class="om-scroll" style="flex: 1; overflow-y: auto; padding: 14px 16px; font-family: var(--mono); font-size: 12.5px; line-height: 1.7; color: #cfcfd8;">
+      <div style="color: var(--accent);">brave-otter@/workspace<span style="color:var(--muted);">$</span> claude</div>
+      <div style="color: var(--muted);">● Analyzing checkout-service…</div>
+      <div style="color: #cfcfd8;">I'll add idempotency keys to the charge endpoint.</div>
+      <div style="height: 8px;"></div>
+      <div style="color: var(--ok);">● Read <span style="color:#cfcfd8;">src/routes/charge.ts</span> (142 lines)</div>
+      <div style="color: var(--ok);">● Edited <span style="color:#cfcfd8;">src/routes/charge.ts</span></div>
+      <div style="color: var(--muted); padding-left: 14px;">+ const key = req.header('Idempotency-Key')</div>
+      <div style="color: var(--muted); padding-left: 14px;">+ if (await store.seen(key)) return cached(key)</div>
+      <div style="height: 8px;"></div>
+      <div style="color: var(--ok);">● Ran <span style="color:#cfcfd8;">npm test -- charge</span></div>
+      <div style="color: var(--muted); padding-left: 14px;">PASS  12 passed, 0 failed  (3.1s)</div>
+      <div style="height: 8px;"></div>
+      <div style="color: #cfcfd8;">Tests pass. Want me to open a preview to verify the flow end to end?</div>
+      <div style="margin-top: 6px; color: var(--accent);">brave-otter@/workspace<span style="color:var(--muted);">$</span> <span style="display:inline-block; width:8px; height:15px; background:var(--accent); vertical-align:-2px; animation: om-blink 1.1s step-end infinite;"></span></div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--panel); font-family: var(--mono); font-size: 11px; color: var(--muted);">
+      <span style="display:inline-flex; align-items:center; gap:6px; color:var(--ok);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok);"></span>live</span>
+      <span>ws · agent socket</span>
+      <span style="margin-left: auto;">scrollback 10k</span>
+    </div>
+  </aside>
+  </sc-if>
+
+  <sc-if value="{{ dockCollapsed }}" hint-placeholder-val="{{ false }}">
+  <aside style="width: 46px; flex-shrink: 0; background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; padding: 12px 0; gap: 12px;">
+    <button onClick="{{ openDock }}" title="Open terminal" style="all:unset; cursor:pointer; width:30px; height:30px; border-radius:8px; display:grid; place-items:center; color:var(--accent); border:1px solid var(--border);">⌥</button>
+    <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(62,207,142,.15);"></span>
+    <div style="writing-mode: vertical-rl; font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: .05em;">brave-otter · Connected</div>
+  </aside>
+  </sc-if>
+
+  <!-- ============ REBUILD MODAL ============ -->
+  <sc-if value="{{ rebuildOpen }}" hint-placeholder-val="{{ false }}">
+  <div style="position: fixed; inset: 0; z-index: 50; background: rgba(6,6,9,.62); backdrop-filter: blur(2px); display: grid; place-items: center; padding: 24px;">
+    <div style="width: min(720px, 94vw); background: var(--panel); border: 1px solid var(--border); border-radius: 15px; overflow: hidden; box-shadow: 0 40px 90px -30px rgba(0,0,0,.8); animation: om-rise .18s ease both;">
+
+      <!-- header -->
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 17px 20px; border-bottom: 1px solid var(--line);">
+        <div style="display: flex; align-items: center; gap: 11px;">
+          <div style="width: 30px; height: 30px; border-radius: 8px; background: var(--soft); display: grid; place-items: center; color: var(--accent);"><span style="width:15px;height:15px;border:1.7px solid currentColor;border-radius:4px;display:inline-block;position:relative;"><span style="position:absolute;inset:3px 4px auto 3px;height:1.7px;background:currentColor;"></span></span></div>
+          <div>
+            <h2 style="margin: 0; font-size: 15.5px; font-weight: 600; color: var(--head);">Rebuild preview stack</h2>
+            <div style="font-size: 11.5px; color: var(--muted); font-family: var(--mono); margin-top: 2px;">checkout-service-sandbox-3 · proposal rev 4</div>
+          </div>
+        </div>
+        <button onClick="{{ closeRebuild }}" style="all:unset; cursor:pointer; width:28px; height:28px; border-radius:8px; display:grid; place-items:center; color:var(--muted); border:1px solid var(--border);">✕</button>
+      </div>
+
+      <!-- OPTIONS STATE -->
+      <sc-if value="{{ rebuildOptions }}" hint-placeholder-val="{{ true }}">
+      <div style="padding: 18px 20px;">
+        <div style="border: 1px solid var(--border); border-radius: 11px; background: var(--panel2); padding: 14px 16px; margin-bottom: 20px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <div style="font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);">Preview proposal</div>
+            <span style="font-family: var(--mono); font-size: 11px; color: var(--accent); background: var(--soft); padding: 2px 9px; border-radius: 999px;">rev 4</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+            <div style="display: flex; flex-direction: column; gap: 8px; font-family: var(--mono); font-size: 12px;">
+              <div style="display:flex; justify-content:space-between; gap:12px;"><span style="color:var(--muted);">command</span><span style="color:var(--text);">npm run dev</span></div>
+              <div style="display:flex; justify-content:space-between; gap:12px;"><span style="color:var(--muted);">port</span><span style="color:var(--text);">5173 → 8080</span></div>
+              <div style="display:flex; justify-content:space-between; gap:12px;"><span style="color:var(--muted);">containers</span><span style="color:var(--text);">web · db</span></div>
+            </div>
+            <div style="border-left: 1px solid var(--line); padding-left: 16px;">
+              <div style="font-size: 11px; color: var(--warn); margin-bottom: 8px;">Protected runtime files · 2 changed</div>
+              <div style="display: flex; flex-direction: column; gap: 6px; font-family: var(--mono); font-size: 12px; color: var(--text);">
+                <div><span style="color:var(--warn);">~</span> Dockerfile</div>
+                <div><span style="color:var(--warn);">~</span> compose.yaml</div>
+              </div>
+            </div>
+          </div>
+          <label style="display:flex; align-items:center; gap:10px; margin-top:14px; padding-top:13px; border-top:1px solid var(--line); font-size:12.5px; color:var(--text); cursor:pointer;"><span style="width:17px;height:17px;border-radius:5px;background:var(--accent); display:grid;place-items:center; color:#fff; font-size:11px; flex-shrink:0;">✓</span>I approve this exact revision (rev 4) for rebuild</label>
+        </div>
+        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 11px;">Containers to rebuild</div>
+        <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px;">
+          <label style="display:flex; align-items:center; gap:12px; padding:11px 14px; border:1px solid var(--border); border-radius:10px; background:var(--panel2); cursor:pointer;">
+            <span style="width:17px;height:17px;border-radius:5px;background:var(--accent); display:grid;place-items:center; color:#fff; font-size:11px; flex-shrink:0;">✓</span>
+            <div style="flex:1;"><div style="font-family:var(--mono); font-size:13px; color:var(--head);">preview-web</div><div style="font-size:11.5px; color:var(--muted); margin-top:2px;">node:20-slim · Dockerfile changed</div></div>
+            <span style="font-size:11px; font-family:var(--mono); color:var(--warn);">~ modified</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:12px; padding:11px 14px; border:1px solid var(--border); border-radius:10px; cursor:pointer;">
+            <span style="width:17px;height:17px;border-radius:5px;border:1.6px solid var(--border); flex-shrink:0;"></span>
+            <div style="flex:1;"><div style="font-family:var(--mono); font-size:13px; color:var(--text);">preview-db</div><div style="font-size:11.5px; color:var(--muted); margin-top:2px;">postgres:16 · unchanged</div></div>
+            <span style="font-size:11px; font-family:var(--mono); color:var(--muted);">reuse</span>
+          </label>
+        </div>
+
+        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 11px;">Build options</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 18px;">
+          <label style="display:flex; align-items:center; gap:10px; padding:10px 13px; border:1px solid var(--border); border-radius:10px; background:var(--panel2); cursor:pointer; font-size:12.5px; color:var(--text);"><span style="width:16px;height:16px;border-radius:4px;background:var(--accent); display:grid;place-items:center; color:#fff; font-size:10px; flex-shrink:0;">✓</span>No cache</label>
+          <label style="display:flex; align-items:center; gap:10px; padding:10px 13px; border:1px solid var(--border); border-radius:10px; cursor:pointer; font-size:12.5px; color:var(--text);"><span style="width:16px;height:16px;border-radius:4px;border:1.6px solid var(--border); flex-shrink:0;"></span>Pull base images</label>
+          <label style="display:flex; align-items:center; gap:10px; padding:10px 13px; border:1px solid var(--border); border-radius:10px; cursor:pointer; font-size:12.5px; color:var(--text);"><span style="width:16px;height:16px;border-radius:4px;border:1.6px solid var(--border); flex-shrink:0;"></span>Recreate volumes</label>
+          <label style="display:flex; align-items:center; gap:10px; padding:10px 13px; border:1px solid var(--border); border-radius:10px; background:var(--panel2); cursor:pointer; font-size:12.5px; color:var(--text);"><span style="width:16px;height:16px;border-radius:4px;background:var(--accent); display:grid;place-items:center; color:#fff; font-size:10px; flex-shrink:0;">✓</span>Restart stack after</label>
+        </div>
+
+      </div>
+      <div style="display: flex; align-items: center; justify-content: flex-end; gap: 9px; padding: 15px 20px; border-top: 1px solid var(--line);">
+        <button onClick="{{ closeRebuild }}" style="all:unset; cursor:pointer; font-size:13px; padding:8px 15px; border-radius:8px; color:var(--text); border:1px solid var(--border);">Cancel</button>
+        <button onClick="{{ startRebuild }}" style="all:unset; cursor:pointer; font-size:13px; font-weight:600; padding:8px 17px; border-radius:8px; color:#fff; background:var(--accent); box-shadow: 0 6px 16px -6px var(--accent);">Start rebuild</button>
+      </div>
+      </sc-if>
+
+      <!-- RUNNING / TERMINAL STATE -->
+      <sc-if value="{{ rebuilding }}" hint-placeholder-val="{{ false }}">
+      <div style="padding: 16px 20px 6px;">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+          <span style="width:14px; height:14px; border-radius:50%; border:2px solid var(--accent); border-top-color:transparent; display:inline-block; animation: om-spin .8s linear infinite;"></span>
+          <span style="font-size: 13px; color: var(--head); font-weight: 500;">Building preview-web</span>
+          <span style="font-family: var(--mono); font-size: 11.5px; color: var(--muted);">step 6 / 9</span>
+          <span style="margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--accent);">--no-cache</span>
+        </div>
+        <div style="height: 6px; border-radius: 3px; background: var(--panel2); overflow: hidden; margin-bottom: 14px;"><div style="height: 100%; border-radius: 3px; background: var(--accent); animation: om-fill 9s ease-out forwards;"></div></div>
+      </div>
+      <div class="om-scroll" style="margin: 0 20px 16px; height: 300px; overflow-y: auto; background: #0a0a0d; border: 1px solid var(--line); border-radius: 11px; padding: 14px 16px; font-family: var(--mono); font-size: 12px; line-height: 1.7; color: #cfcfd8;">
+        <div style="color: var(--accent);">$ orchestrator preview rebuild --no-cache web</div>
+        <div style="color: var(--muted);">● Resolving preview proposal rev 4</div>
+        <div style="color: var(--muted);">● Approval valid — protected files unchanged since rev 4</div>
+        <div style="height: 6px;"></div>
+        <div style="color: #cfcfd8;">[+] Building preview-web</div>
+        <div style="color: var(--ok);"> => [internal] load build definition from Dockerfile      0.0s</div>
+        <div style="color: var(--ok);"> => [internal] load .dockerignore                          0.0s</div>
+        <div style="color: var(--ok);"> => [1/6] FROM node:20-slim                                0.4s</div>
+        <div style="color: var(--ok);"> => [2/6] WORKDIR /app                                     0.1s</div>
+        <div style="color: var(--ok);"> => [3/6] COPY package*.json ./                            0.2s</div>
+        <div style="color: var(--ok);"> => [4/6] RUN npm ci                                      24.3s</div>
+        <div style="color: var(--ok);"> => [5/6] COPY . .                                         0.6s</div>
+        <div style="color: #cfcfd8;"> => [6/6] RUN npm run build</div>
+        <div style="color: var(--muted); padding-left: 14px;">vite v5.4.2 building for production…</div>
+        <div style="color: var(--muted); padding-left: 14px;">✓ 812 modules transformed</div>
+        <div style="margin-top: 4px; color: #cfcfd8;">building… <span style="display:inline-block; width:8px; height:14px; background:var(--accent); vertical-align:-2px; animation: om-blink 1.1s step-end infinite;"></span></div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-top: 1px solid var(--line);">
+        <span style="display:inline-flex; align-items:center; gap:7px; font-size:11.5px; font-family:var(--mono); color:var(--accent);"><span style="width:7px;height:7px;border-radius:50%;background:var(--accent); animation:om-pulse 1.4s infinite;"></span>building</span>
+        <span style="font-family: var(--mono); font-size: 11.5px; color: var(--muted);">streaming build log · ws</span>
+        <div style="margin-left: auto; display: flex; gap: 9px;">
+          <button onClick="{{ closeRebuild }}" style="all:unset; cursor:pointer; font-size:13px; padding:8px 15px; border-radius:8px; color:var(--text); border:1px solid var(--border);">Run in background</button>
+          <button style="all:unset; cursor:pointer; font-size:13px; padding:8px 15px; border-radius:8px; color:var(--err); border:1px solid rgba(240,97,109,.4);">Cancel build</button>
+        </div>
+      </div>
+      </sc-if>
+    </div>
+  </div>
+  </sc-if>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:&quot;100%&quot;,&quot;height&quot;:&quot;100%&quot;},&quot;startScreen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;sandbox&quot;,&quot;options&quot;:[&quot;sandbox&quot;,&quot;projects&quot;,&quot;containers&quot;,&quot;mounts&quot;,&quot;storage&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Behavior&quot;},&quot;dockOpen&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Behavior&quot;}}">
+class Component extends DCLogic {
+  state = { screen: this.props.startScreen || 'sandbox', dockOpen: this.props.dockOpen !== false, rebuildOpen: false, rebuilding: false };
+  componentDidUpdate(prev) {
+    if (prev.startScreen !== this.props.startScreen && this.props.startScreen) this.setState({ screen: this.props.startScreen });
+    if (prev.dockOpen !== this.props.dockOpen) this.setState({ dockOpen: this.props.dockOpen !== false });
+  }
+  renderVals() {
+    const s = this.state.screen;
+    const go = (screen) => this.setState({ screen });
+    const onSandboxNav = s === 'sandbox' || s === 'terminal';
+    return {
+      screen: s,
+      isProjects: s === 'projects',
+      isSandbox: s === 'sandbox',
+      isContainers: s === 'containers',
+      isMounts: s === 'mounts',
+      isStorage: s === 'storage',
+      isTerminal: s === 'terminal',
+      showDock: this.state.dockOpen && s === 'sandbox',
+      dockCollapsed: !this.state.dockOpen && s === 'sandbox',
+      navProjectsOn: s === 'projects', navProjectsOff: s !== 'projects',
+      navSandboxOn: onSandboxNav, navSandboxOff: !onSandboxNav,
+      navContainersOn: s === 'containers', navContainersOff: s !== 'containers',
+      navMountsOn: s === 'mounts', navMountsOff: s !== 'mounts',
+      navStorageOn: s === 'storage', navStorageOff: s !== 'storage',
+      goProjects: () => go('projects'),
+      goSandbox: () => go('sandbox'),
+      goContainers: () => go('containers'),
+      goMounts: () => go('mounts'),
+      goStorage: () => go('storage'),
+      goTerminal: () => go('terminal'),
+      openDock: () => this.setState({ dockOpen: true }),
+      closeDock: () => this.setState({ dockOpen: false }),
+      rebuildOpen: this.state.rebuildOpen,
+      rebuilding: this.state.rebuilding,
+      rebuildOptions: this.state.rebuildOpen && !this.state.rebuilding,
+      openRebuild: () => this.setState({ rebuildOpen: true, rebuilding: false }),
+      closeRebuild: () => this.setState({ rebuildOpen: false, rebuilding: false }),
+      startRebuild: () => this.setState({ rebuilding: true }),
+    };
+  }
+}
+</script>
+</body>
+</html>

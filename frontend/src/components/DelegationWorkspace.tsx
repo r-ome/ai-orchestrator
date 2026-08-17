@@ -1047,7 +1047,7 @@ export function DelegationPanel({
     !reviewPredatesChange
 
   return (
-    <>
+    <div className="agent-delegation-workspace">
       {loading && <p className="status">Loading implementation state…</p>}
       {error && <p className="status status-error">Failed to load delegation: {error}</p>}
       {actionError && (
@@ -1120,12 +1120,16 @@ export function DelegationPanel({
           </CollapsibleCard>
 
           {delegation && (
-            <div className="detail-status-row">
+            <div className="detail-status-row planning-work-status">
               <span className="pill muted">revision {delegation.delegation.revision}</span>
               <span
                 className={`pill ${delegation.delegation.status === 'completed' ? 'ok' : delegation.delegation.status === 'halted' ? 'err' : 'warn'}`}
               >
                 {delegation.delegation.status}
+              </span>
+              <span className="planning-work-progress">
+                {delegation.items.filter((entry) => entry.state === 'completed').length} of{' '}
+                {delegation.items.length} completed
               </span>
             </div>
           )}
@@ -1530,7 +1534,13 @@ export function DelegationPanel({
         </section>
       )}
 
-    </>
+      {tab === 'feature-review' && !delegation && !loading && !error && (
+        <p className="status">
+          No feature review yet. Complete the work items before starting this phase.
+        </p>
+      )}
+
+    </div>
   )
 }
 

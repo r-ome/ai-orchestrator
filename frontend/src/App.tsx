@@ -102,6 +102,8 @@ function CurrentSandboxSummary({ sandboxId }: { sandboxId: string }) {
     [sandboxId],
   )
   const sandbox = useApiResource(fetcher, [sandboxId])
+  // TODO(redesign): the sandbox API does not expose the file count, byte size,
+  // or live-agent count shown by the Graphite rail reference.
   return (
     <div className="rail-current">
       <div className="rail-current-label">Current project</div>
@@ -159,6 +161,9 @@ function App() {
   // Projects are Git repositories. Their sandboxes have their own routes.
   const projectMatch = location.pathname.match(/^\/projects\/([^/]+)/)
   const sandboxMatch = location.pathname.match(/^\/sandboxes\/([^/]+)/)
+  const isPlanningSessionRoute = /^\/sandboxes\/[^/]+\/plans\/[^/]+\/?$/.test(
+    location.pathname,
+  )
   // The Sandboxes link points at the closest thing to a sandbox you are in.
   const currentSandboxPath = sandboxMatch
     ? `/sandboxes/${sandboxMatch[1]}`
@@ -169,7 +174,7 @@ function App() {
 
   return (
     <div className="app-shell">
-      <nav className="app-rail">
+      {!isPlanningSessionRoute && <nav className="app-rail">
         <div className="app-rail-brand">
           <div className="app-rail-mark" aria-hidden="true">
             O
@@ -218,7 +223,7 @@ function App() {
         <div className="app-rail-foot">
           <ThemeControl />
         </div>
-      </nav>
+      </nav>}
 
       <main className="app-main">
         <div className="page">
