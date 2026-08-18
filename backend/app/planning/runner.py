@@ -28,6 +28,7 @@ _ERROR_LINE = re.compile(
 _SUMMARY_SCAN_LINES = 40
 _SUMMARY_LINES = 5
 _SUMMARY_LIMIT = 600
+_MAX_ATTEMPTS = 2
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,17 @@ class TurnResult:
     #: from settings later would report today's configuration, not the one the
     #: turn used.
     model: str = ""
+
+
+@dataclass(frozen=True)
+class TurnOutcome:
+    result: TurnResult | None
+    attempts: int
+    errors: list[str]
+
+    @property
+    def accepted(self) -> bool:
+        return self.result is not None and not self.errors
 
 
 class PlanningTurnError(Exception):
@@ -142,32 +154,28 @@ def _failure_summary(raw_output: str) -> str:
     return " ".join(chosen)[-_SUMMARY_LIMIT:]
 
 
-def run_turn_with_repair(
-    docker_client: Any,
-    settings: PlanningSettings,
-    request: TurnRequest,
-    validate: Callable[[dict[str, Any]], None],
-) -> TurnResult:
-    current_request = request
-    for attempt in range(2):
+def run_validated_turn(
+    run: Callable[[str], TurnResult],
+    *,
+    prompt: str,
+    validate: Callable[[dict[str, Any]], list[str]],
+) -> TurnOutcome:
+    current_prompt = prompt
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            result = run_planning_turn(docker_client, settings, current_request)
-            try:
-                validate(result.payload)
-            except ValueError as error:
-                raise PlanningTurnError(422, str(error), result.raw_output) from error
-            return result
+            result = run(current_prompt)
+            errors = validate(result.payload)
+            raw_output = result.raw_output
         except PlanningTurnError as error:
-            if error.status_code != 422 or attempt == 1:
+            if error.status_code != 422:
                 raise
-            current_request = TurnRequest(
-                role=request.role,
-                provider=request.provider,
-                project_volume=request.project_volume,
-                session_id=request.session_id,
-                prompt=_repair_prompt(request.prompt, error.detail, error.raw_output),
-            )
-    raise AssertionError("repair loop must return or raise")
+            result = None
+            errors = [error.detail]
+            raw_output = error.raw_output
+        if not errors or attempt == _MAX_ATTEMPTS:
+            return TurnOutcome(result, attempt, errors)
+        current_prompt = _repair_prompt(prompt, errors, raw_output)
+    raise AssertionError("validated turn must return")
 
 
 def extract_payload(raw: str, *, provider: AgentProvider) -> dict[str, Any]:
@@ -316,12 +324,14 @@ def _balanced_object_end(text: str, start: int) -> int | None:
     return None
 
 
-def _repair_prompt(original: str, error: str, raw_output: str) -> str:
+def _repair_prompt(original: str, errors: list[str], raw: str) -> str:
+    listed = "\n".join(f"- {error}" for error in errors)
+    # Codex echoes the prompt before its reply, so the reply is at the tail.
     return "\n\n".join(
         [
             original,
-            f"Your previous reply could not be used. Error: {error}",
-            "Previous reply:\n" + raw_output[:4000],
+            "Your previous reply was rejected:\n" + listed,
+            "Previous reply:\n" + raw[-8000:],
             "Reply again with one JSON object and nothing else.",
         ]
     )

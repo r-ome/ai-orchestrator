@@ -57,6 +57,12 @@ One model invocation in one short-lived container.
 A Turn is a **Hardened run** that invokes a model. A verification command is a
 **Hardened run** that does not.
 
+**Validated turn**:
+One **Turn** whose payload is checked against its role's contract, with exactly
+one repair attempt if the check fails. It yields an outcome, not an exception:
+an invalid payload is a result, while a failed container is still an error.
+_Avoid_: Retry, repair loop, turn with repair
+
 **Preview proposal**:
 A non-executable suggestion for running the current sandbox, including protected-file changes and editable settings.
 _Avoid_: Detection result, preview configuration

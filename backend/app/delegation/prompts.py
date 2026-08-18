@@ -81,19 +81,3 @@ Return exactly one JSON object. Do not add prose or a markdown fence.
     }}
   ]
 }}"""
-
-
-def repair_prompt(
-    original: str,
-    errors: Sequence[str],
-    raw_output: str,
-) -> str:
-    listed = "\n".join(f"- {error}" for error in errors)
-    return "\n\n".join(
-        [
-            original,
-            "Your previous decomposition was rejected:\n" + listed,
-            "Previous reply:\n" + raw_output[:4000],
-            "Return one corrected JSON object only.",
-        ]
-    )

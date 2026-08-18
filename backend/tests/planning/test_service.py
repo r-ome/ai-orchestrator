@@ -228,12 +228,33 @@ def test_each_role_runs_with_its_stored_model(
     assert stored["reviewer_reasoning_effort"] == "low"
     captured: list[tuple[PlanningSettings, AgentProvider]] = []
 
-    def run(_: object, turn_settings: PlanningSettings, request: Any, __: Any) -> TurnResult:
+    def run(_: object, turn_settings: PlanningSettings, request: Any) -> TurnResult:
         captured.append((turn_settings, request.provider))
-        return TurnResult(raw_output="", payload={})
+        payload = {
+            PlanningRole.CLARIFIER: {
+                "message": "Ready.",
+                "questions": [],
+                "ready_to_summarize": True,
+                "understanding_summary": "Complete.",
+            },
+            PlanningRole.PLANNER: {
+                "plan_markdown": "# Plan",
+                "scope": "Scope",
+                "approach": "Approach",
+                "components": [],
+                "risks": [],
+                "open_questions": [],
+            },
+            PlanningRole.REVIEWER: {
+                "approved": True,
+                "summary": "Approved.",
+                "findings": [],
+            },
+        }[request.role]
+        return TurnResult(raw_output="", payload=payload)
 
-    monkeypatch.setattr(service, "run_turn_with_repair", run)
-    monkeypatch.setattr(service.docker, "from_env", lambda: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(service, "run_planning_turn", run)
+    monkeypatch.setattr(service, "_turn_client", lambda: SimpleNamespace(close=lambda: None))
 
     service._run_clarifier_turn(controller_store, settings, session.id)
     service._run_planner_turn(controller_store, settings, session.id)

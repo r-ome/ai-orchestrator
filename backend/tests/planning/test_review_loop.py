@@ -16,7 +16,7 @@ from app.planning.models import (
     PlanningRole,
     PlanningStatus,
 )
-from app.planning.runner import TurnRequest, TurnResult, _repair_prompt
+from app.planning.runner import TurnRequest, TurnResult
 from app.planning.service import TurnKind
 
 
@@ -65,46 +65,31 @@ def settings() -> PlanningSettings:
 
 
 @pytest.fixture
-def scripted_runner(monkeypatch: pytest.MonkeyPatch) -> tuple[deque[dict[str, Any]], list[TurnRequest]]:
+def scripted_runner(monkeypatch: pytest.MonkeyPatch) -> tuple[deque[dict[str, Any]], list[str]]:
     queue: deque[dict[str, Any]] = deque()
-    requests: list[TurnRequest] = []
+    prompts: list[str] = []
 
-    def run(_: Any, __: Any, request: TurnRequest, validate: Any) -> TurnResult:
-        """Stands in for run_turn_with_repair without starting a container.
-
-        It keeps the one retry the real loop performs, so a test can script a
-        rejected payload followed by the corrected one and assert on the repair
-        prompt the planner is given.
-        """
-        current = request
-        for attempt in range(2):
-            requests.append(current)
-            payload = queue.popleft()
-            try:
-                validate(payload)
-            except ValueError as error:
-                if attempt == 1:
-                    raise
-                current = TurnRequest(
-                    role=request.role,
-                    provider=request.provider,
-                    project_volume=request.project_volume,
-                    session_id=request.session_id,
-                    prompt=_repair_prompt(request.prompt, str(error), str(payload)),
-                )
-                continue
-            return TurnResult(raw_output=str(payload), payload=payload, model=TEST_MODEL)
-        raise AssertionError("repair loop must return or raise")
+    def run(request: TurnRequest) -> TurnResult:
+        # Every turn reads the sandbox's own project volume. A different volume
+        # would mean the turn planned against another sandbox's code.
+        assert request.project_volume == PROJECT.volume_name
+        prompts.append(request.prompt)
+        payload = queue.popleft()
+        return TurnResult(raw_output=str(payload), payload=payload, model=TEST_MODEL)
 
     monkeypatch.setattr(service, "schedule_turn", lambda *_: None)
-    monkeypatch.setattr(service, "run_turn_with_repair", run)
-    monkeypatch.setattr(service.docker, "from_env", lambda: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(
+        service,
+        "run_planning_turn",
+        lambda _client, _settings, request: run(request),
+    )
+    monkeypatch.setattr(service, "_turn_client", lambda: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
         service,
         "ensure_sandbox_registered",
         lambda *_: (PROJECT.sandbox_id, "project-1", PROJECT),
     )
-    return queue, requests
+    return queue, prompts
 
 
 def _plan(*, responses: list[dict[str, str]] | None = None, name: str = "First") -> dict[str, Any]:
@@ -153,7 +138,7 @@ def _run(store: ControllerStore, settings: PlanningSettings, session_id: str, ki
 def test_round_one_approval_writes_an_approved_plan_spec(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     queue, _ = scripted_runner
     queue.extend([_plan(), _review(approved=True, findings=[])])
@@ -175,7 +160,7 @@ def test_round_one_approval_writes_an_approved_plan_spec(
 def test_rejection_then_approval_records_two_review_rounds(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     queue, _ = scripted_runner
     queue.extend(
@@ -200,7 +185,7 @@ def test_rejection_then_approval_records_two_review_rounds(
 def test_three_rejections_reach_the_limit_with_outstanding_findings(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     queue, _ = scripted_runner
     queue.extend(
@@ -229,7 +214,7 @@ def test_three_rejections_reach_the_limit_with_outstanding_findings(
 def test_second_round_prompts_keep_only_the_required_context(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     queue, requests = scripted_runner
     queue.extend(
@@ -244,8 +229,8 @@ def test_second_round_prompts_keep_only_the_required_context(
     for kind in (TurnKind.PLANNER, TurnKind.REVIEWER, TurnKind.PLANNER, TurnKind.REVIEWER):
         _run(controller_store, settings, session_id, kind)
 
-    planner_two = requests[2].prompt
-    reviewer_two = requests[3].prompt
+    planner_two = requests[2]
+    reviewer_two = requests[3]
     assert "# First plan" in planner_two
     assert "F1" in planner_two
     assert "Add recovery." in planner_two
@@ -258,7 +243,7 @@ def test_second_round_prompts_keep_only_the_required_context(
 def test_reraised_finding_keeps_its_stable_id_and_original_round(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     queue, _ = scripted_runner
     queue.extend(
@@ -282,7 +267,7 @@ def test_reraised_finding_keeps_its_stable_id_and_original_round(
 def test_unseen_finding_becomes_resolved_and_leaves_the_next_ledger(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     queue, requests = scripted_runner
     queue.extend(
@@ -299,13 +284,13 @@ def test_unseen_finding_becomes_resolved_and_leaves_the_next_ledger(
         _run(controller_store, settings, session_id, kind)
 
     assert controller_store.planning_findings(session_id)[0]["status"] == "resolved"
-    assert "Name the owner." not in requests[-1].prompt
+    assert "Name the owner." not in requests[-1]
 
 
 def test_new_ids_are_minted_then_reused_from_the_ledger(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     queue, _ = scripted_runner
     queue.extend(
@@ -327,7 +312,7 @@ def test_new_ids_are_minted_then_reused_from_the_ledger(
 def test_approved_verdict_with_blocking_finding_is_overridden(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     queue, _ = scripted_runner
     queue.extend(
@@ -352,7 +337,7 @@ def test_approved_verdict_with_blocking_finding_is_overridden(
 def test_missing_planner_response_leaves_the_finding_open(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     queue, _ = scripted_runner
     queue.extend(
@@ -372,7 +357,7 @@ def test_missing_planner_response_leaves_the_finding_open(
 def test_planner_responses_to_unknown_findings_are_rejected_and_repaired(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     """Round one has no ledger, so any finding response is invented.
 
@@ -406,14 +391,14 @@ def test_planner_responses_to_unknown_findings_are_rejected_and_repaired(
     assert plans[0].finding_responses == []
     # The repair prompt names the offending ids, so the retry is informed.
     assert len(requests) == 2
-    assert "not on the review ledger" in requests[1].prompt
-    assert "F1, F2" in requests[1].prompt
+    assert "not on the review ledger" in requests[1]
+    assert "F1, F2" in requests[1]
 
 
 def test_planner_may_respond_to_a_finding_on_the_ledger(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     """The same check must not reject a legitimate response in a later round."""
     queue, requests = scripted_runner
@@ -436,7 +421,7 @@ def test_planner_may_respond_to_a_finding_on_the_ledger(
 def test_each_turn_records_the_model_that_produced_it(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     """The model is stored per message, not read from settings at display time.
 
@@ -463,7 +448,7 @@ def test_each_turn_records_the_model_that_produced_it(
 def test_scripted_runner_starts_no_containers_or_project_writes(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     queue, requests = scripted_runner
     queue.extend([_plan(), _review(approved=True, findings=[])])
@@ -471,14 +456,14 @@ def test_scripted_runner_starts_no_containers_or_project_writes(
     _run(controller_store, settings, session_id, TurnKind.PLANNER)
     _run(controller_store, settings, session_id, TurnKind.REVIEWER)
 
-    assert {request.project_volume for request in requests} == {PROJECT.volume_name}
-    assert all(request.project_volume == PROJECT.volume_name for request in requests)
+    # The fixture asserts the project volume on every turn; two turns ran.
+    assert len(requests) == 2
 
 
 def test_a_plan_spec_stored_with_a_description_still_parses(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     """Specs settled while the planner still wrote a description keep loading.
 
@@ -503,7 +488,7 @@ def test_a_plan_spec_stored_with_a_description_still_parses(
 def test_turn_messages_expose_the_verdict_and_the_findings_of_each_round(
     controller_store: ControllerStore,
     settings: PlanningSettings,
-    scripted_runner: tuple[deque[dict[str, Any]], list[TurnRequest]],
+    scripted_runner: tuple[deque[dict[str, Any]], list[str]],
 ) -> None:
     queue, _ = scripted_runner
     queue.extend(

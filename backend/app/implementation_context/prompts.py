@@ -18,7 +18,7 @@ def context_prompt(
     inventory: CommandInventory | None = None,
 ) -> str:
     return f"""You are gathering implementation context for a change that has already been planned.
-The codebase is at {WORKSPACE}. Read it.
+The codebase is at {WORKSPACE}. Read the relevant files again.
 
 Whoever implements this will get your output instead of the repository. They will read the
 files themselves. Tell them which files matter, what the important pieces are called, and what
@@ -114,19 +114,3 @@ def _evidence(inventory: CommandInventory | None) -> str:
     if not sections:
         return ""
     return "\nWhat the controller already established:\n\n" + "\n\n".join(sections) + "\n"
-
-
-def repair_prompt(
-    original: str,
-    errors: Sequence[str],
-    raw_output: str,
-) -> str:
-    listed = "\n".join(f"- {error}" for error in errors)
-    return "\n\n".join(
-        [
-            original,
-            "Your previous reply could not be accepted:\n" + listed,
-            "Previous reply:\n" + raw_output[:4000],
-            "Read the relevant files again. Reply with one corrected JSON object only.",
-        ]
-    )

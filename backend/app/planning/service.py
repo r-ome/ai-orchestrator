@@ -34,8 +34,10 @@ from app.planning.prompts import clarifier_prompt, feature_brief, planner_prompt
 from app.planning.runner import (
     PlanningTurnError,
     TurnRequest,
+    TurnOutcome,
     TurnResult,
-    run_turn_with_repair,
+    run_planning_turn,
+    run_validated_turn,
 )
 from app.projects.service import (
     ProjectOperationError,
@@ -74,6 +76,16 @@ _TRANSIENT_TURN_FAILURE_PHRASES = (
     "temporarily unavailable",
     "service unavailable",
 )
+
+
+def _accepted(outcome: TurnOutcome) -> TurnResult:
+    if outcome.accepted and outcome.result is not None:
+        return outcome.result
+    raise PlanningTurnError(
+        422,
+        "; ".join(outcome.errors) or "the turn produced no usable output",
+        outcome.result.raw_output if outcome.result else "",
+    )
 
 
 def create_session(
@@ -472,6 +484,10 @@ def _tail_lines(source: str) -> str:
     return "\n".join(lines[-_TRANSIENT_SCAN_LINES:])
 
 
+def _turn_client() -> DockerClient:
+    return docker.from_env()
+
+
 def _run_clarifier_turn(
     controller_store: ControllerStore,
     settings: PlanningSettings,
@@ -491,14 +507,17 @@ def _run_clarifier_turn(
         project_volume=str(sandbox["volume_name"]),
         session_id=session_id,
     )
-    client = docker.from_env()
+    client = _turn_client()
     try:
-        return run_turn_with_repair(
-            client,
-            _turn_settings(settings, session, PlanningRole.CLARIFIER),
-            request,
-            _validate_clarifier_payload,
-        )
+        return _accepted(run_validated_turn(
+            lambda prompt: run_planning_turn(
+                client,
+                _turn_settings(settings, session, PlanningRole.CLARIFIER),
+                replace(request, prompt=prompt),
+            ),
+            prompt=request.prompt,
+            validate=_validate_clarifier_payload,
+        ))
     finally:
         client.close()
 
@@ -560,14 +579,17 @@ def _run_planner_turn(
         project_volume=str(sandbox["volume_name"]),
         session_id=session_id,
     )
-    client = docker.from_env()
+    client = _turn_client()
     try:
-        return run_turn_with_repair(
-            client,
-            _turn_settings(settings, session, PlanningRole.PLANNER),
-            request,
-            _planner_validator({str(finding["id"]) for finding in ledger}),
-        )
+        return _accepted(run_validated_turn(
+            lambda prompt: run_planning_turn(
+                client,
+                _turn_settings(settings, session, PlanningRole.PLANNER),
+                replace(request, prompt=prompt),
+            ),
+            prompt=request.prompt,
+            validate=_planner_validator({str(finding["id"]) for finding in ledger}),
+        ))
     finally:
         client.close()
 
@@ -596,14 +618,17 @@ def _run_reviewer_turn(
         project_volume=str(sandbox["volume_name"]),
         session_id=session_id,
     )
-    client = docker.from_env()
+    client = _turn_client()
     try:
-        return run_turn_with_repair(
-            client,
-            _turn_settings(settings, session, PlanningRole.REVIEWER),
-            request,
-            _validate_reviewer_payload,
-        )
+        return _accepted(run_validated_turn(
+            lambda prompt: run_planning_turn(
+                client,
+                _turn_settings(settings, session, PlanningRole.REVIEWER),
+                replace(request, prompt=prompt),
+            ),
+            prompt=request.prompt,
+            validate=_validate_reviewer_payload,
+        ))
     finally:
         client.close()
 
@@ -832,30 +857,36 @@ def _freeze_and_start_planning(
     schedule_turn(controller_store, settings, str(session["id"]), TurnKind.PLANNER)
 
 
-def _validate_clarifier_payload(payload: dict[str, Any]) -> None:
+def _validate_clarifier_payload(payload: dict[str, Any]) -> list[str]:
     message = payload.get("message")
     questions = payload.get("questions")
     ready = payload.get("ready_to_summarize")
     summary = payload.get("understanding_summary")
-    if not isinstance(message, str) or not message.strip():
-        raise ValueError("clarifier message must be non-empty")
+    errors: list[str] = []
+    if not isinstance(message, str):
+        errors.append("clarifier message must be a string")
     if not isinstance(questions, list) or not all(isinstance(item, str) for item in questions):
-        raise ValueError("clarifier questions must be a list of strings")
-    if len(questions) > 3:
-        raise ValueError("clarifier questions must contain at most three entries")
+        errors.append("clarifier questions must be a list of strings")
     if not isinstance(ready, bool):
-        raise ValueError("clarifier ready_to_summarize must be a boolean")
+        errors.append("clarifier ready_to_summarize must be a boolean")
     if not isinstance(summary, str):
-        raise ValueError("clarifier understanding_summary must be a string")
+        errors.append("clarifier understanding_summary must be a string")
+    if errors:
+        return errors
+    if not message.strip():
+        errors.append("clarifier message must be non-empty")
+    if len(questions) > 3:
+        errors.append("clarifier questions must contain at most three entries")
     if ready and (questions or not summary.strip()):
-        raise ValueError("a ready clarifier response needs a summary and no questions")
+        errors.append("a ready clarifier response needs a summary and no questions")
     if not ready and not questions:
-        raise ValueError("a clarifier response that is not ready needs questions")
+        errors.append("a clarifier response that is not ready needs questions")
+    return errors
 
 
 def _planner_validator(
     ledger_ids: set[str],
-) -> Callable[[dict[str, Any]], None]:
+) -> Callable[[dict[str, Any]], list[str]]:
     """Builds the planner validator for one turn, bound to that turn's ledger.
 
     The ledger has to be part of validation rather than a filter applied after
@@ -865,80 +896,123 @@ def _planner_validator(
     exist. Round one binds an empty set, which rejects every response.
     """
 
-    def validate(payload: dict[str, Any]) -> None:
-        _validate_planner_payload(payload)
+    def validate(payload: dict[str, Any]) -> list[str]:
+        errors = _validate_planner_payload(payload)
+        if errors:
+            return errors
         unknown = sorted(
             str(response["finding_id"])
             for response in payload.get("finding_responses", [])
             if str(response["finding_id"]) not in ledger_ids
         )
         if not unknown:
-            return
+            return []
         known = ", ".join(sorted(ledger_ids)) if ledger_ids else "none"
-        raise ValueError(
+        return [
             f"planner responded to findings that are not on the review ledger: "
             f"{', '.join(unknown)}. Respond only to these findings: {known}."
-        )
+        ]
 
     return validate
 
 
-def _validate_planner_payload(payload: dict[str, Any]) -> None:
+def _validate_planner_payload(payload: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
     for name in ("plan_markdown", "scope", "approach"):
         value = payload.get(name)
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"planner {name} must be non-empty")
+        if not isinstance(value, str):
+            errors.append(f"planner {name} must be a string")
     components = payload.get("components")
-    if not isinstance(components, list) or not all(
-        isinstance(item, dict)
-        and isinstance(item.get("name"), str)
-        and item["name"].strip()
-        and isinstance(item.get("responsibility", ""), str)
+    if not isinstance(components, list):
+        errors.append("planner components must be a list of named components")
+    elif any(
+        not isinstance(item, dict)
+        or not isinstance(item.get("name"), str)
+        or not isinstance(item.get("responsibility", ""), str)
         for item in components
     ):
-        raise ValueError("planner components must be a list of named components")
+        errors.append("planner components must be a list of named components")
     risks = payload.get("risks")
-    if not isinstance(risks, list) or not all(
-        isinstance(item, dict)
-        and item.get("severity") in {"high", "medium", "low"}
-        and isinstance(item.get("text"), str)
-        and item["text"].strip()
+    if not isinstance(risks, list):
+        errors.append("planner risks must be a list of valid risks")
+    elif any(
+        not isinstance(item, dict)
+        or not isinstance(item.get("severity"), str)
+        or not isinstance(item.get("text"), str)
         for item in risks
     ):
-        raise ValueError("planner risks must be a list of valid risks")
+        errors.append("planner risks must be a list of valid risks")
     questions = payload.get("open_questions")
     if not isinstance(questions, list) or not all(isinstance(item, str) for item in questions):
-        raise ValueError("planner open_questions must be a list of strings")
+        errors.append("planner open_questions must be a list of strings")
     # Absent is legal: the round-one schema omits the field, because there is no
     # ledger to respond to yet.
     responses = payload.get("finding_responses", [])
-    if not isinstance(responses, list) or not all(
-        isinstance(item, dict)
-        and isinstance(item.get("finding_id"), str)
-        and item["status"] in {FindingStatus.ANSWERED.value, FindingStatus.REJECTED.value}
-        and isinstance(item.get("rationale"), str)
+    if not isinstance(responses, list):
+        errors.append("planner finding_responses must be valid responses")
+    elif any(
+        not isinstance(item, dict)
+        or not isinstance(item.get("finding_id"), str)
+        or not isinstance(item.get("status"), str)
+        or not isinstance(item.get("rationale"), str)
         for item in responses
     ):
-        raise ValueError("planner finding_responses must be valid responses")
-
-
-def _validate_reviewer_payload(payload: dict[str, Any]) -> None:
-    if not isinstance(payload.get("approved"), bool):
-        raise ValueError("reviewer approved must be a boolean")
-    summary = payload.get("summary")
-    if not isinstance(summary, str) or not summary.strip():
-        raise ValueError("reviewer summary must be non-empty")
-    findings = payload.get("findings")
-    if not isinstance(findings, list) or not all(
-        isinstance(item, dict)
-        and isinstance(item.get("id"), str)
-        and item["id"].strip()
-        and item.get("severity") in {"blocking", "major", "minor"}
-        and isinstance(item.get("text"), str)
-        and item["text"].strip()
-        for item in findings
+        errors.append("planner finding_responses must be valid responses")
+    if errors:
+        return errors
+    for name in ("plan_markdown", "scope", "approach"):
+        if not payload[name].strip():
+            errors.append(f"planner {name} must be non-empty")
+    if any(not item["name"].strip() for item in components):
+        errors.append("planner components must be a list of named components")
+    if any(
+        item["severity"] not in {"high", "medium", "low"} or not item["text"].strip()
+        for item in risks
     ):
-        raise ValueError("reviewer findings must be valid findings")
+        errors.append("planner risks must be a list of valid risks")
+    if any(
+        item["status"] not in {FindingStatus.ANSWERED.value, FindingStatus.REJECTED.value}
+        for item in responses
+    ):
+        errors.append("planner finding_responses must be valid responses")
+    return errors
+
+
+def _validate_reviewer_payload(payload: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(payload.get("approved"), bool):
+        errors.append("reviewer approved must be a boolean")
+    summary = payload.get("summary")
+    if not isinstance(summary, str):
+        errors.append("reviewer summary must be a string")
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        errors.append("reviewer findings must be a list")
+    else:
+        for index, finding in enumerate(findings):
+            label = f"reviewer findings[{index}]"
+            if not isinstance(finding, dict):
+                errors.append(f"{label} must be an object")
+                continue
+            if not isinstance(finding.get("id"), str):
+                errors.append(f"{label}.id must be a string")
+            if not isinstance(finding.get("severity"), str):
+                errors.append(f"{label}.severity must be a string")
+            if not isinstance(finding.get("text"), str):
+                errors.append(f"{label}.text must be a string")
+    if errors:
+        return errors
+    if not summary.strip():
+        errors.append("reviewer summary must be non-empty")
+    for index, finding in enumerate(findings):
+        label = f"reviewer findings[{index}]"
+        if not finding["id"].strip():
+            errors.append(f"{label}.id must be non-empty")
+        if finding["severity"] not in {"blocking", "major", "minor"}:
+            errors.append(f"{label}.severity must be blocking, major, or minor")
+        if not finding["text"].strip():
+            errors.append(f"{label}.text must be non-empty")
+    return errors
 
 
 def _review_ledger(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:

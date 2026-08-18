@@ -237,7 +237,7 @@ def test_invalid_review_gets_one_repair_then_fails(
     assert outcome.accepted is False
     assert outcome.attempts == 2
     assert outcome.review.status is IntegrationReviewStatus.FAILED
-    assert "previous response was invalid" in prompts[1]
+    assert "Your previous reply was rejected:" in prompts[1]
 
 
 def test_review_cannot_approve_a_change_without_acceptance_evidence(

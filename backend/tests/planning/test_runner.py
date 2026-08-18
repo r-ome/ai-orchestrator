@@ -17,7 +17,7 @@ from app.planning.runner import (
     TurnRequest,
     extract_payload,
     run_planning_turn,
-    run_turn_with_repair,
+    run_validated_turn,
 )
 
 
@@ -243,21 +243,42 @@ def test_malformed_output_runs_exactly_one_repair_turn(settings: PlanningSetting
     second = _StubContainer(output=b'{"message": "repaired"}')
     docker_client = _StubDockerClient([first, second])
 
-    result = run_turn_with_repair(docker_client, settings, _request(), lambda _: None)
+    request = _request()
+    result = run_validated_turn(
+        lambda prompt: run_planning_turn(
+            docker_client,
+            settings,
+            replace(request, prompt=prompt),
+        ),
+        prompt=request.prompt,
+        validate=lambda _: [],
+    )
 
-    assert result.payload == {"message": "repaired"}
+    assert result.accepted
+    assert result.result is not None
+    assert result.result.payload == {"message": "repaired"}
     assert len(docker_client.containers.create_calls) == 2
     repair_prompt = docker_client.containers.create_calls[1]["environment"][PROMPT_VARIABLE]
-    assert "Your previous reply could not be used." in repair_prompt
+    assert "Your previous reply was rejected:" in repair_prompt
 
 
 def test_second_malformed_output_raises(settings: PlanningSettings) -> None:
     docker_client = _StubDockerClient([_StubContainer(output=b"bad"), _StubContainer(output=b"still bad")])
 
-    with pytest.raises(PlanningTurnError) as error:
-        run_turn_with_repair(docker_client, settings, _request(), lambda _: None)
+    request = _request()
+    outcome = run_validated_turn(
+        lambda prompt: run_planning_turn(
+            docker_client,
+            settings,
+            replace(request, prompt=prompt),
+        ),
+        prompt=request.prompt,
+        validate=lambda _: [],
+    )
 
-    assert error.value.status_code == 422
+    assert not outcome.accepted
+    assert outcome.result is None
+    assert outcome.errors == ["No JSON object found in model output"]
     assert len(docker_client.containers.create_calls) == 2
 
 

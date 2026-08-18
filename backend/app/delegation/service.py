@@ -38,10 +38,9 @@ from app.implementation_context.service import ready_context
 from app.planning.config import PlanningSettings
 from app.planning.models import PlanningRole, PlanningStatus
 from app.planning.runner import (
-    PlanningTurnError,
     TurnRequest,
-    TurnResult,
     run_planning_turn,
+    run_validated_turn,
 )
 
 
@@ -65,14 +64,6 @@ class DelegationOperationError(Exception):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
-
-
-@dataclass(frozen=True)
-class _DelegatorTurn:
-    result: TurnResult | None
-    attempts: int
-    validation_errors: list[str]
-    error: str | None = None
 
 
 def confirmed_command_kinds(
@@ -277,14 +268,20 @@ def execute_generation(
         message=f"Running the {claim.provider.value} decomposition turn",
     )
     try:
-        turn = _run_delegator_turn(
-            docker_client,
-            claim.turn_settings,
-            claim.provider,
-            claim.session_id,
-            claim.volume_name,
-            claim.prompt,
-            claim.command_kinds,
+        turn = run_validated_turn(
+            lambda prompt: run_planning_turn(
+                docker_client,
+                claim.turn_settings,
+                TurnRequest(
+                    role=PlanningRole.DELEGATOR,
+                    provider=claim.provider,
+                    prompt=prompt,
+                    project_volume=claim.volume_name,
+                    session_id=claim.session_id,
+                ),
+            ),
+            prompt=claim.prompt,
+            validate=lambda payload: _payload_errors(payload, claim.command_kinds),
         )
     except Exception as error:
         _progress(
@@ -297,14 +294,13 @@ def execute_generation(
         )
         raise
 
-    if turn.result is None or turn.validation_errors:
+    if turn.result is None or turn.errors:
         _progress(
             store,
             claim.job_id,
             claim.sandbox_id,
             step="settled",
-            message="; ".join(turn.validation_errors)
-            or turn.error
+            message="; ".join(turn.errors)
             or "Decomposition produced no usable output",
             level="error",
         )
@@ -312,9 +308,9 @@ def execute_generation(
             delegation=None,
             accepted=False,
             attempts=turn.attempts,
-            validation_errors=turn.validation_errors,
+            validation_errors=turn.errors,
             turn_status="invalid_output" if turn.result is None else "succeeded",
-            turn_error=turn.error,
+            turn_error="; ".join(turn.errors) or None,
             model=turn.result.model if turn.result is not None else None,
         )
 
@@ -372,52 +368,6 @@ def generate_revision(
         project_name=project_name,
     )
     return execute_generation(docker_client, store, claim)
-
-
-def _run_delegator_turn(
-    docker_client: DockerClient,
-    settings: PlanningSettings,
-    provider: AgentProvider,
-    session_id: str,
-    volume_name: str,
-    prompt: str,
-    command_kinds: frozenset[str],
-) -> _DelegatorTurn:
-    current_prompt = prompt
-    for attempt in range(1, 3):
-        try:
-            result = run_planning_turn(
-                docker_client,
-                settings,
-                TurnRequest(
-                    role=PlanningRole.DELEGATOR,
-                    provider=provider,
-                    prompt=current_prompt,
-                    project_volume=volume_name,
-                    session_id=session_id,
-                ),
-            )
-            errors = _payload_errors(result.payload, command_kinds)
-            raw_output = result.raw_output
-        except PlanningTurnError as error:
-            if error.status_code != 422:
-                raise
-            result = None
-            errors = [error.detail]
-            raw_output = error.raw_output
-
-        if not errors:
-            return _DelegatorTurn(result=result, attempts=attempt, validation_errors=[])
-        if attempt == 2:
-            return _DelegatorTurn(
-                result=result,
-                attempts=attempt,
-                validation_errors=errors,
-                error=errors[0] if result is None else None,
-            )
-        current_prompt = prompts.repair_prompt(prompt, errors, raw_output)
-
-    raise AssertionError("delegator repair loop must return")
 
 
 def _payload_errors(

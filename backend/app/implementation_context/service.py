@@ -32,10 +32,11 @@ from app.implementation_context.validators import validate_context_payload
 from app.planning.config import PlanningSettings
 from app.planning.models import PlanningRole, PlanningStatus
 from app.planning.runner import (
-    PlanningTurnError,
     TurnRequest,
+    TurnOutcome,
     TurnResult,
     run_planning_turn,
+    run_validated_turn,
 )
 
 
@@ -50,14 +51,6 @@ class ContextOperationError(Exception):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
-
-
-@dataclass(frozen=True)
-class _ContextTurn:
-    result: TurnResult | None
-    attempts: int
-    validation_errors: list[str]
-    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -311,52 +304,31 @@ def _run_context_turn(
     volume_name: str,
     prompt: str,
     inventory: CommandInventory,
-) -> _ContextTurn:
-    current_prompt = prompt
-    validation_errors: list[str] = []
+) -> TurnOutcome:
+    def validate(payload: dict[str, Any]) -> list[str]:
+        return validate_context_payload(payload) + _command_errors(payload, inventory)
 
-    for attempt in range(1, 3):
-        try:
-            result = run_planning_turn(
-                docker_client,
-                settings,
-                TurnRequest(
-                    role=PlanningRole.IMPLEMENTATION_CONTEXT,
-                    provider=provider,
-                    prompt=current_prompt,
-                    project_volume=volume_name,
-                    session_id=session_id,
-                ),
-            )
-            errors = validate_context_payload(result.payload)
-            errors += _command_errors(result.payload, inventory)
-            raw_output = result.raw_output
-        except PlanningTurnError as error:
-            if error.status_code != 422:
-                raise
-            result = None
-            errors = [error.detail]
-            raw_output = error.raw_output
-
-        validation_errors.extend(
-            error for error in errors if error not in validation_errors
-        )
-        if not errors or attempt == 2:
-            return _ContextTurn(
-                result=result,
-                attempts=attempt,
-                validation_errors=validation_errors,
-                error=errors[0] if result is None and errors else None,
-            )
-        current_prompt = prompts.repair_prompt(prompt, errors, raw_output)
-
-    raise AssertionError("context repair loop must return")
+    return run_validated_turn(
+        lambda current_prompt: run_planning_turn(
+            docker_client,
+            settings,
+            TurnRequest(
+                role=PlanningRole.IMPLEMENTATION_CONTEXT,
+                provider=provider,
+                prompt=current_prompt,
+                project_volume=volume_name,
+                session_id=session_id,
+            ),
+        ),
+        prompt=prompt,
+        validate=validate,
+    )
 
 
 def _settle(
     store: ControllerStore,
     context_id: str,
-    turn: _ContextTurn,
+    turn: TurnOutcome,
     inventory: CommandInventory,
 ) -> GenerateContextOutcome:
     result = turn.result
@@ -364,7 +336,9 @@ def _settle(
         store.settle_implementation_context(
             context_id,
             to_status=ContextStatus.FAILED.value,
-            changes={"error": (turn.error or "Turn produced no JSON object")[:900]},
+            changes={
+                "error": ("; ".join(turn.errors) or "Turn produced no JSON object")[:900]
+            },
         )
         return _outcome(store, context_id, turn, accepted=False)
 
@@ -481,7 +455,7 @@ def ready_context(
 def _outcome(
     store: ControllerStore,
     context_id: str,
-    turn: _ContextTurn,
+    turn: TurnOutcome,
     *,
     accepted: bool,
 ) -> GenerateContextOutcome:
@@ -490,9 +464,9 @@ def _outcome(
         context=context,
         accepted=accepted,
         attempts=turn.attempts,
-        validation_errors=turn.validation_errors,
+        validation_errors=turn.errors,
         turn_status="succeeded" if turn.result is not None else "invalid_output",
-        turn_error=turn.error,
+        turn_error="; ".join(turn.errors) or None,
         unconfirmed_commands=[
             command for command in context.commands if not command.confirmed
         ],

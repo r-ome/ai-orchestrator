@@ -26,16 +26,8 @@ from app.delegation.models import (
 )
 from app.planning.config import PlanningSettings
 from app.planning.models import PlanningRole
-from app.planning.runner import PlanningTurnError, TurnRequest, TurnResult, run_planning_turn
+from app.planning.runner import TurnRequest, run_planning_turn, run_validated_turn
 from app.previews.config import get_preview_settings
-
-
-@dataclass(frozen=True)
-class _ReviewTurn:
-    result: TurnResult | None
-    attempts: int
-    errors: list[str]
-    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -222,17 +214,24 @@ def execute_integration_review(
         message=f"Running the {claim.request.provider.value} review turn",
     )
     try:
-        turn = _run_turn(
-            docker_client,
-            claim.turn_settings,
-            claim.request,
-            claim.volume_name,
-            delegation_id,
-            (
-                f"{claim.prompt}\n\nReview target: branch {target.base_branch}, "
-                f"commits {target.base_commit}..{target.head_commit}."
+        prompt = (
+            f"{claim.prompt}\n\nReview target: branch {target.base_branch}, "
+            f"commits {target.base_commit}..{target.head_commit}."
+        )
+        turn = run_validated_turn(
+            lambda current_prompt: run_planning_turn(
+                docker_client,
+                claim.turn_settings,
+                TurnRequest(
+                    role=PlanningRole.INTEGRATION_REVIEWER,
+                    provider=claim.request.provider,
+                    prompt=current_prompt,
+                    project_volume=claim.volume_name,
+                    session_id=delegation_id,
+                ),
             ),
-            claim.item_keys,
+            prompt=prompt,
+            validate=lambda payload: _validate(payload, claim.item_keys),
         )
     except Exception as error:
         store.settle_delegation_review(
@@ -255,14 +254,14 @@ def execute_integration_review(
             review_id,
             to_status=IntegrationReviewStatus.FAILED.value,
             model=turn.result.model if turn.result else model,
-            error="; ".join(turn.errors)[:1500] or turn.error,
+            error="; ".join(turn.errors)[:1500] or "Review produced no usable output",
         )
         _progress(
             store,
             review_id,
             claim.sandbox_id,
             step="settled",
-            message="; ".join(turn.errors) or turn.error or "Review produced no usable output",
+            message="; ".join(turn.errors) or "Review produced no usable output",
             level="error",
         )
         return GenerateIntegrationReviewOutcome(
@@ -271,7 +270,7 @@ def execute_integration_review(
             attempts=turn.attempts,
             validation_errors=turn.errors,
             turn_status="invalid_output" if turn.result is None else "succeeded",
-            turn_error=turn.error,
+            turn_error="; ".join(turn.errors) or None,
         )
 
     try:
@@ -376,52 +375,6 @@ def generate_integration_review(
         project_name=project_name,
     )
     return execute_integration_review(docker_client, store, claim)
-
-
-def _run_turn(
-    docker_client: DockerClient,
-    settings: PlanningSettings,
-    request: GenerateIntegrationReviewRequest,
-    volume_name: str,
-    delegation_id: str,
-    prompt: str,
-    item_keys: set[str],
-) -> _ReviewTurn:
-    current = prompt
-    errors: list[str] = []
-    for attempt in range(1, 3):
-        try:
-            result = run_planning_turn(
-                docker_client,
-                settings,
-                TurnRequest(
-                    role=PlanningRole.INTEGRATION_REVIEWER,
-                    provider=request.provider,
-                    prompt=current,
-                    project_volume=volume_name,
-                    session_id=delegation_id,
-                ),
-            )
-            current_errors = _validate(result.payload, item_keys)
-            raw = result.raw_output
-        except PlanningTurnError as error:
-            if error.status_code != 422:
-                raise
-            result = None
-            current_errors = [error.detail]
-            raw = error.raw_output
-        errors.extend(error for error in current_errors if error not in errors)
-        if not current_errors:
-            return _ReviewTurn(result, attempt, [])
-        if attempt == 2:
-            return _ReviewTurn(
-                result,
-                attempt,
-                errors,
-                current_errors[0] if result is None else None,
-            )
-        current = _repair_prompt(prompt, current_errors, raw)
-    raise AssertionError("integration review loop must return")
 
 
 def _validate(payload: Mapping[str, Any], item_keys: set[str]) -> list[str]:
@@ -601,14 +554,6 @@ def _change_verification_summary(value: Any) -> dict[str, Any] | None:
         "agent_report": value.get("agent_report"),
         "turn": value.get("turn"),
     }
-
-
-def _repair_prompt(original: str, errors: list[str], raw: str) -> str:
-    return (
-        f"{original}\n\nYour previous response was invalid:\n"
-        + "\n".join(f"- {error}" for error in errors)
-        + f"\n\nPrevious output:\n{raw[-8000:]}\n\nReturn only corrected JSON."
-    )
 
 
 def _settings(
