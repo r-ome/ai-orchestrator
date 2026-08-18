@@ -25,6 +25,7 @@ from app.sandboxes.naming import (
     workspace_volume,
 )
 from app.sandboxes import router as sandbox_router
+from app.sandboxes import service as sandbox_service
 from app.sandboxes import publish as sandbox_publish
 from app.sandboxes import database as sandbox_database
 from app.sandboxes.database import sandbox_database_runtime, shared_database_names
@@ -1159,10 +1160,10 @@ def test_publish_records_verified_git_and_pull_request_result(
             pushed=True,
         )
 
-    monkeypatch.setattr(sandbox_router, "reviewed_target", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(sandbox_router, "publish_reviewed_feature", publish)
+    monkeypatch.setattr(sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sandbox_service, "publish_reviewed_feature", publish)
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "discover_or_create_pull_request",
         lambda **_kwargs: PullRequest(
             number=42,
@@ -1223,9 +1224,9 @@ def test_publish_failure_records_a_retryable_checkpoint(
             "actor": "jerome",
         },
     ).json()
-    monkeypatch.setattr(sandbox_router, "reviewed_target", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "publish_reviewed_feature",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             PublishError(409, "Sandbox HEAD changed after review")
@@ -1269,9 +1270,9 @@ def test_publish_push_failure_stores_a_safe_message(
         image="alpine/git:latest",
         stderr=stderr,
     )
-    monkeypatch.setattr(sandbox_router, "reviewed_target", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "publish_reviewed_feature",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
     )
@@ -1324,9 +1325,9 @@ def test_publish_pr_failure_keeps_the_pushed_commit_and_retry_creates_one_pr(
             raise sandbox_publish.GitHubApiError("GitHub pull request creation failed (HTTP 500)")
         return PullRequest(42, "https://github.com/owner/repo/pull/42", "open")
 
-    monkeypatch.setattr(sandbox_router, "reviewed_target", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(sandbox_router, "publish_reviewed_feature", publish)
-    monkeypatch.setattr(sandbox_router, "discover_or_create_pull_request", pull_request)
+    monkeypatch.setattr(sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sandbox_service, "publish_reviewed_feature", publish)
+    monkeypatch.setattr(sandbox_service, "discover_or_create_pull_request", pull_request)
 
     failed = client.post(f"/sandboxes/{created['sandbox_id']}/publish")
 
@@ -1363,9 +1364,9 @@ def test_publish_api_failure_never_persists_or_returns_the_write_token(
             "commands_source": {"migrate": "makefile"}, "actor": "jerome",
         },
     ).json()
-    monkeypatch.setattr(sandbox_router, "reviewed_target", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "publish_reviewed_feature",
         lambda *_args, **_kwargs: PublishOutcome("feature/add-sandbox-api", "b" * 40, "b" * 40, True),
     )

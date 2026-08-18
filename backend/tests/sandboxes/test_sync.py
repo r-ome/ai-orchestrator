@@ -13,7 +13,7 @@ from app.controller.store import get_controller_store
 from app.main import app
 from app.sandboxes import database as sandbox_database
 from app.sandboxes import lifecycle as sandbox_lifecycle
-from app.sandboxes import router as sandbox_router
+from app.sandboxes import service as sandbox_service
 from app.sandboxes.engine_detection import EngineDetection, EngineSignal
 from app.sandboxes.manifest import SandboxManifest, read_manifest, write_manifest
 from app.sandboxes.naming import mirror_ownership_labels, ownership_labels
@@ -103,32 +103,32 @@ def _register(*, fake_docker_client: Any) -> None:
 
 def _stub_git(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> None:
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "require_clean_workspace",
         lambda *_args, **_kwargs: calls.append("clean"),
     )
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "create_workspace_safety_ref",
         lambda *_args, **_kwargs: calls.append("safety"),
     )
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "fetch_canonical_mirror",
         lambda *_args, **_kwargs: calls.append("canonical-fetch"),
     )
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "mirror_base_commit",
         lambda *_args, **_kwargs: NEW_BASE,
     )
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "sync_workspace_from_mirror",
         lambda *_args, **_kwargs: calls.append("workspace-fetch-and-rebase"),
     )
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "discover_engine",
         lambda *_args, **_kwargs: EngineDetection(
             signals=(), proposed_engine="sqlite", migrate_commands=(), seed_commands=(), commands_source={}
@@ -163,7 +163,7 @@ def test_sync_happy_path_advances_only_after_approved_migration_snapshot(
     _register(fake_docker_client=fake_docker_client)
     calls: list[str] = []
     _stub_git(monkeypatch, calls)
-    monkeypatch.setattr(sandbox_router, "_complete_database_provision", _complete_sync)
+    monkeypatch.setattr(sandbox_service, "complete_database_provision", _complete_sync)
 
     response = client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={})
 
@@ -188,7 +188,7 @@ def test_sync_merges_only_after_an_observed_open_pull_request(
     write_manifest(store, replace(manifest, pr_requested=True))
     calls: list[str] = []
     _stub_git(monkeypatch, calls)
-    monkeypatch.setattr(sandbox_router, "_complete_database_provision", _complete_sync)
+    monkeypatch.setattr(sandbox_service, "complete_database_provision", _complete_sync)
 
     first = client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={})
 
@@ -241,7 +241,7 @@ def test_sync_preview_requires_opt_in_and_names_the_preview(
     monkeypatch.setattr(sandbox_lifecycle, "_stop_blocking_preview", stop)
     calls: list[str] = []
     _stub_git(monkeypatch, calls)
-    monkeypatch.setattr(sandbox_router, "_complete_database_provision", _complete_sync)
+    monkeypatch.setattr(sandbox_service, "complete_database_provision", _complete_sync)
     proceeded = client.post(
         f"/sandboxes/{SANDBOX_ID}/sync", json={"stop_blocking_preview": True}
     )
@@ -295,7 +295,7 @@ def test_sync_allows_idle_agent_but_refuses_open_agent_writer_session(
     store.start_agent_run(run_id="agent-1", sandbox_id=SANDBOX_ID, provider="codex", status="running")
     calls: list[str] = []
     _stub_git(monkeypatch, calls)
-    monkeypatch.setattr(sandbox_router, "_complete_database_provision", _complete_sync)
+    monkeypatch.setattr(sandbox_service, "complete_database_provision", _complete_sync)
     assert client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={}).status_code == 202
 
     manifest = read_manifest(store, SANDBOX_ID)
@@ -318,10 +318,10 @@ def test_git_failure_restores_safety_ref_and_dirty_workspace_changes_nothing(
     calls: list[str] = []
     _stub_git(monkeypatch, calls)
     monkeypatch.setattr(
-        sandbox_router, "sync_workspace_from_mirror", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("conflict"))
+        sandbox_service, "sync_workspace_from_mirror", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("conflict"))
     )
     monkeypatch.setattr(
-        sandbox_router, "restore_workspace_safety_ref", lambda *_args, **_kwargs: calls.append("restored")
+        sandbox_service, "restore_workspace_safety_ref", lambda *_args, **_kwargs: calls.append("restored")
     )
     failed = client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={})
     assert failed.status_code == 409
@@ -335,7 +335,7 @@ def test_git_failure_restores_safety_ref_and_dirty_workspace_changes_nothing(
 
     before = list(calls)
     monkeypatch.setattr(
-        sandbox_router, "require_clean_workspace", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("dirty"))
+        sandbox_service, "require_clean_workspace", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("dirty"))
     )
     dirty = client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={})
     assert dirty.status_code == 409
@@ -376,9 +376,9 @@ def test_sync_reports_but_never_applies_an_engine_mismatch(
     _register(fake_docker_client=fake_docker_client)
     calls: list[str] = []
     _stub_git(monkeypatch, calls)
-    monkeypatch.setattr(sandbox_router, "_complete_database_provision", _complete_sync)
+    monkeypatch.setattr(sandbox_service, "complete_database_provision", _complete_sync)
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "discover_engine",
         lambda *_args, **_kwargs: EngineDetection(
             signals=(EngineSignal("postgres", "test", "x", "changed", 1),),
@@ -408,7 +408,7 @@ def test_sync_reports_a_database_added_after_no_database_confirmation(
         actor="tester",
     )
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "discover_engine",
         lambda *_args, **_kwargs: EngineDetection(
             signals=(EngineSignal("postgres", "test", "x", "added", 1),),
@@ -419,7 +419,7 @@ def test_sync_reports_a_database_added_after_no_database_confirmation(
         ),
     )
 
-    report = sandbox_router._sync_engine_report(
+    report = sandbox_service.sync_engine_report(
         fake_docker_client,
         store,
         sandbox_id=SANDBOX_ID,
@@ -644,7 +644,7 @@ def test_reviewed_publish_reports_a_blocking_preview_and_takes_the_opt_in(
             "expires_at": None, "last_activity_at": "",
         }
     )
-    monkeypatch.setattr(sandbox_router, "reviewed_target", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None)
 
     refused = client.post(f"/sandboxes/{SANDBOX_ID}/publish", json={})
 

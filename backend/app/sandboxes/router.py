@@ -25,16 +25,12 @@ from app.sandboxes.lifecycle import (
 )
 from app.sandboxes.database import (
     SandboxDatabaseError,
-    SandboxMigrationError,
     drop_sandbox_database,
-    provision_sandbox_database,
     sandbox_database_runtime,
 )
 from app.sandboxes.engine_detection import (
-    EngineDetection,
     NO_DATABASE,
     discover_engine,
-    discover_schema_baseline_files,
     normalize_confirmable_engine,
 )
 from app.sandboxes.mirror import (
@@ -46,23 +42,23 @@ from app.sandboxes.mirror import (
 )
 from app.sandboxes.git import (
     count_mirror_staleness,
-    create_workspace_safety_ref,
-    describe_git_failure,
     fetch_canonical_mirror,
-    mirror_base_commit,
-    require_clean_workspace,
-    restore_workspace_safety_ref,
-    sync_workspace_from_mirror,
 )
+from app.sandboxes.service import (
+    SandboxConflict,
+    SandboxDependencyFailure,
+    SandboxInternalFailure,
+    SandboxNotFound,
+    complete_database_provision,
+    publish,
+    require_v1_publish,
+    sync,
+)
+
 from app.sandboxes.publish import (
-    GitHubApiError,
     PublishError,
-    discover_or_create_pull_request,
-    publish_reviewed_feature,
-    reviewed_target,
 )
 from app.sandboxes.naming import (
-    database_name,
     db_data_volume,
     feature_branch,
     mirror_volume,
@@ -402,7 +398,7 @@ def create_or_resolve_sandbox(
                         request=request.engine_confirmation,
                         detection=detection_row,
                     )
-                    _complete_database_provision(
+                    complete_database_provision(
                         docker_client,
                         controller_store,
                         sandbox_id=sandbox_id,
@@ -594,183 +590,31 @@ def sync_sandbox(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> SyncSandboxResponse:
     """Explicitly bring one clean v1 workspace forward from its local mirror."""
-    sandbox = controller_store.sandbox(sandbox_id)
-    _require_v1_sync(sandbox, sandbox_id)
-    assert sandbox is not None
-    manifest = read_manifest(controller_store, sandbox_id)
-    if manifest is None or manifest.lifecycle_status != "ready":
-        raise HTTPException(status.HTTP_409_CONFLICT, "Sandbox can sync only from ready")
-    project = controller_store.project(str(sandbox["project_id"]))
-    if project is None or not project.get("mirror_volume"):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Sandbox '{sandbox_id}' has no project mirror; recreate it explicitly to use v1.",
-        )
-    base_ref = _required_sync_value(sandbox, "base_ref", sandbox_id)
-    current_base_commit = _required_sync_value(
-        sandbox, "current_base_commit", sandbox_id
-    )
-    if not manifest.feature_branch:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Sandbox '{sandbox_id}' has no feature branch; recreate it explicitly to use v1.",
-        )
-
-    git_image = get_preview_settings().git_image
-    mirror_name = str(project["mirror_volume"])
-    workspace_name = workspace_volume(sandbox_id)
     try:
-        # The lease is always taken before the project mirror lock.  The clean
-        # check happens after admission, so a writer cannot change Git between
-        # the check and the safety ref.
-        with lifecycle_lease(
+        outcome = sync(
+            docker_client,
             controller_store,
-            sandbox_id,
-            "sync",
-            docker_client=docker_client,
-            stop_blocking_previews=request.stop_blocking_preview,
-        ) as lease:
-            if lease is None:  # _require_v1_sync above keeps this defensive.
-                raise RuntimeError("managed sandbox did not acquire a lifecycle lease")
-            operation_id = str(lease["operation_id"])
-            safety_ref = f"refs/orchestrator/safety/{operation_id}"
-
-            # This is deliberately first. A dirty worktree has no safe sync
-            # semantics, and must leave both Git and manifest untouched.
-            try:
-                require_clean_workspace(
-                    docker_client,
-                    image=git_image,
-                    workspace_volume=workspace_name,
-                    ensure_image=True,
-                )
-            except Exception as error:
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    f"Sandbox workspace is dirty; sync refused before changes: {error}",
-                ) from error
-
-            create_workspace_safety_ref(
-                docker_client,
-                image=git_image,
-                workspace_volume=workspace_name,
-                safety_ref=safety_ref,
-                ensure_image=True,
-            )
-
-            # The only network-enabled step is the existing canonical fetch.
-            # The sandbox worktree never receives its credentials or a remote.
-            with project_mirror_lock(controller_store, str(project["id"]), "sync"):
-                fetch_canonical_mirror(
-                    docker_client,
-                    image=git_image,
-                    mirror_volume=mirror_name,
-                    ensure_image=True,
-                )
-            controller_store.record_v1_project_mirror_fetch(
-                project_id=str(project["id"])
-            )
-            pending_base_commit = mirror_base_commit(
-                docker_client,
-                image=git_image,
-                mirror_volume=mirror_name,
-                base_ref=base_ref,
-                ensure_image=True,
-            )
-
-            # Intent is not evidence. An observed open PR preserves its branch
-            # history with a merge; every other case uses the pre-PR rebase path.
-            sync_strategy = _sync_strategy(controller_store, sandbox_id)
-            syncing = replace(
-                manifest,
-                lifecycle_status="syncing",
-                operation="sync",
-                operation_phase="git_sync",
-                pending_base_commit=pending_base_commit,
-                last_error=None,
-            )
-            write_manifest(controller_store, syncing)
-            try:
-                sync_workspace_from_mirror(
-                    docker_client,
-                    image=git_image,
-                    mirror_volume=mirror_name,
-                    workspace_volume=workspace_name,
-                    base_ref=base_ref,
-                    pending_base_commit=pending_base_commit,
-                    strategy=sync_strategy,
-                    ensure_image=True,
-                )
-            except Exception as sync_error:
-                try:
-                    restore_workspace_safety_ref(
-                        docker_client,
-                        image=git_image,
-                        workspace_volume=workspace_name,
-                        safety_ref=safety_ref,
-                        ensure_image=True,
-                    )
-                except Exception as restore_error:
-                    detail = (
-                        f"Git sync failed: {sync_error}. The controller could not restore "
-                        f"safety ref '{safety_ref}': {restore_error}"
-                    )
-                else:
-                    detail = (
-                        f"Git sync failed and Git was restored from safety ref "
-                        f"'{safety_ref}': {sync_error}"
-                    )
-                failed = read_manifest(controller_store, sandbox_id)
-                if failed is not None:
-                    write_manifest(
-                        controller_store,
-                        replace(
-                            failed,
-                            lifecycle_status="ready",
-                            operation="sync",
-                            operation_phase="git_restored",
-                            current_base_commit=current_base_commit,
-                            pending_base_commit=None,
-                            last_error=detail,
-                        ),
-                    )
-                raise HTTPException(status.HTTP_409_CONFLICT, detail) from sync_error
-
-            # This runner reads only the approved controller snapshot. It does
-            # not read preview configuration or infer commands from the new tree.
-            _complete_database_provision(
-                docker_client,
-                controller_store,
-                sandbox_id=sandbox_id,
-                operation="sync",
-                rebuild=True,
-            )
-            engine_report = _sync_engine_report(
-                docker_client,
-                controller_store,
-                sandbox_id=sandbox_id,
-                image=git_image,
-            )
-            refreshed = controller_store.sandbox(sandbox_id)
-            if refreshed is None:
-                raise RuntimeError("sandbox disappeared after sync")
-            response = _sandbox_response(controller_store, refreshed)
-            return SyncSandboxResponse(
-                **response.model_dump(),
-                operation_id=operation_id,
-                safety_ref=safety_ref,
-                strategy=sync_strategy,
-                engine_report=engine_report,
-            )
-    except SandboxAdmissionError as error:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            lifecycle_conflict_detail(error),
-        ) from error
+            sandbox_id=sandbox_id,
+            stop_blocking_preview=request.stop_blocking_preview,
+        )
+    except SandboxNotFound as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+    except SandboxConflict as error:
+        raise HTTPException(status.HTTP_409_CONFLICT, error.detail) from error
+    except SandboxDependencyFailure as error:
+        raise HTTPException(status.HTTP_424_FAILED_DEPENDENCY, str(error)) from error
+    except SandboxInternalFailure as error:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(error)) from error
     except SandboxDatabaseError as error:
         raise HTTPException(error.status_code, error.detail) from error
-    except (DockerException, RuntimeError, ValueError) as error:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(error)) from error
+    response = _sandbox_response(controller_store, outcome.sandbox)
+    return SyncSandboxResponse(
+        **response.model_dump(),
+        operation_id=outcome.operation_id,
+        safety_ref=outcome.safety_ref,
+        strategy=outcome.strategy,
+        engine_report=EngineSyncReport(**outcome.engine_report.__dict__),
+    )
 
 
 @router.post(
@@ -785,215 +629,22 @@ def publish_sandbox(
     request: PublishSandboxRequest = PublishSandboxRequest(),
 ) -> PublishSandboxResponse:
     """Push one reviewed branch, then discover or create and verify its PR."""
-    sandbox = controller_store.sandbox(sandbox_id)
-    _require_v1_publish(sandbox, sandbox_id)
-    assert sandbox is not None
-    manifest = read_manifest(controller_store, sandbox_id)
-    if manifest is None or manifest.lifecycle_status != "ready":
-        raise HTTPException(status.HTTP_409_CONFLICT, "Sandbox can publish only from ready")
-    if not manifest.feature_branch:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Sandbox '{sandbox_id}' has no feature branch; recreate it explicitly to publish.",
-        )
-    project = controller_store.project(str(sandbox["project_id"]))
-    if project is None or not project.get("remote_url") or not project.get("mirror_volume"):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Sandbox '{sandbox_id}' has no project mirror or remote; recreate it explicitly to publish.",
-        )
-    prior_publication = controller_store.sandbox_publication(sandbox_id) or {}
-    remote_branch = _optional_string(prior_publication.get("remote_branch")) or (
-        manifest.remote_branch or manifest.feature_branch
-    )
-    # Which planning session this push carries. Recorded on the publication so
-    # the feature status of a *different* session in the same sandbox does not
-    # inherit this pull request.
-    owner_session_id = controller_store.publication_owner_session(sandbox_id)
-    base_ref = _required_sync_value(sandbox, "base_ref", sandbox_id)
-    workspace_name = workspace_volume(sandbox_id)
-    mirror_name = str(project["mirror_volume"])
-    preview_settings = get_preview_settings()
-
     try:
-        # This reads the stored review only. It must run before the lifecycle
-        # lease, which can stop a requested blocking preview.
-        reviewed_target(
+        outcome = publish(
+            docker_client,
             controller_store,
             sandbox_id=sandbox_id,
-            feature_branch=manifest.feature_branch,
+            stop_blocking_preview=request.stop_blocking_preview,
         )
-        # Lock order is fixed: sandbox lifecycle lease, then project mirror
-        # lock. The mirror lock covers both local staging and network push.
-        with lifecycle_lease(
-            controller_store,
-            sandbox_id,
-            "publish",
-            docker_client=docker_client,
-            stop_blocking_previews=request.stop_blocking_preview,
-        ) as lease:
-            if lease is None:
-                raise RuntimeError("managed sandbox did not acquire a lifecycle lease")
-            operation_id = str(lease["operation_id"])
-            write_manifest(
-                controller_store,
-                replace(
-                    manifest,
-                    lifecycle_status="publishing",
-                    operation="publish",
-                    operation_phase="pushing",
-                    last_error=None,
-                ),
-            )
-            try:
-                with project_mirror_lock(
-                    controller_store,
-                    str(project["id"]),
-                    "publish",
-                    operation_id=operation_id,
-                ):
-                    outcome = publish_reviewed_feature(
-                        docker_client,
-                        store=controller_store,
-                        preview_settings=preview_settings,
-                        sandbox_id=sandbox_id,
-                        workspace_volume=workspace_name,
-                        mirror_volume=mirror_name,
-                        feature_branch=manifest.feature_branch,
-                        remote_branch=remote_branch,
-                    )
-            except Exception as error:
-                failure_message = describe_git_failure(error)
-                prior = controller_store.sandbox_publication(sandbox_id) or {}
-                controller_store.record_sandbox_publication(
-                    sandbox_id=sandbox_id,
-                    remote_branch=remote_branch,
-                    last_pushed_commit=_optional_string(prior.get("last_pushed_commit")),
-                    remote_branch_sha=_optional_string(prior.get("remote_branch_sha")),
-                    last_error=failure_message,
-                )
-                failed = read_manifest(controller_store, sandbox_id)
-                if failed is not None:
-                    write_manifest(
-                        controller_store,
-                        replace(
-                            failed,
-                            lifecycle_status="ready",
-                            operation="publish",
-                            operation_phase="pushing",
-                            last_error=failure_message,
-                        ),
-                    )
-                raise
-            publication = controller_store.record_sandbox_publication(
-                sandbox_id=sandbox_id,
-                remote_branch=outcome.remote_branch,
-                last_pushed_commit=outcome.last_pushed_commit,
-                remote_branch_sha=outcome.remote_branch_sha,
-                last_error=None,
-                session_id=owner_session_id,
-            )
-            pushed = read_manifest(controller_store, sandbox_id)
-            if pushed is None:
-                raise RuntimeError("sandbox manifest disappeared during publish")
-            write_manifest(
-                controller_store,
-                replace(
-                    pushed,
-                    lifecycle_status="publishing",
-                    operation="publish",
-                    operation_phase="pushed",
-                    last_error=None,
-                ),
-            )
-            pushed = read_manifest(controller_store, sandbox_id)
-            if pushed is None:
-                raise RuntimeError("sandbox manifest disappeared during publish")
-            write_manifest(
-                controller_store,
-                replace(
-                    pushed,
-                    lifecycle_status="publishing",
-                    operation="publish",
-                    operation_phase="pr_pending",
-                    last_error=None,
-                ),
-            )
-            try:
-                pull_request = discover_or_create_pull_request(
-                    remote_url=str(project["remote_url"]),
-                    remote_branch=outcome.remote_branch,
-                    base_branch=_base_branch(base_ref),
-                    title=manifest.feature_title or manifest.feature_key or outcome.remote_branch,
-                )
-            except (GitHubApiError, PublishError) as error:
-                # Git and GitHub are independent systems. The successful push
-                # remains observed evidence; the safe error text is retryable.
-                controller_store.record_sandbox_publication(
-                    sandbox_id=sandbox_id,
-                    remote_branch=outcome.remote_branch,
-                    last_pushed_commit=outcome.last_pushed_commit,
-                    remote_branch_sha=outcome.remote_branch_sha,
-                    last_error=str(error),
-                )
-                failed = read_manifest(controller_store, sandbox_id)
-                if failed is not None:
-                    write_manifest(
-                        controller_store,
-                        replace(
-                            failed,
-                            lifecycle_status="ready",
-                            operation="publish",
-                            operation_phase="pr_pending",
-                            last_error=str(error),
-                        ),
-                    )
-                raise PublishError(424, str(error)) from error
-            publication = controller_store.record_sandbox_publication(
-                sandbox_id=sandbox_id,
-                remote_branch=outcome.remote_branch,
-                last_pushed_commit=outcome.last_pushed_commit,
-                remote_branch_sha=outcome.remote_branch_sha,
-                pr_number=pull_request.number,
-                pr_url=pull_request.url,
-                pr_state=pull_request.state,
-                pr_merged_at=pull_request.merged_at,
-                last_error=None,
-            )
-            completed = read_manifest(controller_store, sandbox_id)
-            if completed is None:
-                raise RuntimeError("sandbox manifest disappeared during publish")
-            write_manifest(
-                controller_store,
-                replace(
-                    completed,
-                    lifecycle_status="ready",
-                    operation="publish",
-                    operation_phase="published",
-                    last_error=None,
-                ),
-            )
-            return PublishSandboxResponse(
-                sandbox_id=sandbox_id,
-                operation_id=operation_id,
-                remote_branch=outcome.remote_branch,
-                last_pushed_commit=outcome.last_pushed_commit,
-                remote_branch_sha=outcome.remote_branch_sha,
-                pushed=outcome.pushed,
-                pr_number=publication.get("pr_number"),
-                pr_url=_optional_string(publication.get("pr_url")),
-                pr_state=_optional_string(publication.get("pr_state")),
-                pr_merged_at=_optional_string(publication.get("pr_merged_at")),
-            )
-    except SandboxAdmissionError as error:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            lifecycle_conflict_detail(error),
-        ) from error
+    except SandboxNotFound as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+    except SandboxConflict as error:
+        raise HTTPException(status.HTTP_409_CONFLICT, error.detail) from error
+    except SandboxDependencyFailure as error:
+        raise HTTPException(status.HTTP_424_FAILED_DEPENDENCY, str(error)) from error
     except PublishError as error:
         raise HTTPException(error.status_code, error.detail) from error
-    except (DockerException, RuntimeError, ValueError) as error:
-        raise HTTPException(status.HTTP_424_FAILED_DEPENDENCY, describe_git_failure(error)) from error
+    return PublishSandboxResponse(**outcome.__dict__)
 
 
 @router.get("/{sandbox_id}/publication", response_model=SandboxPublicationResponse)
@@ -1002,7 +653,12 @@ def get_sandbox_publication(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> SandboxPublicationResponse:
     sandbox = controller_store.sandbox(sandbox_id)
-    _require_v1_publish(sandbox, sandbox_id)
+    try:
+        require_v1_publish(sandbox, sandbox_id)
+    except SandboxNotFound as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+    except SandboxConflict as error:
+        raise HTTPException(status.HTTP_409_CONFLICT, error.detail) from error
     publication = controller_store.sandbox_publication(sandbox_id)
     if publication is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Sandbox has no publication record")
@@ -1062,7 +718,7 @@ def confirm_engine(
                     last_error=None,
                 ),
             )
-            _complete_database_provision(
+            complete_database_provision(
                 docker_client,
                 controller_store,
                 sandbox_id=sandbox_id,
@@ -1114,7 +770,7 @@ def reset_database(
                     last_error=None,
                 ),
             )
-            _complete_database_provision(
+            complete_database_provision(
                 docker_client,
                 controller_store,
                 sandbox_id=sandbox_id,
@@ -1269,7 +925,7 @@ def resume_sandbox(
                         ),
                     )
                 else:
-                    _complete_database_provision(
+                    complete_database_provision(
                         docker_client,
                         controller_store,
                         sandbox_id=sandbox_id,
@@ -1448,38 +1104,14 @@ def _require_v1_staleness(
         )
 
 
-def _require_v1_sync(
-    sandbox: dict[str, object] | None, sandbox_id: str
-) -> None:
-    if sandbox is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sandbox not found")
-    if sandbox.get("lifecycle_version") != "v1":
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Legacy sandbox '{sandbox_id}' has no canonical mirror or usable base commit; recreate it explicitly to use v1 sync.",
-        )
-
-
-def _require_v1_publish(
-    sandbox: dict[str, object] | None, sandbox_id: str
-) -> None:
-    if sandbox is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sandbox not found")
-    if sandbox.get("lifecycle_version") != "v1":
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Legacy sandbox '{sandbox_id}' cannot publish to a remote; recreate it explicitly as v1.",
-        )
-
-
-def _required_sync_value(
+def _required_staleness_value(
     sandbox: dict[str, object], field: str, sandbox_id: str
 ) -> str:
     value = sandbox.get(field)
     if value is None or not str(value):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"Sandbox '{sandbox_id}' has no {field}; recreate it explicitly to use v1 sync.",
+            f"Sandbox '{sandbox_id}' has no {field}; recreate it explicitly to use v1 staleness.",
         )
     return str(value)
 
@@ -1501,51 +1133,6 @@ def _base_branch(base_ref: str) -> str:
     if not base_ref.startswith(prefix) or not base_ref[len(prefix) :]:
         raise PublishError(409, "Sandbox has an invalid base branch for pull request publishing")
     return base_ref[len(prefix) :]
-
-
-def _sync_engine_report(
-    docker_client: DockerClient,
-    controller_store: ControllerStore,
-    *,
-    sandbox_id: str,
-    image: str,
-) -> EngineSyncReport:
-    """Report the new-tree detection result without changing confirmed intent."""
-    stored = controller_store.sandbox_engine_detection(sandbox_id) or {}
-    confirmed = _optional_string(stored.get("confirmed_engine"))
-    try:
-        detected = discover_engine(
-            docker_client,
-            image=image,
-            volume_name=workspace_volume(sandbox_id),
-        )
-    except Exception as error:
-        return EngineSyncReport(
-            confirmed_engine=confirmed,
-            detected_engine=None,
-            mismatch=False,
-            detection_error=str(error),
-        )
-    detected_engine = detected.proposed_engine
-    return EngineSyncReport(
-        confirmed_engine=confirmed,
-        detected_engine=detected_engine,
-        mismatch=bool(
-            confirmed and detected_engine and detected_engine != confirmed
-        ),
-    )
-
-
-def _required_staleness_value(
-    sandbox: dict[str, object], field: str, sandbox_id: str
-) -> str:
-    value = sandbox.get(field)
-    if value is None or not str(value):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Sandbox '{sandbox_id}' has no {field}; recreate it explicitly to use v1 staleness.",
-        )
-    return str(value)
 
 
 def _engine_detection_response(detection: dict[str, object]) -> EngineDetectionResponse:
@@ -1596,144 +1183,6 @@ def _confirm_engine_snapshot(
         seed_commands=seed,
         commands_source=sources,
         actor=request.actor,
-    )
-
-
-def _complete_database_provision(
-    docker_client: DockerClient,
-    controller_store: ControllerStore,
-    *,
-    sandbox_id: str,
-    operation: str,
-    rebuild: bool,
-) -> None:
-    """Provision and migrate from stored approval, then make ready truthful."""
-    manifest = read_manifest(controller_store, sandbox_id)
-    detection = controller_store.sandbox_engine_detection(sandbox_id)
-    if manifest is None or detection is None:
-        raise SandboxDatabaseError(409, "Sandbox database intent is incomplete")
-    engine = str(detection.get("confirmed_engine") or "")
-    if engine == NO_DATABASE:
-        write_manifest(
-            controller_store,
-            replace(
-                manifest,
-                lifecycle_status="ready",
-                operation=operation,
-                operation_phase="ready",
-                db_engine=engine,
-                db_name=None,
-                db_data_volume=None,
-                current_base_commit=manifest.pending_base_commit or manifest.current_base_commit,
-                pending_base_commit=None,
-                last_error=None,
-            ),
-        )
-        return
-    migrate = [
-        str(value)
-        for value in _json_value(detection.get("migrate_commands_json"), [])
-    ]
-    seed = [
-        str(value)
-        for value in _json_value(detection.get("seed_commands_json"), [])
-    ]
-    data_volume = db_data_volume(sandbox_id) if engine == "sqlite" else None
-    write_manifest(
-        controller_store,
-        replace(
-            manifest,
-            lifecycle_status=(
-                "syncing"
-                if operation == "sync"
-                else (
-                    "database_failed"
-                    if operation == "reset-db"
-                    and manifest.lifecycle_status == "database_failed"
-                    else "creating"
-                )
-            ),
-            operation=operation,
-            operation_phase=("migration_replay" if operation == "sync" else "database_provisioning"),
-            db_engine=engine,
-            db_name=database_name(sandbox_id),
-            db_data_volume=data_volume,
-            last_error=None,
-        ),
-    )
-    try:
-        settings = get_preview_settings()
-        schema_files = discover_schema_baseline_files(
-            docker_client,
-            image=settings.git_image,
-            volume_name=workspace_volume(sandbox_id),
-        )
-        _runtime, baseline_hash = provision_sandbox_database(
-            docker_client,
-            controller_store,
-            settings,
-            sandbox_id=sandbox_id,
-            migrate_commands=migrate,
-            seed_commands=seed,
-            schema_files=schema_files,
-            rebuild=rebuild,
-        )
-    except SandboxMigrationError as error:
-        detail = error.detail
-        if operation == "sync":
-            detail = (
-                f"{detail}. Git is updated, but applied migrations or seed commands "
-                "are not rolled back. Run reset-db to rebuild the database and "
-                "finalize the pending base commit."
-            )
-        failed = read_manifest(controller_store, sandbox_id)
-        if failed is not None:
-            write_manifest(
-                controller_store,
-                replace(
-                    failed,
-                    lifecycle_status="database_failed",
-                    operation=operation,
-                    operation_phase="migration_failed",
-                    last_error=detail,
-                ),
-            )
-        if operation == "sync":
-            raise SandboxMigrationError(error.status_code, detail) from error
-        raise
-    except Exception as error:
-        failed = read_manifest(controller_store, sandbox_id)
-        if failed is not None:
-            database_failed = operation in {"reset-db", "sync"}
-            write_manifest(
-                controller_store,
-                replace(
-                    failed,
-                    lifecycle_status="database_failed" if database_failed else "creating",
-                    operation=operation,
-                    operation_phase="database_provisioning_failed",
-                    last_error=str(error),
-                ),
-            )
-        if isinstance(error, SandboxDatabaseError):
-            raise
-        raise SandboxDatabaseError(503, f"Sandbox database provisioning failed: {error}") from error
-    ready = read_manifest(controller_store, sandbox_id)
-    if ready is None:
-        raise RuntimeError("sandbox manifest disappeared after database provisioning")
-    current_base = ready.pending_base_commit or ready.current_base_commit
-    write_manifest(
-        controller_store,
-        replace(
-            ready,
-            lifecycle_status="ready",
-            operation=operation,
-            operation_phase="ready",
-            current_base_commit=current_base,
-            pending_base_commit=None,
-            schema_baseline_hash=baseline_hash,
-            last_error=None,
-        ),
     )
 
 
