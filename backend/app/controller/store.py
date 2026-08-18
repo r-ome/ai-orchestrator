@@ -524,6 +524,98 @@ class SandboxWriterAdmissionError(SandboxAdmissionError):
         super().__init__(detail)
 
 
+class SlotTaken(RuntimeError):
+    """A partial unique index refused a claim because the slot is occupied."""
+
+    owner_label = "Sandbox"
+    slot = "a taken slot"
+
+    def __init__(self, owner_id: str) -> None:
+        self.owner_id = owner_id
+        # Keep the established attribute available to existing sandbox callers.
+        self.sandbox_id = owner_id
+        super().__init__(f"{self.owner_label} '{owner_id}' already has {self.slot}")
+
+
+class OpenTaskExists(SlotTaken):
+    slot = "an open task"
+
+
+class ActiveAgentRunExists(SlotTaken):
+    slot = "an active agent run"
+
+
+class AgentWriterSessionExists(SlotTaken):
+    slot = "an open agent writer session"
+
+
+class RevisionTaken(SlotTaken):
+    owner_label = "Owner"
+    slot = "a concurrent revision claim"
+
+
+class DelegationActive(SlotTaken):
+    slot = "an active delegation"
+
+
+class ReviewGenerating(SlotTaken):
+    owner_label = "Delegation"
+    slot = "a generating integration review"
+
+
+class ChangeRequestRunning(SlotTaken):
+    owner_label = "Delegation"
+    slot = "a running change request"
+
+
+class RunActive(SlotTaken):
+    owner_label = "Delegation"
+    slot = "a running work item run"
+
+
+def _violates(error: sqlite3.IntegrityError, index: str) -> bool:
+    message = str(error)
+    if message == f"UNIQUE constraint failed: index '{index}'":
+        return True
+    # Some SQLite builds name the indexed column for partial index conflicts.
+    # Keep this fallback exact, so another constraint failure still escapes as
+    # its original sqlite3.IntegrityError.
+    return message == {
+        "one_open_task_per_sandbox": "UNIQUE constraint failed: tasks.sandbox_id",
+        "one_active_agent_per_sandbox": "UNIQUE constraint failed: agent_runs.sandbox_id",
+        "one_open_agent_writer_session_per_sandbox": (
+            "UNIQUE constraint failed: agent_writer_sessions.sandbox_id"
+        ),
+        "one_delegation_revision_per_session": (
+            "UNIQUE constraint failed: delegations.session_id, delegations.revision"
+        ),
+        "one_active_delegation_per_sandbox": (
+            "UNIQUE constraint failed: delegations.sandbox_id"
+        ),
+        "one_review_revision_per_delegation": (
+            "UNIQUE constraint failed: delegation_reviews.delegation_id, "
+            "delegation_reviews.revision"
+        ),
+        "one_generating_review_per_delegation": (
+            "UNIQUE constraint failed: delegation_reviews.delegation_id"
+        ),
+        "one_change_revision_per_delegation": (
+            "UNIQUE constraint failed: delegation_change_requests.delegation_id, "
+            "delegation_change_requests.revision"
+        ),
+        "one_running_change_per_delegation": (
+            "UNIQUE constraint failed: delegation_change_requests.delegation_id"
+        ),
+        "one_attempt_number_per_work_item": (
+            "UNIQUE constraint failed: work_item_runs.work_item_id, "
+            "work_item_runs.attempt"
+        ),
+        "one_running_run_per_delegation": (
+            "UNIQUE constraint failed: work_item_runs.delegation_id"
+        ),
+    }.get(index)
+
+
 def _add_column(
     connection: sqlite3.Connection,
     table: str,
@@ -1863,7 +1955,7 @@ class ControllerStore:
         title: str,
         status: str,
     ) -> None:
-        """Claims the sandbox's single open-task slot, or raises sqlite3.IntegrityError.
+        """Claims the sandbox's single open-task slot, or raises OpenTaskExists.
 
         The one_open_task_per_sandbox partial index is the only thing that
         decides the race, exactly as one_active_agent_per_sandbox does for
@@ -1874,26 +1966,31 @@ class ControllerStore:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._assert_writer_admission(connection, sandbox_id)
-            connection.execute(
-                """
-                INSERT INTO tasks(
-                    id, sandbox_id, agent_run_id, branch, base_branch, base_commit,
-                    status, title, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    task_id,
-                    sandbox_id,
-                    agent_run_id,
-                    branch,
-                    base_branch,
-                    base_commit,
-                    status,
-                    title,
-                    now,
-                    now,
-                ),
-            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO tasks(
+                        id, sandbox_id, agent_run_id, branch, base_branch, base_commit,
+                        status, title, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        task_id,
+                        sandbox_id,
+                        agent_run_id,
+                        branch,
+                        base_branch,
+                        base_commit,
+                        status,
+                        title,
+                        now,
+                        now,
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                if not _violates(error, "one_open_task_per_sandbox"):
+                    raise
+                raise OpenTaskExists(sandbox_id) from error
             self._event(
                 connection,
                 sandbox_id=sandbox_id,
@@ -2271,59 +2368,74 @@ class ControllerStore:
             )
         return updated
 
-    def create_delegation_revision(
+    def claim_delegation_revision(
         self,
         delegation: Mapping[str, Any],
         items: Iterable[Mapping[str, Any]],
-    ) -> None:
-        """Write a delegation and all work items in one transaction."""
+    ) -> int:
+        """Claim the next delegation revision and write its work items."""
         now = _now()
+        values = dict(delegation)
         rows = list(items)
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._assert_writer_admission(
                 connection,
-                str(delegation["sandbox_id"]),
+                str(values["sandbox_id"]),
             )
-            connection.execute(
+            row = connection.execute(
                 """
-                INSERT INTO delegations(
-                    id, session_id, sandbox_id, context_id, revision, status,
-                    created_at, updated_at
-                ) VALUES (
-                    :id, :session_id, :sandbox_id, :context_id, :revision,
-                    :status, :created_at, :updated_at
-                )
+                SELECT COALESCE(MAX(revision), 0) AS highest
+                FROM delegations WHERE session_id = ?
                 """,
-                {**dict(delegation), "created_at": now, "updated_at": now},
-            )
-            connection.executemany(
-                """
-                INSERT INTO work_items(
-                    id, delegation_id, key, position, title, objective, scope,
-                    out_of_scope, dependencies_json, files_json, symbols_json,
-                    write_scope_json, acceptance_criteria_json, verification_json,
-                    complexity, architecture_json, risks_json, created_at
-                ) VALUES (
-                    :id, :delegation_id, :key, :position, :title, :objective,
-                    :scope, :out_of_scope, :dependencies_json, :files_json,
-                    :symbols_json, :write_scope_json, :acceptance_criteria_json,
-                    :verification_json, :complexity, :architecture_json,
-                    :risks_json, :created_at
+                (values["session_id"],),
+            ).fetchone()
+            revision = int(row["highest"]) + 1
+            values["revision"] = revision
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO delegations(
+                        id, session_id, sandbox_id, context_id, revision, status,
+                        created_at, updated_at
+                    ) VALUES (
+                        :id, :session_id, :sandbox_id, :context_id, :revision,
+                        :status, :created_at, :updated_at
+                    )
+                    """,
+                    {**values, "created_at": now, "updated_at": now},
                 )
-                """,
-                [{**dict(row), "created_at": now} for row in rows],
-            )
+                connection.executemany(
+                    """
+                    INSERT INTO work_items(
+                        id, delegation_id, key, position, title, objective, scope,
+                        out_of_scope, dependencies_json, files_json, symbols_json,
+                        write_scope_json, acceptance_criteria_json, verification_json,
+                        complexity, architecture_json, risks_json, created_at
+                    ) VALUES (
+                        :id, :delegation_id, :key, :position, :title, :objective,
+                        :scope, :out_of_scope, :dependencies_json, :files_json,
+                        :symbols_json, :write_scope_json, :acceptance_criteria_json,
+                        :verification_json, :complexity, :architecture_json,
+                        :risks_json, :created_at
+                    )
+                    """,
+                    [{**dict(item), "created_at": now} for item in rows],
+                )
+            except sqlite3.IntegrityError as error:
+                if _violates(error, "one_delegation_revision_per_session"):
+                    raise RevisionTaken(str(values["session_id"])) from error
+                if _violates(error, "one_active_delegation_per_sandbox"):
+                    raise DelegationActive(str(values["sandbox_id"])) from error
+                raise
             self._event(
                 connection,
-                sandbox_id=str(delegation["sandbox_id"]),
-                run_id=str(delegation["id"]),
+                sandbox_id=str(values["sandbox_id"]),
+                run_id=str(values["id"]),
                 kind="delegation.created",
-                payload={
-                    "revision": delegation["revision"],
-                    "work_items": len(rows),
-                },
+                payload={"revision": revision, "work_items": len(rows)},
             )
+        return revision
 
     def delegation(self, delegation_id: str) -> dict[str, Any] | None:
         with self._connection() as connection:
@@ -2381,48 +2493,57 @@ class ControllerStore:
             ).fetchone()
         return _row(row)
 
-    def next_delegation_revision(self, session_id: str) -> int:
+    def claim_delegation_review(self, review: Mapping[str, Any]) -> int:
+        """Claim the next review revision and create its generating row."""
+        now = _now()
+        values = dict(review)
         with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
                 SELECT COALESCE(MAX(revision), 0) AS highest
-                FROM delegations WHERE session_id = ?
+                FROM delegation_reviews WHERE delegation_id = ?
                 """,
-                (session_id,),
+                (values["delegation_id"],),
             ).fetchone()
-        return int(row["highest"]) + 1
-
-    def create_delegation_review(self, values: Mapping[str, Any]) -> None:
-        now = _now()
-        with self._connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO delegation_reviews(
-                    id, delegation_id, revision, status, provider, model,
-                    base_branch, base_commit, head_commit,
-                    created_at, updated_at
-                ) VALUES (
-                    :id, :delegation_id, :revision, :status, :provider, :model,
-                    :base_branch, :base_commit, :head_commit,
-                    :created_at, :updated_at
+            revision = int(row["highest"]) + 1
+            values["revision"] = revision
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO delegation_reviews(
+                        id, delegation_id, revision, status, provider, model,
+                        base_branch, base_commit, head_commit,
+                        created_at, updated_at
+                    ) VALUES (
+                        :id, :delegation_id, :revision, :status, :provider, :model,
+                        :base_branch, :base_commit, :head_commit,
+                        :created_at, :updated_at
+                    )
+                    """,
+                    {
+                        **values,
+                        "base_branch": values.get("base_branch"),
+                        "base_commit": values.get("base_commit"),
+                        "head_commit": values.get("head_commit"),
+                        "created_at": now,
+                        "updated_at": now,
+                    },
                 )
-                """,
-                {
-                    **dict(values),
-                    "base_branch": values.get("base_branch"),
-                    "base_commit": values.get("base_commit"),
-                    "head_commit": values.get("head_commit"),
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            )
+            except sqlite3.IntegrityError as error:
+                if _violates(error, "one_review_revision_per_delegation"):
+                    raise RevisionTaken(str(values["delegation_id"])) from error
+                if _violates(error, "one_generating_review_per_delegation"):
+                    raise ReviewGenerating(str(values["delegation_id"])) from error
+                raise
             self._event(
                 connection,
                 sandbox_id=None,
                 run_id=str(values["id"]),
                 kind="delegation_review.generating",
-                payload={"revision": values["revision"]},
+                payload={"revision": revision},
             )
+        return revision
 
     def settle_delegation_review(
         self,
@@ -2539,44 +2660,53 @@ class ControllerStore:
             ).fetchone()
         return _row(row)
 
-    def next_delegation_review_revision(self, delegation_id: str) -> int:
+    def claim_delegation_change_request(self, request: Mapping[str, Any]) -> int:
+        """Claim the next change revision and create its running row."""
+        now = _now()
+        values = dict(request)
         with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
                 SELECT COALESCE(MAX(revision), 0) AS highest
-                FROM delegation_reviews WHERE delegation_id = ?
+                FROM delegation_change_requests WHERE delegation_id = ?
                 """,
-                (delegation_id,),
+                (values["delegation_id"],),
             ).fetchone()
-        return int(row["highest"]) + 1
-
-    def create_delegation_change_request(self, values: Mapping[str, Any]) -> None:
-        now = _now()
-        with self._connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO delegation_change_requests(
-                    id, delegation_id, revision, status, instructions,
-                    provider, model, task_id, prompt, created_at, updated_at
-                ) VALUES (
-                    :id, :delegation_id, :revision, :status, :instructions,
-                    :provider, :model, :task_id, :prompt, :created_at, :updated_at
+            revision = int(row["highest"]) + 1
+            values["revision"] = revision
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO delegation_change_requests(
+                        id, delegation_id, revision, status, instructions,
+                        provider, model, task_id, prompt, created_at, updated_at
+                    ) VALUES (
+                        :id, :delegation_id, :revision, :status, :instructions,
+                        :provider, :model, :task_id, :prompt, :created_at, :updated_at
+                    )
+                    """,
+                    {
+                        **values,
+                        "prompt": values.get("prompt"),
+                        "created_at": now,
+                        "updated_at": now,
+                    },
                 )
-                """,
-                {
-                    **dict(values),
-                    "prompt": values.get("prompt"),
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            )
+            except sqlite3.IntegrityError as error:
+                if _violates(error, "one_change_revision_per_delegation"):
+                    raise RevisionTaken(str(values["delegation_id"])) from error
+                if _violates(error, "one_running_change_per_delegation"):
+                    raise ChangeRequestRunning(str(values["delegation_id"])) from error
+                raise
             self._event(
                 connection,
                 sandbox_id=None,
                 run_id=str(values["id"]),
                 kind="change_request.running",
-                payload={"revision": values["revision"]},
+                payload={"revision": revision},
             )
+        return revision
 
     def settle_delegation_change_request(
         self,
@@ -2669,17 +2799,6 @@ class ControllerStore:
                 )
         return len(rows)
 
-    def next_delegation_change_revision(self, delegation_id: str) -> int:
-        with self._connection() as connection:
-            row = connection.execute(
-                """
-                SELECT COALESCE(MAX(revision), 0) AS highest
-                FROM delegation_change_requests WHERE delegation_id = ?
-                """,
-                (delegation_id,),
-            ).fetchone()
-        return int(row["highest"]) + 1
-
     def transition_delegation(
         self,
         delegation_id: str,
@@ -2745,22 +2864,40 @@ class ControllerStore:
             ).fetchone()
         return _row(row)
 
-    def start_work_item_run(self, values: Mapping[str, Any]) -> None:
+    def claim_work_item_run(self, run: Mapping[str, Any]) -> int:
         """Append one attempt and claim the delegation's running slot."""
         now = _now()
+        values = dict(run)
         with self._connection() as connection:
-            connection.execute(
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
                 """
-                INSERT INTO work_item_runs(
-                    id, work_item_id, delegation_id, attempt, status, provider,
-                    model, task_id, created_at, updated_at
-                ) VALUES (
-                    :id, :work_item_id, :delegation_id, :attempt, :status,
-                    :provider, :model, :task_id, :created_at, :updated_at
-                )
+                SELECT COALESCE(MAX(attempt), 0) AS highest
+                FROM work_item_runs WHERE work_item_id = ?
                 """,
-                {**dict(values), "created_at": now, "updated_at": now},
-            )
+                (values["work_item_id"],),
+            ).fetchone()
+            attempt = int(row["highest"]) + 1
+            values["attempt"] = attempt
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO work_item_runs(
+                        id, work_item_id, delegation_id, attempt, status, provider,
+                        model, task_id, created_at, updated_at
+                    ) VALUES (
+                        :id, :work_item_id, :delegation_id, :attempt, :status,
+                        :provider, :model, :task_id, :created_at, :updated_at
+                    )
+                    """,
+                    {**values, "created_at": now, "updated_at": now},
+                )
+            except sqlite3.IntegrityError as error:
+                if _violates(error, "one_attempt_number_per_work_item"):
+                    raise RevisionTaken(str(values["work_item_id"])) from error
+                if _violates(error, "one_running_run_per_delegation"):
+                    raise RunActive(str(values["delegation_id"])) from error
+                raise
             self._event(
                 connection,
                 sandbox_id=None,
@@ -2768,9 +2905,10 @@ class ControllerStore:
                 kind="work_item_run.running",
                 payload={
                     "work_item_id": values["work_item_id"],
-                    "attempt": values["attempt"],
+                    "attempt": attempt,
                 },
             )
+        return attempt
 
     def settle_work_item_run(
         self,
@@ -2872,17 +3010,6 @@ class ControllerStore:
                 (delegation_id,),
             ).fetchall()
         return [_row(row) for row in rows if row is not None]
-
-    def next_attempt_number(self, work_item_id: str) -> int:
-        with self._connection() as connection:
-            row = connection.execute(
-                """
-                SELECT COALESCE(MAX(attempt), 0) AS highest
-                FROM work_item_runs WHERE work_item_id = ?
-                """,
-                (work_item_id,),
-            ).fetchone()
-        return int(row["highest"]) + 1
 
     def set_work_item_routing(
         self,
@@ -3516,14 +3643,19 @@ class ControllerStore:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._assert_writer_admission(connection, sandbox_id)
-            connection.execute(
-                """
-                INSERT INTO agent_runs(
-                    id, sandbox_id, container_id, provider, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (run_id, sandbox_id, container_id, provider, status, created_at),
-            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO agent_runs(
+                        id, sandbox_id, container_id, provider, status, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (run_id, sandbox_id, container_id, provider, status, created_at),
+                )
+            except sqlite3.IntegrityError as error:
+                if not _violates(error, "one_active_agent_per_sandbox"):
+                    raise
+                raise ActiveAgentRunExists(sandbox_id) from error
             self._event(
                 connection,
                 sandbox_id=sandbox_id,
@@ -3563,15 +3695,20 @@ class ControllerStore:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._assert_writer_admission(connection, sandbox_id)
-            connection.execute(
-                """
-                INSERT INTO agent_writer_sessions(
-                    id, sandbox_id, agent_run_id, kind,
-                    started_at, ended_at, heartbeat_at
-                ) VALUES (?, ?, ?, ?, ?, NULL, ?)
-                """,
-                (session_id, sandbox_id, agent_run_id, kind, now, now),
-            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO agent_writer_sessions(
+                        id, sandbox_id, agent_run_id, kind,
+                        started_at, ended_at, heartbeat_at
+                    ) VALUES (?, ?, ?, ?, ?, NULL, ?)
+                    """,
+                    (session_id, sandbox_id, agent_run_id, kind, now, now),
+                )
+            except sqlite3.IntegrityError as error:
+                if not _violates(error, "one_open_agent_writer_session_per_sandbox"):
+                    raise
+                raise AgentWriterSessionExists(sandbox_id) from error
 
     def heartbeat_agent_writer_session(self, session_id: str) -> bool:
         with self._connection() as connection:

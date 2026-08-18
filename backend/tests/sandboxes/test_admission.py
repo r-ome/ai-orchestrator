@@ -6,10 +6,14 @@ from typing import Any
 import pytest
 
 from app.controller.store import (
+    ActiveAgentRunExists,
+    AgentWriterSessionExists,
     ControllerStore,
+    OpenTaskExists,
     SandboxLeaseBlockedByWriterError,
     SandboxLeaseHeldError,
     SandboxWriterAdmissionError,
+    SlotTaken,
 )
 from app.sandboxes import lifecycle as sandbox_lifecycle
 
@@ -119,13 +123,94 @@ def test_unique_index_rejects_two_open_sessions_for_one_sandbox(
         kind="terminal",
     )
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(AgentWriterSessionExists):
         store.open_agent_writer_session(
             session_id="session-2",
             sandbox_id="sandbox-1",
             agent_run_id="agent-1",
             kind="terminal",
         )
+
+
+def test_unique_index_rejects_two_open_tasks_for_one_sandbox(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.create_task(
+        task_id="task-1",
+        sandbox_id="sandbox-1",
+        agent_run_id=None,
+        branch="task/task-1",
+        base_branch="main",
+        base_commit="a" * 40,
+        title="first",
+        status="open",
+    )
+
+    with pytest.raises(OpenTaskExists):
+        store.create_task(
+            task_id="task-2",
+            sandbox_id="sandbox-1",
+            agent_run_id=None,
+            branch="task/task-2",
+            base_branch="main",
+            base_commit="a" * 40,
+            title="second",
+            status="open",
+        )
+
+
+def test_unique_index_rejects_two_active_agent_runs_for_one_sandbox(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    _agent(store)
+
+    with pytest.raises(ActiveAgentRunExists):
+        store.start_agent_run(
+            run_id="agent-2",
+            sandbox_id="sandbox-1",
+            provider="claude",
+            container_id="container-2",
+            status="running",
+        )
+
+
+def test_task_primary_key_conflict_stays_a_sqlite_integrity_error(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    store.register_sandbox(
+        sandbox_id="sandbox-2",
+        project_id="project-2",
+        project_name="sample-two",
+        source_path="/projects/sample-two",
+        volume_name="sample-two-volume",
+        status="ready",
+        created_at="2026-08-11T00:00:00Z",
+    )
+    store.create_task(
+        task_id="task-1",
+        sandbox_id="sandbox-1",
+        agent_run_id=None,
+        branch="task/task-1",
+        base_branch="main",
+        base_commit="a" * 40,
+        title="first",
+        status="open",
+    )
+
+    with pytest.raises(sqlite3.IntegrityError) as caught:
+        store.create_task(
+            task_id="task-1",
+            sandbox_id="sandbox-2",
+            agent_run_id=None,
+            branch="task/task-2",
+            base_branch="main",
+            base_commit="a" * 40,
+            title="second",
+            status="open",
+        )
+
+    assert not isinstance(caught.value, SlotTaken)
 
 
 def test_writer_detection_names_each_blocking_class(tmp_path: Path) -> None:
@@ -318,13 +403,12 @@ def test_lease_blocks_every_writer_start_transaction(tmp_path: Path) -> None:
     with pytest.raises(SandboxWriterAdmissionError):
         store.create_preview_run(_preview_values("sandbox-1"))
     with pytest.raises(SandboxWriterAdmissionError):
-        store.create_delegation_revision(
+        store.claim_delegation_revision(
             {
                 "id": "delegation-1",
                 "session_id": "planning-1",
                 "sandbox_id": "sandbox-1",
                 "context_id": None,
-                "revision": 1,
                 "status": "ready",
             },
             [],
@@ -368,13 +452,12 @@ def test_engine_confirmation_names_the_action_that_unblocks_delegation(
         )
 
     with pytest.raises(SandboxWriterAdmissionError) as caught:
-        store.create_delegation_revision(
+        store.claim_delegation_revision(
             {
                 "id": "delegation-1",
                 "session_id": "planning-1",
                 "sandbox_id": "sandbox-1",
                 "context_id": None,
-                "revision": 1,
                 "status": "ready",
             },
             [],
@@ -407,13 +490,12 @@ def test_lifecycle_lease_refuses_a_new_delegation(tmp_path: Path) -> None:
     )
 
     with pytest.raises(SandboxWriterAdmissionError) as caught:
-        store.create_delegation_revision(
+        store.claim_delegation_revision(
             {
                 "id": "delegation-1",
                 "session_id": "planning-1",
                 "sandbox_id": "sandbox-1",
                 "context_id": None,
-                "revision": 1,
                 "status": "ready",
             },
             [],
@@ -539,13 +621,12 @@ def test_delegation_task_and_preview_writer_rows_can_nest(tmp_path: Path) -> Non
         credential_profile="default",
         max_review_turns=3,
     )
-    store.create_delegation_revision(
+    store.claim_delegation_revision(
         {
             "id": "delegation-1",
             "session_id": "planning-1",
             "sandbox_id": "sandbox-1",
             "context_id": None,
-            "revision": 1,
             "status": "ready",
         },
         [],

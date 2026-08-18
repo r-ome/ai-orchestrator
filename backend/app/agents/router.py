@@ -1,6 +1,5 @@
 import asyncio
 import json
-import sqlite3
 from collections.abc import Callable
 from contextlib import suppress
 from typing import Annotated, Any, TypeVar
@@ -39,6 +38,7 @@ from app.agents.service import (
 from app.docker_client import get_docker_client
 from app.docker_terminal import close_stream, read_stream, write_stream
 from app.controller.store import (
+    AgentWriterSessionExists,
     ControllerStore,
     SandboxWriterAdmissionError,
     get_controller_store,
@@ -213,7 +213,7 @@ async def agent_terminal(
         except SandboxWriterAdmissionError as error:
             await websocket.close(code=4409, reason=str(error))
             return
-        except sqlite3.IntegrityError:
+        except AgentWriterSessionExists:
             await websocket.close(code=4409, reason="Agent already has a terminal")
             return
         writer_session_open = True

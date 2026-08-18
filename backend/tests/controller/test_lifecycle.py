@@ -168,12 +168,11 @@ def _run(store: ControllerStore, task_id: str) -> str:
         title="Item a",
         status="review",
     )
-    store.start_work_item_run(
+    store.claim_work_item_run(
         {
             "id": "run-1",
             "work_item_id": view.items[0].item.id,
             "delegation_id": view.delegation.id,
-            "attempt": 1,
             "status": "running",
             "provider": "claude",
             "model": "test-model",

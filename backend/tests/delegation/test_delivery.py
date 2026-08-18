@@ -618,13 +618,12 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
             credential_profile="default",
             max_review_turns=3,
         )
-        store.create_delegation_revision(
+        store.claim_delegation_revision(
             {
                 "id": "delegation-active",
                 "session_id": "planning-1",
                 "sandbox_id": sandbox_id,
                 "context_id": None,
-                "revision": 1,
                 "status": "ready",
             },
             [],
@@ -688,13 +687,12 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
         )
         assert synced.lifecycle_status == "ready"
 
-        store.create_delegation_revision(
+        store.claim_delegation_revision(
             {
                 "id": "delegation-drained",
                 "session_id": "planning-1",
                 "sandbox_id": sandbox_id,
                 "context_id": None,
-                "revision": 2,
                 "status": "ready",
             },
             [],

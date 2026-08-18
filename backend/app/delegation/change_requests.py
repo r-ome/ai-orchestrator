@@ -2,7 +2,6 @@
 
 import json
 import re
-import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
@@ -10,7 +9,11 @@ from uuid import uuid4
 
 from docker.client import DockerClient
 
-from app.controller.store import ControllerStore
+from app.controller.store import (
+    ChangeRequestRunning,
+    ControllerStore,
+    RevisionTaken,
+)
 from app.delegation import service
 from app.delegation.config import get_verification_settings
 from app.delegation.models import (
@@ -131,11 +134,10 @@ def claim_change_request(
     request_id = uuid4().hex
     model = request.model or settings.model(request.provider.value)
     try:
-        store.create_delegation_change_request(
+        store.claim_delegation_change_request(
             {
                 "id": request_id,
                 "delegation_id": delegation_id,
-                "revision": store.next_delegation_change_revision(delegation_id),
                 "status": ChangeRequestStatus.RUNNING.value,
                 "instructions": instructions,
                 "provider": request.provider.value,
@@ -144,7 +146,13 @@ def claim_change_request(
                 "prompt": prompt,
             }
         )
-    except sqlite3.IntegrityError as error:
+    except RevisionTaken as error:
+        _discard_task(docker_client, store, task.id)
+        raise service.DelegationOperationError(
+            409,
+            "This change request revision was claimed concurrently",
+        ) from error
+    except ChangeRequestRunning as error:
         _discard_task(docker_client, store, task.id)
         raise service.DelegationOperationError(
             409,

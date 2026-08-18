@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from app.controller.store import ControllerStore
+from app.controller.store import ControllerStore, DelegationActive, RunActive
 from app.delegation import service
 from app.delegation.models import (
     ACTIVE_DELEGATION_STATUSES,
@@ -215,12 +215,11 @@ def test_run_attempts_drive_item_state_and_retain_metrics(store: ControllerStore
         [_item("a"), _item("b", dependencies=["a"])],
     )
     item_a = result.items[0].item
-    store.start_work_item_run(
+    store.claim_work_item_run(
         {
             "id": "run-1",
             "work_item_id": item_a.id,
             "delegation_id": result.delegation.id,
-            "attempt": 1,
             "status": RunStatus.RUNNING.value,
             "provider": "claude",
             "model": "model",
@@ -248,26 +247,24 @@ def test_run_attempts_drive_item_state_and_retain_metrics(store: ControllerStore
 def test_attempts_append_and_one_run_can_be_active(store: ControllerStore) -> None:
     result = service.create_revision(store, "session-1", [_item("a"), _item("b")])
     first, second = [entry.item for entry in result.items]
-    store.start_work_item_run(
+    assert store.claim_work_item_run(
         {
             "id": "run-a",
             "work_item_id": first.id,
             "delegation_id": result.delegation.id,
-            "attempt": 1,
             "status": "running",
             "provider": "claude",
             "model": "model",
             "task_id": None,
         }
-    )
+    ) == 1
 
-    with pytest.raises(sqlite3.IntegrityError):
-        store.start_work_item_run(
+    with pytest.raises(RunActive):
+        store.claim_work_item_run(
             {
                 "id": "run-b",
                 "work_item_id": second.id,
                 "delegation_id": result.delegation.id,
-                "attempt": 1,
                 "status": "running",
                 "provider": "claude",
                 "model": "model",
@@ -277,16 +274,61 @@ def test_attempts_append_and_one_run_can_be_active(store: ControllerStore) -> No
 
     assert store.settle_work_item_run("run-a", to_status="failed")
     assert store.settle_work_item_run("run-a", to_status="succeeded") is None
-    assert store.next_attempt_number(first.id) == 2
+    assert store.claim_work_item_run(
+        {
+            "id": "run-c",
+            "work_item_id": first.id,
+            "delegation_id": result.delegation.id,
+            "status": "running",
+            "provider": "claude",
+            "model": "model",
+            "task_id": None,
+        }
+    ) == 2
+
+
+def test_work_item_key_integrity_error_stays_raw(store: ControllerStore) -> None:
+    delegation_id = "delegation-duplicate-key"
+    item = _item("duplicate")
+
+    with pytest.raises(sqlite3.IntegrityError) as caught:
+        store.claim_delegation_revision(
+            {
+                "id": delegation_id,
+                "session_id": "session-1",
+                "sandbox_id": "sandbox-1",
+                "context_id": "context-session-1",
+                "status": DelegationStatus.READY.value,
+            },
+            [
+                service._work_item_row(delegation_id, 0, item),
+                service._work_item_row(delegation_id, 1, item),
+            ],
+        )
+
+    assert str(caught.value) == "UNIQUE constraint failed: work_items.delegation_id, work_items.key"
 
 
 def test_active_delegation_blocks_revision_until_settled(store: ControllerStore) -> None:
     first = service.create_revision(store, "session-1", [_item("a")])
 
+    with pytest.raises(DelegationActive):
+        store.claim_delegation_revision(
+            {
+                "id": "delegation-busy",
+                "session_id": "session-1",
+                "sandbox_id": "sandbox-1",
+                "context_id": "context-session-1",
+                "status": DelegationStatus.READY.value,
+            },
+            [],
+        )
+
     with pytest.raises(service.DelegationOperationError) as error:
         service.create_revision(store, "session-1", [_item("a")])
 
     assert error.value.status_code == 409
+    assert error.value.detail == "This sandbox already has an active delegation"
     service.transition(store, first.delegation.id, DelegationStatus.ABANDONED)
     second = service.create_revision(store, "session-1", [_item("a")])
     assert second.delegation.revision == 2

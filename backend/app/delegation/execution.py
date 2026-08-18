@@ -1,14 +1,13 @@
 """Run one work item and merge it internally after controller verification."""
 
 import json
-import sqlite3
 from dataclasses import dataclass, replace
 from typing import Any
 from uuid import uuid4
 
 from docker.client import DockerClient
 
-from app.controller.store import ControllerStore
+from app.controller.store import ControllerStore, RevisionTaken, RunActive
 from app.delegation import service
 from app.delegation.config import get_routing_settings, get_verification_settings
 from app.delegation.models import (
@@ -195,12 +194,11 @@ def claim_run(
     )
     run_id = uuid4().hex
     try:
-        store.start_work_item_run(
+        store.claim_work_item_run(
             {
                 "id": run_id,
                 "work_item_id": entry.item.id,
                 "delegation_id": delegation_id,
-                "attempt": store.next_attempt_number(entry.item.id),
                 "status": RunStatus.RUNNING.value,
                 "provider": decision.provider.value,
                 "model": decision.model,
@@ -211,7 +209,21 @@ def claim_run(
             run_id,
             {"routing_source": decision.source.value},
         )
-    except sqlite3.IntegrityError as error:
+    except RevisionTaken as error:
+        cleanup = _cleanup_task(docker_client, store, task.id)
+        detail = "This work item run attempt was claimed concurrently"
+        if cleanup:
+            detail += f"; task cleanup failed: {cleanup}"
+            service.transition(
+                store,
+                delegation_id,
+                DelegationStatus.HALTED,
+                error=detail[:1500],
+                session_id=session_id,
+                project_name=project_name,
+            )
+        raise service.DelegationOperationError(409, detail) from error
+    except RunActive as error:
         cleanup = _cleanup_task(docker_client, store, task.id)
         detail = "Another work item run is already active"
         if cleanup:

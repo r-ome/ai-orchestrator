@@ -1,7 +1,6 @@
 import json
 import re
 import shlex
-import sqlite3
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -9,7 +8,11 @@ from uuid import uuid4
 from docker.client import DockerClient
 from docker.errors import DockerException
 
-from app.controller.store import ControllerStore, SandboxWriterAdmissionError
+from app.controller.store import (
+    ControllerStore,
+    OpenTaskExists,
+    SandboxWriterAdmissionError,
+)
 from app.dirty_state import parse_snapshot, serialize_snapshot, snapshot_shell
 from app.previews.config import get_preview_settings
 from app.projects.models import ProjectRegistration
@@ -85,7 +88,7 @@ def start_task(
         )
     except SandboxWriterAdmissionError as error:
         raise TaskOperationError(409, str(error)) from error
-    except sqlite3.IntegrityError as error:
+    except OpenTaskExists as error:
         raise TaskOperationError(
             409,
             f"Sandbox '{project.name}' already has an open task",

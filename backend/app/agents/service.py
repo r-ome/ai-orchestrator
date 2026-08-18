@@ -1,7 +1,6 @@
 import hashlib
 import re
 import shlex
-import sqlite3
 from typing import Any
 from uuid import uuid4
 
@@ -16,7 +15,11 @@ from app.containers.hardened import (
     HardenedContainerSpec,
     create_hardened,
 )
-from app.controller.store import ControllerStore, SandboxWriterAdmissionError
+from app.controller.store import (
+    ActiveAgentRunExists,
+    ControllerStore,
+    SandboxWriterAdmissionError,
+)
 from app.agents.models import (
     AgentProvider,
     CleanupAgentsResponse,
@@ -133,7 +136,7 @@ def create_agent(
         )
     except SandboxWriterAdmissionError as error:
         raise AgentOperationError(409, str(error)) from error
-    except sqlite3.IntegrityError as error:
+    except ActiveAgentRunExists as error:
         raise AgentOperationError(
             409,
             f"Sandbox '{project.name}' already has an active coding agent",

@@ -272,13 +272,12 @@ def test_sync_refuses_an_active_delegation(
         credential_profile="default",
         max_review_turns=3,
     )
-    store.create_delegation_revision(
+    store.claim_delegation_revision(
         {
             "id": "delegation-1",
             "session_id": "planning-1",
             "sandbox_id": SANDBOX_ID,
             "context_id": None,
-            "revision": 1,
             "status": "ready",
         },
         [],

@@ -356,13 +356,12 @@ def test_delegation_freezes_the_context_against_regeneration(
     abandoned.
     """
     first = _generate(store)
-    store.create_delegation_revision(
+    store.claim_delegation_revision(
         {
             "id": "delegation-1",
             "session_id": "session-1",
             "sandbox_id": "sandbox-1",
             "context_id": first.context.id,
-            "revision": 1,
             "status": DelegationStatus.READY.value,
         },
         [],

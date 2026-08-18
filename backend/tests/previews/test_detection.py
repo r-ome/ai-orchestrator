@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.controller.store import ControllerStore
+from app.controller.store import ActiveAgentRunExists, ControllerStore
 from app.previews.detection import (
     compare_files,
     detect_preview,
@@ -286,7 +286,7 @@ def test_sqlite_enforces_one_active_agent_per_sandbox(tmp_path: Path) -> None:
         provider="codex",
     )
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(ActiveAgentRunExists):
         store.start_agent_run(
             run_id="agent-2",
             sandbox_id="sandbox-1",

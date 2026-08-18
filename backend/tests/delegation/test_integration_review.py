@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from app.controller.store import ControllerStore
+from app.controller.store import ControllerStore, ReviewGenerating
 from app.delegation import integration_review, service
 from app.delegation.config import IntegrationReviewSettings
 from app.delegation.delivery import FeatureTarget
@@ -108,12 +108,11 @@ def store(tmp_path: Path) -> ControllerStore:
 def _completed(store: ControllerStore):
     view = service.create_revision(store, "session-1", [_item("a")])
     item = view.items[0].item
-    store.start_work_item_run(
+    store.claim_work_item_run(
         {
             "id": "run-1",
             "work_item_id": item.id,
             "delegation_id": view.delegation.id,
-            "attempt": 1,
             "status": "running",
             "provider": "claude",
             "model": "model",
@@ -132,16 +131,44 @@ def _completed(store: ControllerStore):
     return service.transition(store, view.delegation.id, DelegationStatus.COMPLETED)
 
 
+def test_generating_review_uses_a_named_busy_error(
+    store: ControllerStore,
+) -> None:
+    completed = _completed(store)
+    values = {
+        "id": "review-1",
+        "delegation_id": completed.delegation.id,
+        "status": IntegrationReviewStatus.GENERATING.value,
+        "provider": "claude",
+        "model": "review-model",
+    }
+
+    assert store.claim_delegation_review(values) == 1
+    with pytest.raises(ReviewGenerating):
+        store.claim_delegation_review({**values, "id": "review-2"})
+
+    with pytest.raises(service.DelegationOperationError) as error:
+        integration_review.claim_integration_review(
+            get_planning_settings(),
+            IntegrationReviewSettings("review-model"),
+            store,
+            completed.delegation.id,
+            GenerateIntegrationReviewRequest(),
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "An integration review is already running"
+
+
 def test_review_reads_final_repo_and_retains_result(
     store: ControllerStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     completed = _completed(store)
-    store.create_delegation_change_request(
+    store.claim_delegation_change_request(
         {
             "id": "change-1",
             "delegation_id": completed.delegation.id,
-            "revision": 1,
             "status": "running",
             "instructions": "Replace the button label after it is clicked",
             "provider": "claude",
@@ -245,11 +272,10 @@ def test_review_cannot_approve_a_change_without_acceptance_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     completed = _completed(store)
-    store.create_delegation_change_request(
+    store.claim_delegation_change_request(
         {
             "id": "change-without-evidence",
             "delegation_id": completed.delegation.id,
-            "revision": 1,
             "status": "running",
             "instructions": "Change the interactive button state",
             "provider": "claude",
@@ -315,11 +341,10 @@ def test_a_later_change_supersedes_an_earlier_incomplete_one(
         (2, {"complete": True, "errors": []}),
     ):
         request_id = f"change-{revision}"
-        store.create_delegation_change_request(
+        store.claim_delegation_change_request(
             {
                 "id": request_id,
                 "delegation_id": completed.delegation.id,
-                "revision": revision,
                 "status": "running",
                 "instructions": "Change the interactive button state",
                 "provider": "claude",

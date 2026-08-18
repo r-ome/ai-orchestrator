@@ -1,5 +1,4 @@
 import json
-import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -8,7 +7,12 @@ from uuid import uuid4
 from docker.client import DockerClient
 
 from app.agents.models import AgentProvider
-from app.controller.store import ControllerStore, SandboxWriterAdmissionError
+from app.controller.store import (
+    ControllerStore,
+    DelegationActive,
+    RevisionTaken,
+    SandboxWriterAdmissionError,
+)
 from app.delegation import graph, prompts
 from app.delegation.config import (
     DelegatorSettings,
@@ -96,26 +100,29 @@ def create_revision(
         raise DelegationOperationError(422, "; ".join(errors)[:1500])
 
     delegation_id = uuid4().hex
-    revision = store.next_delegation_revision(session_id)
     rows = [
         _work_item_row(delegation_id, position, item)
         for position, item in enumerate(items)
     ]
     try:
-        store.create_delegation_revision(
+        store.claim_delegation_revision(
             {
                 "id": delegation_id,
                 "session_id": session_id,
                 "sandbox_id": str(session["sandbox_id"]),
                 "context_id": context.id if context else None,
-                "revision": revision,
                 "status": DelegationStatus.READY.value,
             },
             rows,
         )
     except SandboxWriterAdmissionError as error:
         raise DelegationOperationError(409, str(error)) from error
-    except sqlite3.IntegrityError as error:
+    except RevisionTaken as error:
+        raise DelegationOperationError(
+            409,
+            "This delegation revision was claimed concurrently",
+        ) from error
+    except DelegationActive as error:
         raise DelegationOperationError(
             409,
             "This sandbox already has an active delegation",

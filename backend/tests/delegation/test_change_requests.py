@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from app.controller.store import ControllerStore
+from app.controller.store import ChangeRequestRunning, ControllerStore
 from app.delegation import change_requests, service
 from app.delegation.models import (
     ChangeRequestStatus,
@@ -234,6 +234,37 @@ def _task_stubs(
             ],
         },
     )
+
+
+def test_running_change_request_uses_a_named_busy_error(tmp_path: Path) -> None:
+    store, delegation_id = _store(tmp_path)
+    values = {
+        "id": "change-1",
+        "delegation_id": delegation_id,
+        "status": ChangeRequestStatus.RUNNING.value,
+        "instructions": "Tighten the empty state",
+        "provider": "claude",
+        "model": "change-model",
+        "task_id": None,
+    }
+
+    assert store.claim_delegation_change_request(values) == 1
+    with pytest.raises(ChangeRequestRunning):
+        store.claim_delegation_change_request({**values, "id": "change-2"})
+
+    with pytest.raises(service.DelegationOperationError) as error:
+        change_requests.claim_change_request(
+            object(),
+            SETTINGS,
+            store,
+            delegation_id,
+            RequestFeatureChange(instructions="Tighten the empty state"),
+            session_id="session-1",
+            project_name="sample",
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "Another change request is running"
 
 
 def test_requested_changes_wait_for_whole_feature_review_after_verification(

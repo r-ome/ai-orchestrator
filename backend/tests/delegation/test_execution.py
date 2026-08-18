@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from app.controller.store import ControllerStore
+from app.controller.store import ControllerStore, RunActive
 from app.delegation import execution, service
 from app.delegation.models import (
     DelegationStatus,
@@ -380,6 +380,25 @@ def test_blocked_item_cannot_start(store: ControllerStore, tasks: _Tasks) -> Non
 
     assert error.value.status_code == 409
     assert "blocked by ['a']" in error.value.detail
+
+
+def test_active_run_keeps_its_busy_message(
+    store: ControllerStore,
+    tasks: _Tasks,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delegation = _delegation(store, [_item("a")])
+
+    def raise_busy(_values: dict[str, Any]) -> int:
+        raise RunActive(delegation.delegation.id)
+
+    monkeypatch.setattr(store, "claim_work_item_run", raise_busy)
+    with pytest.raises(service.DelegationOperationError) as error:
+        _start(store, delegation.delegation.id, "a")
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "Another work item run is already active"
+    assert tasks.rejected
 
 
 def test_failed_turn_is_classified_cleaned_up_and_retryable(

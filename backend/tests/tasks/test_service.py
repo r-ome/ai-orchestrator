@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from docker.errors import APIError
 
-from app.controller.store import ControllerStore
+from app.controller.store import ControllerStore, OpenTaskExists
 from app.dirty_state import DirtyEntry, serialize_snapshot
 from app.tasks.models import (
     TASK_TRANSITIONS,
@@ -501,7 +501,7 @@ def test_initial_migration_creates_task_constraints(tmp_path: Path) -> None:
         status=TaskStatus.OPEN.value,
     )
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(OpenTaskExists):
         store.create_task(
             task_id="d" * 32,
             sandbox_id="sandbox-1",

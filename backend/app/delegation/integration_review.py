@@ -1,7 +1,6 @@
 """Feature-level review after every delegated work item is merged."""
 
 import json
-import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
@@ -9,7 +8,7 @@ from uuid import uuid4
 
 from docker.client import DockerClient
 
-from app.controller.store import ControllerStore
+from app.controller.store import ControllerStore, ReviewGenerating, RevisionTaken
 from app.delegation import service
 from app.delegation.config import IntegrationReviewSettings
 from app.delegation.delivery import (
@@ -84,17 +83,21 @@ def claim_integration_review(
         else planning_settings.codex_model
     )
     try:
-        store.create_delegation_review(
+        store.claim_delegation_review(
             {
                 "id": review_id,
                 "delegation_id": delegation_id,
-                "revision": store.next_delegation_review_revision(delegation_id),
                 "status": IntegrationReviewStatus.GENERATING.value,
                 "provider": request.provider.value,
                 "model": model,
             }
         )
-    except sqlite3.IntegrityError as error:
+    except RevisionTaken as error:
+        raise service.DelegationOperationError(
+            409,
+            "This integration review revision was claimed concurrently",
+        ) from error
+    except ReviewGenerating as error:
         raise service.DelegationOperationError(
             409,
             "An integration review is already running",
