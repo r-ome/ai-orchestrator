@@ -4,6 +4,7 @@ import os
 import socket
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 from uuid import uuid4
 
@@ -16,6 +17,32 @@ from app.controller.store import (
     SandboxLeaseBlockedByWriterError,
     SandboxLeaseHeldError,
 )
+
+_LEASE = "lease"
+_MIRROR = "mirror"
+
+# Which locks the current context holds. Sandbox handlers are sync functions,
+# so FastAPI runs each request in a worker thread with its own copy of this
+# context. Nothing inside a lock scope fans out to further threads.
+_held_locks: ContextVar[tuple[str, ...]] = ContextVar("_held_locks", default=())
+
+
+class LockOrderError(Exception):
+    """A lock taken out of the fixed sandbox-lease-then-project-lock order.
+
+    Deliberately not a ``RuntimeError``. The sandbox router translates
+    ``RuntimeError`` into a 424 response, and an ordering violation is a
+    programming error that must stay loud instead of becoming an HTTP status.
+    """
+
+
+@contextmanager
+def _holding(lock: str) -> Iterator[None]:
+    token = _held_locks.set(_held_locks.get() + (lock,))
+    try:
+        yield
+    finally:
+        _held_locks.reset(token)
 
 
 def lifecycle_conflict_detail(error: SandboxAdmissionError) -> dict[str, Any]:
@@ -49,7 +76,15 @@ def lifecycle_lease(
 
     The optional preview stop is explicit. It uses the existing task-preview
     teardown path and retries the atomic admission after teardown completes.
+
+    Raises ``LockOrderError`` when the project mirror lock is already held.
     """
+    if _MIRROR in _held_locks.get():
+        raise LockOrderError(
+            f"Cannot take the lifecycle lease for sandbox '{sandbox_id}' while "
+            "the project mirror lock is held. The order is fixed: sandbox "
+            "lifecycle lease first, then project mirror lock."
+        )
     claimed_operation_id = operation_id or uuid4().hex
     claimed_owner = owner or f"{socket.gethostname()}:{os.getpid()}"
     try:
@@ -84,11 +119,12 @@ def lifecycle_lease(
             owner=claimed_owner,
             allow_writers=allow_writers,
         )
-    try:
-        yield lease
-    finally:
-        if lease is not None:
-            store.release_sandbox_lease(sandbox_id, claimed_operation_id)
+    with _holding(_LEASE):
+        try:
+            yield lease
+        finally:
+            if lease is not None:
+                store.release_sandbox_lease(sandbox_id, claimed_operation_id)
 
 
 @contextmanager
@@ -103,8 +139,9 @@ def project_mirror_lock(
     """Serialize mirror creation, validation, and fetch for one project.
 
     Callers holding both locks must enter ``lifecycle_lease`` first and this
-    context second.  Do not hold this lock across workspace cloning or other
-    sandbox work.
+    context second; ``lifecycle_lease`` raises ``LockOrderError`` if they do
+    not.  Taking this lock alone is legal and staleness relies on it.  Do not
+    hold this lock across workspace cloning or other sandbox work.
     """
     claimed_operation_id = operation_id or uuid4().hex
     claimed_owner = owner or f"{socket.gethostname()}:{os.getpid()}"
@@ -114,10 +151,11 @@ def project_mirror_lock(
         operation_id=claimed_operation_id,
         owner=claimed_owner,
     )
-    try:
-        yield lock
-    finally:
-        store.release_project_mirror_lock(project_id, claimed_operation_id)
+    with _holding(_MIRROR):
+        try:
+            yield lock
+        finally:
+            store.release_project_mirror_lock(project_id, claimed_operation_id)
 
 
 def _stop_blocking_preview(
