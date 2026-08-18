@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useEffect,
   useMemo,
   useState,
   type FormEvent,
@@ -70,7 +69,16 @@ function ProjectPlanningSection({
     (signal: AbortSignal) => fetchPlanningSessions(projectName, signal),
     [projectName],
   )
-  const { data, loading, error, reload } = useApiResource(fetcher, [projectName])
+  const { data, loading, error, reload } = useApiResource(fetcher, [projectName], {
+    pollWhile: (data) =>
+      data.sessions.some(
+        (session) =>
+          !isPlanningTerminal(session.status) ||
+          session.feature_status === 'building' ||
+          session.feature_status === 'in_review',
+      ),
+    intervalMs: 3_000,
+  })
   const defaultsFetcher = useCallback(
     (signal: AbortSignal) => fetchPlanningDefaults(projectName, signal),
     [projectName],
@@ -91,20 +99,7 @@ function ProjectPlanningSection({
       ),
     [data],
   )
-  const hasActiveSession = sessions.some(
-    (session) =>
-      !isPlanningTerminal(session.status) ||
-      session.feature_status === 'building' ||
-      session.feature_status === 'in_review',
-  )
   const canSubmit = projectReady && title.trim() !== '' && request.trim() !== '' && !busy
-
-  useEffect(() => {
-    if (!hasActiveSession) return
-
-    const timer = window.setInterval(reload, 3_000)
-    return () => window.clearInterval(timer)
-  }, [hasActiveSession, reload])
 
   const closeForm = () => {
     if (busy) return

@@ -737,7 +737,18 @@ export function useDelegationWorkspace(
     projectName,
     sessionId,
     enabled,
-  ])
+  ], {
+    // Every long phase settles its row from a background thread, so the page
+    // has to poll to notice. A reload is also what turns a finished turn back
+    // into a readable result.
+    pollWhile: (data) =>
+      data.context?.status === 'generating' ||
+      data.delegation?.items.some((entry) => entry.state === 'running') === true ||
+      data.delegation?.delegation.status === 'running' ||
+      data.delegation?.review?.status === 'generating' ||
+      data.delegation?.changes.some((change) => change.status === 'running') === true,
+    intervalMs: 2_000,
+  })
   const [busy, setBusy] = useState('')
   const [actionError, setActionError] = useState<string | null>(null)
   // A sandbox runs one preview at a time. This preview represents the current
@@ -795,21 +806,6 @@ export function useDelegationWorkspace(
       window.clearInterval(timer)
     }
   }, [previewProposalId, projectName])
-
-  useEffect(() => {
-    // Every long phase settles its row from a background thread, so the page
-    // has to poll to notice. A reload is also what turns a finished turn back
-    // into a readable result.
-    const busyPhase =
-      generatingContext !== null ||
-      runningItem !== null ||
-      delegation?.delegation.status === 'running' ||
-      delegation?.review?.status === 'generating' ||
-      runningChange !== null
-    if (!busyPhase) return
-    const timer = window.setInterval(reload, 2_000)
-    return () => window.clearInterval(timer)
-  }, [generatingContext, runningItem, runningChange, delegation, reload])
 
   useEffect(() => {
     // Reattach after a page reload: the turn outlives the request that started

@@ -408,7 +408,10 @@ function PlanningSessionPage() {
   const { data, loading, error, reload } = useApiResource(fetcher, [
     projectName,
     sessionId,
-  ])
+  ], {
+    pollWhile: (data) => !isPlanningTerminal(data.status),
+    intervalMs: 2_000,
+  })
   const sessionsFetcher = useCallback(
     (signal: AbortSignal) => fetchPlanningSessions(projectName, signal),
     [projectName],
@@ -575,13 +578,6 @@ function PlanningSessionPage() {
         ],
       }
     : {}
-
-  useEffect(() => {
-    if (!data || isPlanningTerminal(data.status)) return
-
-    const timer = window.setInterval(reload, 2_000)
-    return () => window.clearInterval(timer)
-  }, [data, reload])
 
   useEffect(() => {
     const controller = new AbortController()
