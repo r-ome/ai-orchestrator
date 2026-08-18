@@ -393,19 +393,6 @@ def publish(
                     pushed,
                     lifecycle_status="publishing",
                     operation="publish",
-                    operation_phase="pushed",
-                    last_error=None,
-                ),
-            )
-            pushed = read_manifest(controller_store, sandbox_id)
-            if pushed is None:
-                raise RuntimeError("sandbox manifest disappeared during publish")
-            write_manifest(
-                controller_store,
-                replace(
-                    pushed,
-                    lifecycle_status="publishing",
-                    operation="publish",
                     operation_phase="pr_pending",
                     last_error=None,
                 ),
