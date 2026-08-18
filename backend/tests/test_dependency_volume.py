@@ -6,6 +6,7 @@ tolerates a missing lockfile, and is always mounted read-only into the
 coding agent.
 """
 
+import base64
 import hashlib
 from pathlib import Path
 from types import SimpleNamespace
@@ -123,7 +124,7 @@ class StubContainer:
     def __init__(self, create_args: dict[str, Any], number: int) -> None:
         self.id = f"agent-container-{number:04d}"
         self.short_id = self.id[:12]
-        self.name = create_args["name"]
+        self.name = create_args.get("name", f"agent-helper-{number}")
         self.status = "created"
         self.attrs = {
             "Created": "2026-08-06T00:00:00Z",
@@ -136,6 +137,18 @@ class StubContainer:
     def start(self) -> None:
         self.status = "running"
 
+    def wait(self, *, timeout: int) -> dict[str, int]:
+        del timeout
+        return {"StatusCode": 0}
+
+    def logs(self, *, stdout: bool, stderr: bool) -> bytes:
+        del stderr
+        return self.log_output if stdout else b""
+
+    def remove(self, *, force: bool) -> None:
+        del force
+        self.status = "removed"
+
 
 class StubContainers:
     def __init__(self, lockfile_tar: bytes = b"") -> None:
@@ -147,6 +160,7 @@ class StubContainers:
     def create(self, **kwargs: Any) -> StubContainer:
         self.create_calls.append(kwargs)
         container = StubContainer(kwargs, len(self.items) + 1)
+        container.log_output = base64.b64encode(self._lockfile_tar)
         self.items.append(container)
         return container
 
@@ -207,7 +221,7 @@ def test_dependency_volume_is_reused_only_after_install_completion() -> None:
 
     assert not _dependency_volume_ready(incomplete, settings, "dependencies")
     assert _dependency_volume_ready(complete, settings, "dependencies")
-    command = complete.containers.run_calls[0]["command"][-1]
+    command = complete.containers.create_calls[0]["command"][-1]
     assert ".orchestrator-install-complete" in command
 
 
@@ -251,7 +265,11 @@ def test_agent_mounts_the_dependency_volume_read_only(
         controller_store,
     )
 
-    create_call = docker_client.containers.create_calls[0]
+    create_call = next(
+        call
+        for call in docker_client.containers.create_calls
+        if str(call.get("name", "")).startswith("orchestrator-agent-")
+    )
     dependency_mounts = {
         name: mount
         for name, mount in create_call["volumes"].items()

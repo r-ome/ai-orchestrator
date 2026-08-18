@@ -215,7 +215,7 @@ class _StubContainer:
     def __init__(self, create_args: dict[str, Any], number: int) -> None:
         self.id = f"agent-container-{number:04d}"
         self.short_id = self.id[:12]
-        self.name = create_args["name"]
+        self.name = create_args.get("name", f"agent-helper-{number}")
         self.status = "created"
         self.attrs = {
             "Created": f"2026-08-06T10:00:{number:02d}Z",
@@ -227,6 +227,15 @@ class _StubContainer:
 
     def start(self) -> None:
         self.status = "running"
+
+    def wait(self, *, timeout: int) -> dict[str, int]:
+        del timeout
+        return {"StatusCode": 0}
+
+    def logs(self, *, stdout: bool, stderr: bool) -> bytes:
+        del stdout
+        del stderr
+        return b""
 
     def stop(self, *, timeout: int) -> None:
         self.status = "exited"

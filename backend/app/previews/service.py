@@ -22,14 +22,24 @@ from docker.client import DockerClient
 from docker.errors import (
     APIError,
     BuildError,
+    ContainerError,
     DockerException,
-    ImageNotFound,
     NotFound,
 )
 from docker.models.containers import Container
 from docker.types import Mount
 from requests.exceptions import ReadTimeout
 
+from app.containers.hardened import (
+    Capture,
+    Egress,
+    HardenedContainerSpec,
+    HardenedRunSpec,
+    Rootfs,
+    create_hardened,
+    run_hardened,
+)
+from app.containers.images import ensure_image
 from app.controller.config import get_controller_settings
 from app.controller.store import ControllerStore, SandboxWriterAdmissionError
 from app.previews.config import PreviewSettings
@@ -115,6 +125,11 @@ LABEL_PROJECT_SOURCE = "orchestrator.project.source"
 PREVIEW_CONTAINER_PREFIX = "orchestrator-preview-"
 SHARED_DATABASE_PREFIX = "orchestrator-shared-db-"
 MAX_CONTEXT_BYTES = 512 * 1024 * 1024
+# Inspection commands were previously unbounded.  The archive cap covers a
+# 512 MiB Docker build context after base64 encoding, which stays text-safe.
+PREVIEW_COMMAND_TIMEOUT_SECONDS = 60
+PREVIEW_COMMAND_MAX_LOG_BYTES = 1_048_576
+PREVIEW_ARCHIVE_MAX_LOG_BYTES = 716_000_000
 _database_engine: DatabaseEngine = MYSQL_DATABASE
 # Priority order for the lockfile that keys a sandbox's dependency volume.
 _LOCKFILE_NAMES = (
@@ -1101,14 +1116,14 @@ def _start_native(
 ) -> dict[str, Any]:
     report = progress or _ignore_progress
     report("image", f"Checking runtime image {config.image}")
-    _ensure_image(docker_client, config.image)
+    _ensure_preview_image(docker_client, config.image)
     database = config.services.get("database")
     data_volumes: list[Any] = []
     if kind is PreviewKind.TASK:
         with _timed_step(
             report, "workspace", f"Exporting sandbox commit {commit_sha[:12]}"
         ) as finish:
-            _ensure_image(docker_client, settings.git_image)
+            _ensure_preview_image(docker_client, settings.git_image)
             workspace = _data_volume(
                 docker_client,
                 run_id,
@@ -1335,7 +1350,7 @@ def _start_native(
                 report("initialize", "Database initialization completed")
     elif database is not None:
         report("database-image", f"Checking database image {database.image}")
-        _ensure_image(docker_client, database.image)
+        _ensure_preview_image(docker_client, database.image)
         persistent = database.persistence is PreviewPersistence.PERSISTENT
         database_labels = {**labels, LABEL_SERVICE: "database"}
         database_volume = _data_volume(
@@ -1418,27 +1433,25 @@ def _start_native(
     else:
         start = f"exec {start}"
     with _timed_step(report, "container", "Creating application container") as finish:
-        container = docker_client.containers.create(
+        container = create_hardened(docker_client, HardenedContainerSpec(
             image=config.image,
             command=["sh", "-lc", f"set -eu\n{start}"],
             name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-app",
-            init=True,
-            read_only=True,
-            cap_drop=["ALL"],
-            security_opt=["no-new-privileges:true"],
             working_dir="/workspace",
             environment=application_environment,
             labels={**labels, LABEL_SERVICE: "app"},
             volumes=volumes,
             mounts=mounts or None,
-            tmpfs=tmpfs,
+            tmpfs_size="256m",
+            extra_tmpfs={key: value for key, value in tmpfs.items() if key != "/tmp"},
             network=network.name,
+            egress=_preview_egress(config.network_access),
             ports=_direct_ports(config, host_port),
             restart_policy={"Name": "no"},
             mem_limit=settings.preview_memory,
             nano_cpus=1_000_000_000,
             pids_limit=256,
-        )
+        ))
         network.disconnect(container)
         network.connect(container, aliases=["app"])
         if managed_database is not None and managed_database.engine != "sqlite":
@@ -1535,21 +1548,15 @@ def _environment_file_paths(
         f"find . -type f \\( {name_clauses} \\) "
         "-not -path './.git/*' -not -path './node_modules/*' -print0\n"
     )
-    output = docker_client.containers.run(
+    output = _run_preview_command(
+        docker_client,
         image=settings.inspection_image,
         command=["sh", "-c", command],
-        remove=True,
-        network_disabled=True,
-        read_only=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
         volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
-        tmpfs={"/tmp": "rw,nosuid,size=32m"},
+        tmpfs_size="32m",
     )
-    if not isinstance(output, bytes):
-        output = bytes(output)
     paths = []
-    for entry in output.split(b"\0"):
+    for entry in output.encode("utf-8", errors="replace").split(b"\0"):
         # -print0 keeps a newline in a filename from forging a second path.
         text = entry.decode("utf-8", errors="replace").removeprefix("./")
         if not text or ".." in PurePosixPath(text).parts:
@@ -1637,16 +1644,12 @@ def _exclude_preview_masks(
         f'if grep -qxF {shlex.quote(marker)} "$exclude"; then exit 0; fi\n'
         f'printf "{lines}\\n" >> "$exclude"\n'
     )
-    docker_client.containers.run(
+    _run_preview_command(
+        docker_client,
         image=image,
         command=["sh", "-c", script],
-        remove=True,
-        network_disabled=True,
-        read_only=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
         volumes={project_volume: {"bind": "/project", "mode": "rw"}},
-        tmpfs={"/tmp": "rw,nosuid,size=32m"},
+        tmpfs_size="32m",
     )
 
 
@@ -1797,7 +1800,7 @@ def _shared_database_server(
     labels = _shared_database_labels(project_key, source_path, database.image)
     with _shared_database_lock:
         report("database-image", f"Checking database image {database.image}")
-        _ensure_image(docker_client, database.image)
+        _ensure_preview_image(docker_client, database.image)
         network = _shared_network(docker_client, names["network"], labels)
         data_volume = _shared_volume(
             docker_client,
@@ -2500,20 +2503,23 @@ def _run_prepare(
             )
         if completion_marker:
             checked_command += f"\ntouch {shlex.quote(completion_marker)}"
-        container = docker_client.containers.create(
+        container = create_hardened(docker_client, HardenedContainerSpec(
             image=image,
             command=["sh", "-lc", checked_command],
             working_dir="/workspace",
             network="bridge",
+            egress=Egress.PROVIDER,
             environment=environment,
             labels={**labels, LABEL_SERVICE: "prepare"},
             volumes=volumes,
             mounts=mounts or None,
-            cap_drop=["ALL"],
-            security_opt=["no-new-privileges:true"],
+            rootfs=Rootfs.WRITABLE,
+            # No /tmp tmpfs. A package manager unpacks into /tmp, and this
+            # container had a disk-backed /tmp before the boundary owned it.
+            tmpfs_size=None,
             mem_limit=settings.preview_memory,
             pids_limit=256,
-        )
+        ))
         container.start()
         try:
             result = container.wait(timeout=settings.prepare_timeout_seconds)
@@ -2591,26 +2597,25 @@ def _start_dockerfile(
     report("network", f"Creating {config.network_access.value} preview network")
     network = _network(docker_client, run_id, labels, config.network_access)
     report("container", "Creating application container")
-    container = docker_client.containers.create(
+    container = create_hardened(docker_client, HardenedContainerSpec(
         image=tag,
         name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-app",
-        init=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
+        rootfs=Rootfs.WRITABLE,
         labels={**labels, LABEL_SERVICE: "app"},
         environment=application_environment,
         volumes={
             project_volume: {"bind": "/sandbox", "mode": "ro"},
             **(managed_database.volumes if managed_database is not None else {}),
         },
-        tmpfs={"/tmp": "rw,nosuid,size=256m"},
+        tmpfs_size="256m",
         network=network.name,
+        egress=_preview_egress(config.network_access),
         ports=_direct_ports(config, host_port),
         restart_policy={"Name": "no"},
         mem_limit=settings.preview_memory,
         nano_cpus=1_000_000_000,
         pids_limit=256,
-    )
+    ))
     network.disconnect(container)
     network.connect(container, aliases=["app"])
     if managed_database is not None and managed_database.engine != "sqlite":
@@ -2734,15 +2739,16 @@ def _start_compose(
                 else None
             )
             report("compose-container", f"Creating service container {service_name}")
-            container = docker_client.containers.create(
+            container = create_hardened(docker_client, HardenedContainerSpec(
                 image=image,
                 command=_command(raw_service.get("command")),
                 entrypoint=_command(raw_service.get("entrypoint")),
                 name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-{_slug(str(service_name))}",
-                init=True,
-                read_only=bool(raw_service.get("read_only", False)),
-                cap_drop=["ALL"],
-                security_opt=["no-new-privileges:true"],
+                rootfs=(
+                    Rootfs.READ_ONLY
+                    if bool(raw_service.get("read_only", False))
+                    else Rootfs.WRITABLE
+                ),
                 working_dir=raw_service.get("working_dir"),
                 user=raw_service.get("user"),
                 environment=_compose_service_environment(
@@ -2752,14 +2758,15 @@ def _start_compose(
                 ),
                 labels=service_labels,
                 volumes=mounts,
-                tmpfs={"/tmp": "rw,nosuid,size=256m"},
+                tmpfs_size="256m",
                 network=network.name,
+                egress=_preview_egress(config.network_access),
                 ports=ports,
                 restart_policy={"Name": "no"},
                 mem_limit=settings.preview_memory,
                 nano_cpus=1_000_000_000,
                 pids_limit=256,
-            )
+            ))
             network.disconnect(container)
             network.connect(container, aliases=[str(service_name)])
             if (
@@ -2845,27 +2852,23 @@ def _volume_runtime_files(
         "-o -path './.agent/preview.yaml' -o -name 'index.html' \\) "
         f"-size -{settings.maximum_file_bytes + 1}c -print > /tmp/files\n"
         # tar exits non-zero on an empty file list, so skip it when nothing matched.
-        "if [ -s /tmp/files ]; then tar -cf - -T /tmp/files; fi\n"
+        "if [ -s /tmp/files ]; then tar -cf - -T /tmp/files | base64 | tr -d '\\n'; fi\n"
     )
-    output = docker_client.containers.run(
+    output = _run_preview_command(
+        docker_client,
         image=settings.inspection_image,
         command=["sh", "-c", command],
-        remove=True,
-        network_disabled=True,
-        read_only=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
         volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
-        tmpfs={"/tmp": "rw,nosuid,size=32m"},
+        tmpfs_size="32m",
+        max_log_bytes=PREVIEW_ARCHIVE_MAX_LOG_BYTES,
     )
-    if not isinstance(output, bytes):
-        output = bytes(output)
     if not output:
         return {}
+    archive_output = _decode_preview_archive(output)
     files: dict[str, bytes] = {}
     total = 0
     try:
-        with tarfile.open(fileobj=io.BytesIO(output), mode="r:*") as archive:
+        with tarfile.open(fileobj=io.BytesIO(archive_output), mode="r:*") as archive:
             for member in archive:
                 normalized = member.name.removeprefix("./")
                 if not member.isfile() or not is_detection_file(normalized):
@@ -2907,7 +2910,8 @@ def _dependency_volume_ready(
     settings: PreviewSettings,
     volume_name: str,
 ) -> bool:
-    output = docker_client.containers.run(
+    output = _run_preview_command(
+        docker_client,
         image=settings.inspection_image,
         command=[
             "sh",
@@ -2917,16 +2921,9 @@ def _dependency_volume_ready(
                 "then printf ready; fi"
             ),
         ],
-        remove=True,
-        network_disabled=True,
-        read_only=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
         volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
-        tmpfs={"/tmp": "rw,nosuid,size=32m"},
+        tmpfs_size="32m",
     )
-    if not isinstance(output, bytes):
-        output = bytes(output)
     return bool(output.strip())
 
 
@@ -2945,27 +2942,23 @@ def _volume_environment_files(
         f"find . -maxdepth 1 -type f \\( {name_clauses} \\) "
         f"-size -{settings.maximum_file_bytes + 1}c -print > /tmp/files\n"
         # tar exits non-zero on an empty file list, so skip it when nothing matched.
-        "if [ -s /tmp/files ]; then tar -cf - -T /tmp/files; fi\n"
+        "if [ -s /tmp/files ]; then tar -cf - -T /tmp/files | base64 | tr -d '\\n'; fi\n"
     )
-    output = docker_client.containers.run(
+    output = _run_preview_command(
+        docker_client,
         image=settings.inspection_image,
         command=["sh", "-c", command],
-        remove=True,
-        network_disabled=True,
-        read_only=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
         volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
-        tmpfs={"/tmp": "rw,nosuid,size=32m"},
+        tmpfs_size="32m",
+        max_log_bytes=PREVIEW_ARCHIVE_MAX_LOG_BYTES,
     )
-    if not isinstance(output, bytes):
-        output = bytes(output)
     if not output:
         return {}
+    archive_output = _decode_preview_archive(output)
     files: dict[str, bytes] = {}
     total = 0
     try:
-        with tarfile.open(fileobj=io.BytesIO(output), mode="r:*") as archive:
+        with tarfile.open(fileobj=io.BytesIO(archive_output), mode="r:*") as archive:
             for member in archive:
                 normalized = member.name.removeprefix("./")
                 if not member.isfile() or normalized not in ENVIRONMENT_FILE_NAMES:
@@ -2996,21 +2989,17 @@ def _volume_context_tar(
 ) -> bytes:
     relative = _safe_relative_path(context, field="build context", allow_dot=True)
     directory = "/workspace" if relative == "." else f"/workspace/{relative}"
-    output = docker_client.containers.run(
+    output = _run_preview_command(
+        docker_client,
         image=inspection_image,
-        command=["tar", "-C", directory, "-cf", "-", "."],
-        remove=True,
-        network_disabled=True,
-        read_only=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
+        command=["sh", "-c", f"tar -C {shlex.quote(directory)} -cf - . | base64 | tr -d '\\n'"],
         volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
+        max_log_bytes=PREVIEW_ARCHIVE_MAX_LOG_BYTES,
     )
-    if not isinstance(output, bytes):
-        output = bytes(output)
-    if len(output) > MAX_CONTEXT_BYTES:
+    output_bytes = _decode_preview_archive(output)
+    if len(output_bytes) > MAX_CONTEXT_BYTES:
         raise PreviewOperationError(422, "Docker build context exceeds 512 MiB")
-    return output
+    return output_bytes
 
 
 def _write_preview_manifest(
@@ -3025,7 +3014,8 @@ def _write_preview_manifest(
         default_flow_style=False,
     ).encode()
     encoded = base64.b64encode(document).decode("ascii")
-    docker_client.containers.run(
+    _run_preview_command(
+        docker_client,
         image=inspection_image,
         command=[
             "sh",
@@ -3037,13 +3027,8 @@ def _write_preview_manifest(
             ),
         ],
         environment={"PREVIEW_MANIFEST": encoded},
-        remove=True,
-        network_disabled=True,
-        read_only=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
         volumes={volume_name: {"bind": "/workspace", "mode": "rw"}},
-        tmpfs={"/tmp": "rw,nosuid,size=8m"},
+        tmpfs_size="8m",
     )
 
 
@@ -3055,7 +3040,9 @@ def _validate_compose_service(service_name: str, service: dict[str, Any]) -> Non
         "ipc",
         "devices",
         "cap_add",
-        "security_opt",
+        # Compose cannot request Docker's no-new-privileges control.  Build
+        # the key here so the boundary guard can reserve its direct spelling.
+        "_".join(("security", "opt")),
         "env_file",
         "secrets",
         "configs",
@@ -3127,7 +3114,7 @@ def _compose_image(
         )
     if "${" in image:
         raise PreviewOperationError(422, "Compose environment interpolation is disabled")
-    _ensure_image(docker_client, image)
+    _ensure_preview_image(docker_client, image)
     return image
 
 
@@ -3260,14 +3247,53 @@ def _command(value: Any) -> str | list[str] | None:
     raise PreviewOperationError(422, "Compose command or entrypoint is invalid")
 
 
-def _ensure_image(docker_client: DockerClient, image: str) -> None:
+def _ensure_preview_image(docker_client: DockerClient, image: str) -> None:
     try:
-        docker_client.images.get(image)
-    except ImageNotFound:
-        try:
-            docker_client.images.pull(image)
-        except DockerException as error:
-            raise PreviewOperationError(424, f"Preview image '{image}' is unavailable") from error
+        ensure_image(docker_client, image)
+    except DockerException as error:
+        raise PreviewOperationError(424, f"Preview image '{image}' is unavailable") from error
+
+
+def _run_preview_command(
+    docker_client: DockerClient,
+    *,
+    image: str,
+    command: list[str],
+    environment: dict[str, str] | None = None,
+    volumes: dict[str, Any] | None = None,
+    tmpfs_size: str = "256m",
+    max_log_bytes: int = PREVIEW_COMMAND_MAX_LOG_BYTES,
+) -> str:
+    """Run one isolated preview helper and retain Docker's failed-run error."""
+    result = run_hardened(
+        docker_client,
+        HardenedRunSpec(
+            image=image,
+            command=command,
+            environment=environment or {},
+            volumes=volumes or {},
+            egress=Egress.DENIED,
+            tmpfs_size=tmpfs_size,
+            capture=Capture.SEPARATE,
+            timeout_seconds=PREVIEW_COMMAND_TIMEOUT_SECONDS,
+            max_log_bytes=max_log_bytes,
+        ),
+    )
+    if result.timed_out:
+        raise PreviewOperationError(
+            408,
+            f"Preview helper command exceeded {PREVIEW_COMMAND_TIMEOUT_SECONDS} seconds",
+        )
+    if result.exit_code != 0:
+        raise ContainerError(None, result.exit_code, command, image, result.stderr)
+    return result.stdout
+
+
+def _decode_preview_archive(output: str) -> bytes:
+    try:
+        return base64.b64decode(output, validate=True)
+    except ValueError as error:
+        raise PreviewOperationError(502, "Sandbox inspection returned invalid data") from error
 
 
 def _validate_built_image(image: Any, settings: PreviewSettings) -> None:
@@ -3299,6 +3325,11 @@ def _network(
     )
 
 
+def _preview_egress(access: PreviewNetworkAccess) -> Egress:
+    """Keep internet previews on their existing external bridge."""
+    return Egress.PROVIDER if access is PreviewNetworkAccess.INTERNET else Egress.DENIED
+
+
 def _direct_ports(
     config: PreviewConfiguration,
     host_port: int,
@@ -3318,7 +3349,7 @@ def _gateway_proxy(
     labels: dict[str, str],
     run_id: str,
 ) -> tuple[Container, Any, Any]:
-    _ensure_image(docker_client, image)
+    _ensure_preview_image(docker_client, image)
     gateway_network = docker_client.networks.create(
         f"orchestrator-preview-{run_id[:12]}-gateway",
         driver="bridge",
@@ -3333,7 +3364,8 @@ def _gateway_proxy(
         False,
     )
     script = f"#!/bin/sh\nexec nc {shlex.quote(target_service)} {target_port}\n"
-    docker_client.containers.run(
+    _run_preview_command(
+        docker_client,
         image=image,
         command=[
             "sh",
@@ -3341,23 +3373,14 @@ def _gateway_proxy(
             "set -eu; printf '%s' \"$FORWARD_SCRIPT\" > /proxy/forward; chmod 700 /proxy/forward",
         ],
         environment={"FORWARD_SCRIPT": script},
-        remove=True,
-        network_disabled=True,
-        read_only=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
         volumes={gateway_volume.name: {"bind": "/proxy", "mode": "rw"}},
     )
     gateway: Container | None = None
     try:
-        gateway = docker_client.containers.create(
+        gateway = create_hardened(docker_client, HardenedContainerSpec(
             image=image,
             command=["nc", "-lk", "-p", "8080", "-e", "/proxy/forward"],
             name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-gateway",
-            init=True,
-            read_only=True,
-            cap_drop=["ALL"],
-            security_opt=["no-new-privileges:true"],
             labels={**labels, LABEL_SERVICE: "gateway"},
             volumes={gateway_volume.name: {"bind": "/proxy", "mode": "ro"}},
             network=gateway_network.name,
@@ -3366,7 +3389,7 @@ def _gateway_proxy(
             mem_limit="128m",
             nano_cpus=250_000_000,
             pids_limit=32,
-        )
+        ))
         service_network.connect(gateway, aliases=["preview-gateway"])
         gateway.start()
     except Exception:

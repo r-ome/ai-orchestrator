@@ -541,14 +541,14 @@ def test_reset_database_converges_and_finalizes_a_pending_base(
             pending_base_commit=pending,
         ),
     )
-    run_calls: list[dict[str, object]] = []
-    run = fake_docker_client.containers.run
+    create_calls: list[dict[str, object]] = []
+    create = fake_docker_client.containers.create
 
     def capture(**kwargs: object):
-        run_calls.append(kwargs)
-        return run(**kwargs)
+        create_calls.append(kwargs)
+        return create(**kwargs)
 
-    monkeypatch.setattr(fake_docker_client.containers, "run", capture)
+    monkeypatch.setattr(fake_docker_client.containers, "create", capture)
 
     first = client.post(f"/sandboxes/{created['sandbox_id']}/reset-db", json={})
     second = client.post(f"/sandboxes/{created['sandbox_id']}/reset-db", json={})
@@ -560,7 +560,7 @@ def test_reset_database_converges_and_finalizes_a_pending_base(
     assert second.json()["current_base_commit"] == pending
     assert store.sandbox_database(created["sandbox_id"])["status"] == "ready"
     assert len(
-        [call for call in run_calls if "rm -f /database/database.sqlite3" in str(call["command"])]
+        [call for call in create_calls if "rm -f /database/database.sqlite3" in str(call["command"])]
     ) == 2
 
 
@@ -717,14 +717,14 @@ def test_destroy_drops_postgres_database_and_preserves_shared_server(
     fake_docker_client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    run_calls: list[dict[str, object]] = []
-    run = fake_docker_client.containers.run
+    create_calls: list[dict[str, object]] = []
+    create = fake_docker_client.containers.create
 
     def capture(**kwargs: object):
-        run_calls.append(kwargs)
-        return run(**kwargs)
+        create_calls.append(kwargs)
+        return create(**kwargs)
 
-    monkeypatch.setattr(fake_docker_client.containers, "run", capture)
+    monkeypatch.setattr(fake_docker_client.containers, "create", capture)
     waiting = _create(client).json()
     confirmed = client.post(
         f"/sandboxes/{waiting['sandbox_id']}/confirm-engine",
@@ -743,7 +743,7 @@ def test_destroy_drops_postgres_database_and_preserves_shared_server(
     assert response.status_code == 200
     drop_sql = [
         str(call.get("environment", {}).get("PREVIEW_SQL", ""))
-        for call in run_calls
+        for call in create_calls
         if "PREVIEW_SQL" in call.get("environment", {})
     ][-1]
     assert f'DROP DATABASE IF EXISTS "{confirmed["db_name"]}"' in drop_sql

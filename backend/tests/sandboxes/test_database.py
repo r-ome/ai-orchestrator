@@ -86,12 +86,29 @@ class _PostgresDocker:
         self.calls: list[dict[str, object]] = []
         self.containers = self
 
-    def run(self, **kwargs: object) -> bytes:
+    def create(self, **kwargs: object) -> "_PostgresContainer":
         self.calls.append(kwargs)
-        command = " ".join(kwargs.get("command", []))
+        return _PostgresContainer(kwargs)
+
+
+class _PostgresContainer:
+    def __init__(self, arguments: dict[str, object]) -> None:
+        self.arguments = arguments
+
+    def start(self) -> None:
+        pass
+
+    def wait(self, *, timeout: int) -> dict[str, int]:
+        return {"StatusCode": 0}
+
+    def logs(self, *, stdout: bool, stderr: bool) -> bytes:
+        command = " ".join(self.arguments.get("command", []))
         if "/credentials/postgres.json" in command:
             return b'{"username":"sandbox_role","password":"app-password","root_password":"root-password"}'
         return b""
+
+    def remove(self, *, force: bool) -> None:
+        pass
 
 
 def test_postgres_engine_uses_a_root_only_client_on_the_shared_network() -> None:
@@ -176,13 +193,13 @@ def test_sqlite_uses_a_sandbox_volume_without_a_server_network_or_credentials(
     )
 
     calls: list[dict[str, object]] = []
-    run = fake_docker_client.containers.run
+    create = fake_docker_client.containers.create
 
     def capture(**kwargs: object):
         calls.append(kwargs)
-        return run(**kwargs)
+        return create(**kwargs)
 
-    monkeypatch.setattr(fake_docker_client.containers, "run", capture)
+    monkeypatch.setattr(fake_docker_client.containers, "create", capture)
     provision = SQLITE_DATABASE.provision(request)
 
     assert provision is not None
@@ -193,7 +210,7 @@ def test_sqlite_uses_a_sandbox_volume_without_a_server_network_or_credentials(
     helper = fake_docker_client.containers.items[-1]
     assert helper.removed is True
     assert helper.attrs["Config"]["Image"] == "alpine:3.21"
-    assert calls[-1]["network_disabled"] is True
+    assert calls[-1]["network_mode"] == "none"
     assert calls[-1]["volumes"] == {"sbx-aaaaaaaaaaaa-db": {"bind": "/database", "mode": "rw"}}
 
     SQLITE_DATABASE.drop(

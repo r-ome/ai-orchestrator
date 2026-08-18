@@ -24,10 +24,7 @@ from app.containers.hardened import (
 
 
 # Each later migration deletes a line. An empty set means the migration is complete.
-_NOT_YET_MIGRATED = {
-    "previews/service.py",
-    "sandboxes/database.py",
-}
+_NOT_YET_MIGRATED: set[str] = set()
 
 
 class _Container:
@@ -345,3 +342,32 @@ def test_unset_optional_arguments_are_not_passed_to_docker() -> None:
 def test_a_run_spec_rejects_an_unbounded_run(field: str) -> None:
     with pytest.raises(ValueError):
         _spec(**{field: 0})
+
+
+def test_a_writable_container_may_keep_its_own_tmp() -> None:
+    """The prepare step unpacks packages into /tmp and needs the disk, not RAM."""
+    client, containers, _networks = _client(_Container())
+
+    create_hardened(client, _container_spec(rootfs=Rootfs.WRITABLE, tmpfs_size=None))
+
+    assert "tmpfs" not in containers.calls[0]
+
+
+def test_extra_tmpfs_still_mounts_when_tmp_is_left_alone() -> None:
+    client, containers, _networks = _client(_Container())
+
+    create_hardened(
+        client,
+        _container_spec(
+            rootfs=Rootfs.WRITABLE,
+            tmpfs_size=None,
+            extra_tmpfs={"/git": "rw,nosuid,size=1m"},
+        ),
+    )
+
+    assert containers.calls[0]["tmpfs"] == {"/git": "rw,nosuid,size=1m"}
+
+
+def test_a_read_only_container_cannot_give_up_its_scratch_space() -> None:
+    with pytest.raises(ValueError, match="scratch space"):
+        _container_spec(tmpfs_size=None)

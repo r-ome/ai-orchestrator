@@ -109,7 +109,12 @@ class _BoundarySpec:
     #: A call site may tighten this. `_pids_limit` clamps it to PIDS_LIMIT, so
     #: naming a larger number here does not raise the ceiling.
     pids_limit: int = PIDS_LIMIT
-    tmpfs_size: str = "256m"
+    #: `None` leaves `/tmp` on the container's own filesystem. Only a writable
+    #: rootfs may ask for that; a read-only one would have no scratch space at
+    #: all. The prepare step needs it, because a package manager unpacks into
+    #: /tmp and a small RAM-backed mount runs out of space where a disk one
+    #: does not.
+    tmpfs_size: str | None = "256m"
     #: Extra tmpfs mounts beyond `/tmp`, as path -> mount options. An image that
     #: declares `VOLUME /x` needs one, or Docker creates an anonymous volume per
     #: run that `--rm` does not always reap.
@@ -120,6 +125,12 @@ class _BoundarySpec:
     network: str | None = None
     rootfs: Rootfs = Rootfs.READ_ONLY
     capabilities: Capabilities = Capabilities.NONE
+
+    def __post_init__(self) -> None:
+        if self.tmpfs_size is None and self.rootfs is Rootfs.READ_ONLY:
+            raise ValueError(
+                "A read-only container needs a /tmp tmpfs to have any scratch space"
+            )
 
 
 @dataclass(frozen=True)
@@ -233,11 +244,12 @@ def _boundary_arguments(spec: _BoundarySpec, *, attach_network: bool) -> dict[st
         "environment": dict(spec.environment),
         "labels": dict(spec.labels),
         "volumes": dict(spec.volumes),
-        "tmpfs": {
-            "/tmp": f"rw,nosuid,size={spec.tmpfs_size}",
-            **dict(spec.extra_tmpfs),
-        },
     }
+    tmpfs = dict(spec.extra_tmpfs)
+    if spec.tmpfs_size is not None:
+        tmpfs["/tmp"] = f"rw,nosuid,size={spec.tmpfs_size}"
+    if tmpfs:
+        arguments["tmpfs"] = tmpfs
     if spec.capabilities is not Capabilities.NONE:
         arguments["cap_add"] = list(spec.capabilities.value)
     _set_if(arguments, "command", spec.command)

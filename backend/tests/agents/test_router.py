@@ -53,7 +53,7 @@ class StubContainer:
     def __init__(self, create_args: dict[str, Any], number: int) -> None:
         self.id = f"agent-container-{number:04d}"
         self.short_id = self.id[:12]
-        self.name = create_args["name"]
+        self.name = create_args.get("name", f"agent-helper-{number}")
         self.status = "created"
         self.start_calls = 0
         self.stop_timeout: int | None = None
@@ -70,6 +70,15 @@ class StubContainer:
     def start(self) -> None:
         self.start_calls += 1
         self.status = "running"
+
+    def wait(self, *, timeout: int) -> dict[str, int]:
+        del timeout
+        return {"StatusCode": 0}
+
+    def logs(self, *, stdout: bool, stderr: bool) -> bytes:
+        del stdout
+        del stderr
+        return b""
 
     def stop(self, *, timeout: int) -> None:
         self.stop_timeout = timeout
@@ -298,7 +307,11 @@ def test_rejects_a_second_active_agent_for_the_same_sandbox(
     assert dependency_call["labels"]["orchestrator.preview.persistent"] == "true"
     dependency_volume = dependency_call["name"]
 
-    create_call = docker_client.containers.create_calls[0]
+    create_call = next(
+        call
+        for call in docker_client.containers.create_calls
+        if str(call.get("name", "")).startswith("orchestrator-agent-")
+    )
     assert create_call["image"] == "test-claude:latest"
     assert create_call["auto_remove"] is True
     assert create_call["read_only"] is True
@@ -350,7 +363,12 @@ def test_replaces_an_agent_only_with_explicit_confirmation(
     assert replaced.status_code == 200
     assert replaced.json()["provider"] == "codex"
     assert replaced.json()["id"] != current["id"]
-    assert docker_client.containers.items[0].stop_timeout == 2
+    original = next(
+        container
+        for container in docker_client.containers.items
+        if container.id == current["id"]
+    )
+    assert original.stop_timeout == 2
 
 
 def test_codex_uses_a_provider_specific_credential_volume(
@@ -366,7 +384,11 @@ def test_codex_uses_a_provider_specific_credential_volume(
 
     assert response.status_code == 201
     assert response.json()["provider"] == "codex"
-    create_call = docker_client.containers.create_calls[0]
+    create_call = next(
+        call
+        for call in docker_client.containers.create_calls
+        if str(call.get("name", "")).startswith("orchestrator-agent-")
+    )
     assert create_call["image"] == "test-codex:latest"
     assert create_call["environment"]["CODEX_HOME"] == "/auth"
     assert response.json()["credential_volume"].startswith(
@@ -431,7 +453,12 @@ def test_stop_requires_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
     assert rejected.status_code == 400
     assert stopped.status_code == 200
     assert stopped.json()["stopped"] is True
-    assert docker_client.containers.items[0].stop_timeout == 5
+    stopped_container = next(
+        container
+        for container in docker_client.containers.items
+        if container.id == created["id"]
+    )
+    assert stopped_container.stop_timeout == 5
 
 
 def test_cleanup_removes_running_and_stopped_agents() -> None:
@@ -498,7 +525,9 @@ def test_websocket_bridges_terminal_and_keeps_container_running(
     assert "tmux has-session -t agent" in exec_call[1][2]
     assert "tmux new-session -d -s agent 'exec claude'" in exec_call[1][2]
     assert exec_call[2]["workdir"] == "/workspace"
-    container = docker_client.containers.items[0]
+    container = next(
+        item for item in docker_client.containers.items if item.id == created["id"]
+    )
     assert container.exec_run_calls == [
         (
             ["tmux", "detach-client", "-s", "agent"],

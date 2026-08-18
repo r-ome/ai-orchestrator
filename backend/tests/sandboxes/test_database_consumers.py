@@ -103,7 +103,7 @@ def test_task_archive_preview_mounts_the_same_sandbox_sqlite_database(
         return created
 
     monkeypatch.setattr(fake_docker_client.containers, "create", capture)
-    monkeypatch.setattr(preview_service, "_ensure_image", lambda *_args: None)
+    monkeypatch.setattr(preview_service, "_ensure_preview_image", lambda *_args: None)
     monkeypatch.setattr(preview_service, "_environment_masks", lambda *_args: [])
     monkeypatch.setattr(preview_service, "_wait_for_container_health", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(preview_service, "_network", run_network)
@@ -201,7 +201,7 @@ def test_server_preview_borrows_and_disconnects_the_persistent_sandbox_network(
         return created
 
     monkeypatch.setattr(fake_docker_client.containers, "create", capture)
-    monkeypatch.setattr(preview_service, "_ensure_image", lambda *_args: None)
+    monkeypatch.setattr(preview_service, "_ensure_preview_image", lambda *_args: None)
     monkeypatch.setattr(preview_service, "_environment_masks", lambda *_args: [])
     monkeypatch.setattr(preview_service, "_exclude_preview_masks", lambda *_args: None)
     monkeypatch.setattr(preview_service, "_wait_for_container_health", lambda *_args, **_kwargs: None)

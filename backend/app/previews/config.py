@@ -14,8 +14,8 @@ class PreviewSettings:
     build_timeout_seconds: int
     maximum_dependency_bytes: int = 2_147_483_648
     maximum_built_image_bytes: int = 4_294_967_296
-    # alpine:latest has no git, and git containers run with
-    # network_disabled=True, so git cannot be installed at runtime.
+    # alpine:latest has no git, and git containers run with denied egress,
+    # so git cannot be installed at runtime.
     git_image: str = "alpine/git:latest"
     # A dev-mode bundler compiling a large page is the peak here, not the
     # served application. One gibibyte kills Next.js mid-compile.

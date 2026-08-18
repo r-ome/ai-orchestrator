@@ -104,18 +104,38 @@ class _FakeDocker:
             del name
             return self.outer.container
 
-        def run(self, **kwargs: object) -> bytes:
-            command = kwargs.get("command")
+        def create(self, **kwargs: object) -> "_FakeDocker._RunContainer":
+            return _FakeDocker._RunContainer(self.outer, kwargs)
+
+    class _RunContainer:
+        def __init__(self, outer: "_FakeDocker", arguments: dict[str, object]) -> None:
+            self.outer = outer
+            self.arguments = arguments
+
+        def start(self) -> None:
+            return None
+
+        def wait(self, *, timeout: int) -> dict[str, int]:
+            del timeout
+            return {"StatusCode": 0}
+
+        def logs(self, *, stdout: bool, stderr: bool) -> bytes:
+            del stderr
+            command = self.arguments.get("command")
             text = " ".join(command) if isinstance(command, list) else str(command)
             if "/credentials/mysql.json" in text:
                 return (
                     b'{"username":"root","password":"p",'
                     b'"root_password":"secret"}'
                 )
-            self.outer.statements.append(
-                str((kwargs.get("environment") or {}).get("PREVIEW_SQL", ""))
-            )
+            if stdout:
+                self.outer.statements.append(
+                    str((self.arguments.get("environment") or {}).get("PREVIEW_SQL", ""))
+                )
             return b""
+
+        def remove(self, *, force: bool) -> None:
+            del force
 
     class _Volumes:
         name = "orchestrator-shared-db-1f2e3d4c5b6a-credentials"
