@@ -27,10 +27,6 @@ from app.containers.hardened import (
 _NOT_YET_MIGRATED = {
     "previews/service.py",
     "sandboxes/database.py",
-    "sandboxes/engine_detection.py",
-    "sandboxes/git.py",
-    "implementation_context/inventory.py",
-    "agents/service.py",
 }
 
 

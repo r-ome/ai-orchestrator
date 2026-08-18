@@ -7,7 +7,8 @@ from uuid import uuid4
 
 import docker
 import pytest
-from docker.errors import ImageNotFound
+from requests.exceptions import ReadTimeout
+from docker.errors import ContainerError, ImageNotFound
 
 from app.controller.config import get_controller_settings
 from app.sandboxes.git import (
@@ -17,6 +18,7 @@ from app.sandboxes.git import (
     GITHUB_WRITE_TOKEN_PATH,
     GitCredentialError,
     GitNetworkMode,
+    GitTimeoutError,
     clone_mirror_to_workspace,
     count_mirror_staleness,
     fetch_canonical_mirror,
@@ -52,12 +54,55 @@ class _StaticWriteCredentialSource:
 
 
 class _SpyContainers:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        output: bytes = b"git output",
+        stderr: bytes = b"",
+        exit_code: int = 0,
+        timed_out: bool = False,
+    ) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.output = output
+        self.stderr = stderr
+        self.exit_code = exit_code
+        self.timed_out = timed_out
 
-    def run(self, **kwargs: Any) -> bytearray:
+    def create(self, **kwargs: Any) -> "_SpyContainer":
         self.calls.append(kwargs)
-        return bytearray(b"git output")
+        return _SpyContainer(self.output, self.stderr, self.exit_code, self.timed_out)
+
+
+class _SpyContainer:
+    def __init__(
+        self,
+        output: bytes,
+        stderr: bytes,
+        exit_code: int,
+        timed_out: bool = False,
+    ) -> None:
+        self.output = output
+        self.stderr = stderr
+        self.exit_code = exit_code
+        self.timed_out = timed_out
+
+    def start(self) -> None:
+        pass
+
+    def kill(self) -> None:
+        pass
+
+    def wait(self, *, timeout: int) -> dict[str, int]:
+        if self.timed_out:
+            raise ReadTimeout("git container exceeded its deadline")
+        return {"StatusCode": self.exit_code}
+
+    def logs(self, *, stdout: bool, stderr: bool) -> bytes:
+        return self.output if stdout else self.stderr
+
+    def remove(self, *, force: bool) -> None:
+        pass
+
 
 
 class _SpyImages:
@@ -90,30 +135,23 @@ def test_run_git_defaults_to_the_hardened_no_network_configuration() -> None:
     )
 
     assert output == b"git output"
-    assert docker_client.containers.calls == [
-        {
-            "image": "alpine/git:latest",
-            "entrypoint": ["sh", "-c"],
-            "command": ["git status"],
-            "remove": True,
-            "network_disabled": True,
-            "read_only": True,
-            "cap_drop": ["ALL"],
-            "security_opt": ["no-new-privileges:true"],
-            "environment": {
-                "GIT_CONFIG_NOSYSTEM": "1",
-                "GIT_TERMINAL_PROMPT": "0",
-                "HOME": "/tmp",
-                "GIT_CONFIG_COUNT": "1",
-                "GIT_CONFIG_KEY_0": "core.hooksPath",
-                "GIT_CONFIG_VALUE_0": "/dev/null",
-            },
-            "volumes": {"project": {"bind": "/project", "mode": "rw"}},
-            # `/git` is a tmpfs so alpine/git's declared VOLUME /git does not
-            # create an anonymous volume on every controller git call.
-            "tmpfs": {"/tmp": "rw,nosuid,size=32m", "/git": "rw,nosuid,size=1m"},
-        }
-    ]
+    call = docker_client.containers.calls[0]
+    assert call["image"] == "alpine/git:latest"
+    assert call["entrypoint"] == ["sh", "-c"]
+    assert call["command"] == ["git status"]
+    assert call["network_mode"] == "none"
+    assert call["environment"] == {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+        "HOME": "/tmp",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "core.hooksPath",
+        "GIT_CONFIG_VALUE_0": "/dev/null",
+    }
+    assert call["volumes"] == {"project": {"bind": "/project", "mode": "rw"}}
+    # `/git` is a tmpfs so alpine/git's declared VOLUME /git does not create
+    # an anonymous volume on every controller git call.
+    assert call["tmpfs"] == {"/tmp": "rw,nosuid,size=32m", "/git": "rw,nosuid,size=1m"}
 
 
 def test_run_git_enables_network_only_with_the_explicit_mode() -> None:
@@ -127,17 +165,55 @@ def test_run_git_enables_network_only_with_the_explicit_mode() -> None:
         network=GitNetworkMode.ENABLED,
     )
 
-    assert docker_client.containers.calls[0]["network_disabled"] is False
+    call = docker_client.containers.calls[0]
+    assert "network_mode" not in call
+    assert "network" not in call
+
+
+def test_run_git_preserves_the_container_error_contract() -> None:
+    docker_client = _SpyDockerClient()
+    docker_client.containers = _SpyContainers(stderr=b"fatal: no remote\n", exit_code=128)
+
+    with pytest.raises(ContainerError) as caught:
+        run_git(
+            docker_client,  # type: ignore[arg-type]
+            image="alpine/git:latest",
+            volumes={},
+            script="git fetch",
+        )
+
+    assert caught.value.exit_status == 128
+    assert caught.value.stderr == "fatal: no remote\n"
+
+
+def test_a_timed_out_git_container_is_not_reported_as_an_exit_status() -> None:
+    """A kill leaves no exit code, so the ContainerError path would say "None"."""
+    docker_client = _SpyDockerClient()
+    docker_client.containers = _SpyContainers(timed_out=True)
+
+    with pytest.raises(GitTimeoutError, match="exceeded"):
+        run_git(
+            docker_client,  # type: ignore[arg-type]
+            image="alpine/git:latest",
+            volumes={},
+            script="git fetch",
+        )
+
+
+def test_git_timeout_setting_uses_the_controller_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CONTROLLER_GIT_TIMEOUT_SECONDS", "123")
+    get_controller_settings.cache_clear()
+    try:
+        assert get_controller_settings().git_timeout_seconds == 123
+    finally:
+        get_controller_settings.cache_clear()
 
 
 def test_mirror_staleness_count_is_local_read_only_and_credential_free() -> None:
-    class CountContainers(_SpyContainers):
-        def run(self, **kwargs: Any) -> bytes:
-            self.calls.append(kwargs)
-            return b"12\n"
-
     docker_client = _SpyDockerClient()
-    docker_client.containers = CountContainers()
+    docker_client.containers = _SpyContainers(output=b"12\n")
 
     count = count_mirror_staleness(
         docker_client,  # type: ignore[arg-type]
@@ -149,7 +225,7 @@ def test_mirror_staleness_count_is_local_read_only_and_credential_free() -> None
 
     assert count == 12
     call = docker_client.containers.calls[0]
-    assert call["network_disabled"] is True
+    assert call["network_mode"] == "none"
     assert call["volumes"] == {"project-mirror": {"bind": "/mirror", "mode": "ro"}}
     assert call["environment"]["ORCHESTRATOR_CURRENT_BASE_COMMIT"] == "a" * 40
     assert call["environment"]["ORCHESTRATOR_BASE_REF"] == "refs/heads/main"
@@ -195,8 +271,8 @@ def test_canonical_fetch_keeps_token_out_of_environment_command_and_labels(
     call = docker_client.containers.calls[0]
     assert token not in call["environment"].values()
     assert token not in " ".join(call["command"])
-    assert "labels" not in call
-    assert call["network_disabled"] is False
+    assert call["labels"] == {}
+    assert "network_mode" not in call
     assert call["volumes"]["project-mirror"] == {"bind": "/mirror", "mode": "rw"}
     assert "remote.origin.fetch '+refs/*:refs/*'" in call["command"][0]
     assert "config --unset-all remote.origin.mirror || true" in call["command"][0]
@@ -217,7 +293,7 @@ def test_credential_file_permissions_and_finally_cleanup_on_container_failure(
     tmp_path: Path,
 ) -> None:
     class _FailingContainers(_SpyContainers):
-        def run(self, **kwargs: Any) -> bytearray:
+        def create(self, **kwargs: Any) -> _SpyContainer:
             self.calls.append(kwargs)
             secret_path = next(
                 Path(host_path)
@@ -298,7 +374,7 @@ def test_write_credentials_extend_git_config_without_reenabling_hooks(
     assert "github_write_token" in environment["GIT_CONFIG_VALUE_1"]
     assert "write-token" not in environment.values()
     assert "write-token" not in " ".join(call["command"])
-    assert "labels" not in call
+    assert call["labels"] == {}
     secret_mount = next(
         mount for mount in call["volumes"].values() if mount["bind"] == GITHUB_WRITE_TOKEN_PATH
     )

@@ -14,6 +14,7 @@ class ControllerSettings:
     preview_expiry_seconds: int
     expiry_poll_seconds: int
     git_secret_directory: Path = DEFAULT_GIT_SECRET_DIRECTORY
+    git_timeout_seconds: int = 600
 
     @property
     def database_path(self) -> Path:
@@ -43,6 +44,10 @@ def get_controller_settings() -> ControllerSettings:
         )
         .expanduser()
         .resolve(),
+        git_timeout_seconds=_positive_integer(
+            os.environ.get("CONTROLLER_GIT_TIMEOUT_SECONDS"),
+            default=600,
+        ),
     )
 
 

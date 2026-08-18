@@ -81,9 +81,22 @@ def test_workspace_clone_script_uses_no_local_and_strips_remotes_and_hooks() -> 
         def __init__(self) -> None:
             self.call: dict[str, Any] | None = None
 
-        def run(self, **kwargs: Any) -> bytes:
+        def create(self, **kwargs: Any) -> "Container":
             self.call = kwargs
+            return Container()
+
+    class Container:
+        def start(self) -> None:
+            pass
+
+        def wait(self, *, timeout: int) -> dict[str, int]:
+            return {"StatusCode": 0}
+
+        def logs(self, *, stdout: bool, stderr: bool) -> bytes:
             return b""
+
+        def remove(self, *, force: bool) -> None:
+            pass
 
     class Client:
         def __init__(self) -> None:
@@ -105,7 +118,7 @@ def test_workspace_clone_script_uses_no_local_and_strips_remotes_and_hooks() -> 
     assert "git clone --no-local /mirror /workspace" in script
     assert "git remote remove" in script
     assert "find .git/hooks" in script
-    assert call["network_disabled"] is True
+    assert call["network_mode"] == "none"
     assert call["volumes"] == {
         "project-mirror": {"bind": "/mirror", "mode": "ro"},
         "sandbox-workspace": {"bind": "/workspace", "mode": "rw"},

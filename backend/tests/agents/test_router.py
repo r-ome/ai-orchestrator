@@ -305,6 +305,10 @@ def test_rejects_a_second_active_agent_for_the_same_sandbox(
     assert create_call["cap_drop"] == ["ALL"]
     assert create_call["security_opt"] == ["no-new-privileges:true"]
     assert create_call["pids_limit"] == 512
+    # The agent calls a model API and is connected to its database network
+    # afterwards. Both need the default bridge, so no network key is set.
+    assert "network_mode" not in create_call
+    assert "network" not in create_call
     assert create_call["mem_limit"] == "2g"
     assert create_call["working_dir"] == "/workspace"
     assert create_call["environment"] == {

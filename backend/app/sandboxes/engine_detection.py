@@ -6,6 +6,8 @@ can write that preview proposal, while this result later controls unattended
 database recovery.
 """
 
+import base64
+import binascii
 import io
 import json
 import re
@@ -13,16 +15,16 @@ import tarfile
 from dataclasses import dataclass
 from typing import Any
 
-import requests
 import yaml
 from docker.client import DockerClient
 from docker.errors import DockerException
-from docker.models.containers import Container
 
+from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
 from app.previews.detection import prisma_schema_providers
 
 
 MAX_FILE_BYTES = 200_000
+MAX_LOG_BYTES = 16 * 1_048_576
 _SECTION = "@@@ENGINE_FILE:"
 _TRACKED_DATABASE_SECTION = "@@@ENGINE_TRACKED_DATABASE:"
 _COMPOSE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
@@ -337,6 +339,7 @@ def _read_schema_files(
     timeout_seconds: int,
 ) -> dict[str, bytes]:
     """Return complete schema inputs as path-and-byte pairs."""
+    # The boundary returns text, so base64 preserves arbitrary source bytes.
     script = (
         "set -eu\n"
         "cd /workspace\n"
@@ -347,38 +350,36 @@ def _read_schema_files(
         "-o -name 'database.yml' -o -name 'structure.sql' \\) "
         "-not -path './.git/*' -not -path './node_modules/*' "
         "-not -path './.agent/*' -print > /tmp/schema-files\n"
-        "if [ -s /tmp/schema-files ]; then tar -cf - -T /tmp/schema-files; fi\n"
+        "if [ -s /tmp/schema-files ]; then "
+        "tar -cf /tmp/schema-files.tar -T /tmp/schema-files; "
+        "base64 /tmp/schema-files.tar; fi\n"
     )
-    container: Container | None = None
     try:
-        container = docker_client.containers.create(
-            image=image,
-            command=["sh", "-c", script],
-            entrypoint=[],
-            init=True,
-            read_only=True,
-            cap_drop=["ALL"],
-            security_opt=["no-new-privileges:true"],
-            network_disabled=True,
-            working_dir="/workspace",
-            environment={"HOME": "/tmp/home"},
-            labels={
-                "orchestrator.managed": "true",
-                "orchestrator.kind": "schema-baseline",
-            },
-            volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
-            tmpfs={"/tmp": "rw,nosuid,size=16m"},
+        result = run_hardened(
+            docker_client,
+            HardenedRunSpec(
+                image=image,
+                command=["sh", "-c", script],
+                entrypoint=[],
+                egress=Egress.DENIED,
+                working_dir="/workspace",
+                environment={"HOME": "/tmp/home"},
+                labels={
+                    "orchestrator.managed": "true",
+                    "orchestrator.kind": "schema-baseline",
+                },
+                volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
+                tmpfs_size="16m",
+                timeout_seconds=timeout_seconds,
+                max_log_bytes=MAX_LOG_BYTES,
+                capture=Capture.SEPARATE,
+            ),
         )
-        container.start()
-        try:
-            result = container.wait(timeout=timeout_seconds)
-        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
-            _kill(container)
+        if result.timed_out:
             raise RuntimeError("Schema-baseline discovery timed out")
-        if int(result.get("StatusCode", 1)) != 0:
+        if result.exit_code != 0:
             raise RuntimeError("Schema-baseline discovery failed")
-        raw = container.logs(stdout=True, stderr=False)
-        archive = raw if isinstance(raw, bytes) else b""
+        archive = base64.b64decode(result.stdout)
         if not archive:
             return {}
         files: dict[str, bytes] = {}
@@ -393,10 +394,8 @@ def _read_schema_files(
         return files
     except DockerException as error:
         raise RuntimeError(f"Schema-baseline discovery failed: {error}") from error
-    except tarfile.TarError as error:
+    except (binascii.Error, tarfile.TarError, ValueError) as error:
         raise RuntimeError("Schema-baseline archive is invalid") from error
-    finally:
-        _remove(container)
 
 
 def _read_project_files(
@@ -428,35 +427,29 @@ def _read_project_files(
         f"head -c {MAX_FILE_BYTES} \"$file\"; printf '\\n'; "
         "done\n"
     )
-    container: Container | None = None
     try:
-        container = docker_client.containers.create(
-            image=image,
-            command=["sh", "-c", script],
-            entrypoint=[],
-            init=True,
-            read_only=True,
-            cap_drop=["ALL"],
-            security_opt=["no-new-privileges:true"],
-            network_disabled=True,
-            working_dir="/workspace",
-            environment={"HOME": "/tmp/home"},
-            labels={"orchestrator.managed": "true", "orchestrator.kind": "engine-detection"},
-            volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
-            tmpfs={"/tmp": "rw,nosuid,size=16m"},
+        result = run_hardened(
+            docker_client,
+            HardenedRunSpec(
+                image=image,
+                command=["sh", "-c", script],
+                entrypoint=[],
+                egress=Egress.DENIED,
+                working_dir="/workspace",
+                environment={"HOME": "/tmp/home"},
+                labels={"orchestrator.managed": "true", "orchestrator.kind": "engine-detection"},
+                volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
+                tmpfs_size="16m",
+                timeout_seconds=timeout_seconds,
+                max_log_bytes=MAX_LOG_BYTES,
+                capture=Capture.SEPARATE,
+            ),
         )
-        container.start()
-        try:
-            container.wait(timeout=timeout_seconds)
-        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
-            _kill(container)
+        if result.timed_out:
             return {}
-        raw = container.logs(stdout=True, stderr=False)
-        return _split(raw if isinstance(raw, bytes) else b"")
+        return _split(result.stdout.encode("utf-8"))
     except DockerException:
         return {}
-    finally:
-        _remove(container)
 
 
 def _split(stdout: bytes) -> dict[str, bytes]:
@@ -487,19 +480,3 @@ def _tracked_database_paths(stdout: bytes) -> tuple[str, ...]:
             if path:
                 paths.append(path)
     return tuple(paths)
-
-
-def _kill(container: Container) -> None:
-    try:
-        container.kill()
-    except DockerException:
-        pass
-
-
-def _remove(container: Container | None) -> None:
-    if container is None:
-        return
-    try:
-        container.remove(force=True)
-    except DockerException:
-        pass

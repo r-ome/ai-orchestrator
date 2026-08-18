@@ -20,13 +20,30 @@ class _StubContainers:
         self.report_output = b""
         self.settle_output = b""
 
-    def run(self, **kwargs: Any) -> bytes:
+    def create(self, **kwargs: Any) -> "_Container":
         script = kwargs["command"][0]
         if "git switch -c" in script:
-            return f"base-branch main\n{BASE_COMMIT}\n".encode()
+            return _Container(f"base-branch main\n{BASE_COMMIT}\n".encode())
         if "result branch-moved" in script or "result switch-failed" in script:
-            return self.settle_output
-        return self.report_output
+            return _Container(self.settle_output)
+        return _Container(self.report_output)
+
+
+class _Container:
+    def __init__(self, output: bytes) -> None:
+        self.output = output
+
+    def start(self) -> None:
+        pass
+
+    def wait(self, *, timeout: int) -> dict[str, int]:
+        return {"StatusCode": 0}
+
+    def logs(self, *, stdout: bool, stderr: bool) -> bytes:
+        return self.output if stdout else b""
+
+    def remove(self, *, force: bool) -> None:
+        pass
 
 
 class _StubDockerClient:

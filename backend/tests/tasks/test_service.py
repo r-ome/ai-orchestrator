@@ -48,7 +48,7 @@ class _StubContainers:
         self.branch_dirty: tuple[str, ...] = ()
         self.branch_snapshot: tuple[str, ...] = ()
 
-    def run(self, **kwargs: Any) -> bytes:
+    def create(self, **kwargs: Any) -> "_Container":
         script = kwargs["command"][0]
         self.scripts.append(script)
         if "git switch -c" in script:
@@ -60,14 +60,31 @@ class _StubContainers:
                 lines.extend(self.branch_snapshot)
             lines += [f"dirty {entry}" for entry in self.branch_dirty]
             lines.append(BASE_COMMIT)
-            return ("\n".join(lines) + "\n").encode()
+            return _Container(("\n".join(lines) + "\n").encode())
         if "result branch-moved" in script:
-            return self.accept_output
+            return _Container(self.accept_output)
         if "result switch-failed" in script:
-            return self.reject_output
+            return _Container(self.reject_output)
         if "git status --porcelain" in script:
-            return self.report_output
+            return _Container(self.report_output)
         raise AssertionError(f"unexpected git script: {script}")
+
+
+class _Container:
+    def __init__(self, output: bytes) -> None:
+        self.output = output
+
+    def start(self) -> None:
+        pass
+
+    def wait(self, *, timeout: int) -> dict[str, int]:
+        return {"StatusCode": 0}
+
+    def logs(self, *, stdout: bool, stderr: bool) -> bytes:
+        return self.output if stdout else b""
+
+    def remove(self, *, force: bool) -> None:
+        pass
 
 
 class _StubDockerClient:

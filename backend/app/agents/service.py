@@ -11,6 +11,11 @@ from docker.models.containers import Container
 from docker.models.volumes import Volume
 
 from app.agents.config import AgentSettings
+from app.containers.hardened import (
+    Egress,
+    HardenedContainerSpec,
+    create_hardened,
+)
 from app.controller.store import ControllerStore, SandboxWriterAdmissionError
 from app.agents.models import (
     AgentProvider,
@@ -186,22 +191,25 @@ def create_agent(
         if database_runtime is not None:
             environment.update(database_runtime.environment)
             volumes.update(database_runtime.volumes)
-        container = docker_client.containers.create(
-            image=provider.image,
-            command=IDLE_COMMAND,
-            name=name,
-            auto_remove=True,
-            init=True,
-            read_only=True,
-            cap_drop=["ALL"],
-            security_opt=["no-new-privileges:true"],
-            pids_limit=512,
-            mem_limit=settings.agent_memory,
-            working_dir=WORKSPACE_DIRECTORY,
-            environment=environment,
-            labels=labels,
-            volumes=volumes,
-            tmpfs={"/tmp": "rw,nosuid,size=512m"},
+        container = create_hardened(
+            docker_client,
+            HardenedContainerSpec(
+                image=provider.image,
+                command=IDLE_COMMAND,
+                name=name,
+                # The agent in this container calls a model API, so it keeps the
+                # default bridge. It is also connected to its database network
+                # below, which `network_mode="none"` would refuse.
+                egress=Egress.PROVIDER,
+                auto_remove=True,
+                pids_limit=512,
+                mem_limit=settings.agent_memory,
+                working_dir=WORKSPACE_DIRECTORY,
+                environment=environment,
+                labels=labels,
+                volumes=volumes,
+                tmpfs_size="512m",
+            ),
         )
         if database_runtime is not None and database_runtime.engine != "sqlite":
             docker_client.networks.get(database_runtime.network_name).connect(container)

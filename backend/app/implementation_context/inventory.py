@@ -8,11 +8,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-import requests
 import yaml
 from docker.client import DockerClient
 from docker.errors import DockerException
-from docker.models.containers import Container
+
+from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
 
 
 MANIFEST_FILES = (
@@ -39,6 +39,7 @@ LOCKFILES: tuple[tuple[str, str], ...] = (
 CI_GLOBS = (".github/workflows/*.yml", ".github/workflows/*.yaml")
 
 MAX_FILE_BYTES = 200_000
+MAX_LOG_BYTES = 16 * 1_048_576
 MAX_CI_COMMANDS = 30
 MAX_DEPENDENCIES = 60
 _SECTION = "@@@FILE:"
@@ -352,38 +353,32 @@ def _read_manifests(
         f"head -c {MAX_FILE_BYTES} \"$f\"; printf '\\n'; done\n"
         for pattern in CI_GLOBS
     )
-    container: Container | None = None
     try:
-        container = docker_client.containers.create(
-            image=image,
-            command=["sh", "-c", script],
-            entrypoint=[],
-            init=True,
-            read_only=True,
-            cap_drop=["ALL"],
-            security_opt=["no-new-privileges:true"],
-            network_disabled=True,
-            working_dir="/workspace",
-            environment={"HOME": "/tmp/home"},
-            labels={
-                "orchestrator.managed": "true",
-                "orchestrator.kind": "inventory",
-            },
-            volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
-            tmpfs={"/tmp": "rw,nosuid,size=16m"},
+        result = run_hardened(
+            docker_client,
+            HardenedRunSpec(
+                image=image,
+                command=["sh", "-c", script],
+                entrypoint=[],
+                egress=Egress.DENIED,
+                working_dir="/workspace",
+                environment={"HOME": "/tmp/home"},
+                labels={
+                    "orchestrator.managed": "true",
+                    "orchestrator.kind": "inventory",
+                },
+                volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
+                tmpfs_size="16m",
+                timeout_seconds=timeout_seconds,
+                max_log_bytes=MAX_LOG_BYTES,
+                capture=Capture.SEPARATE,
+            ),
         )
-        container.start()
-        try:
-            container.wait(timeout=timeout_seconds)
-        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
-            _kill(container)
+        if result.timed_out:
             return {}
-        raw = container.logs(stdout=True, stderr=False)
-        stdout = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else ""
+        stdout = result.stdout
     except DockerException:
         return {}
-    finally:
-        _remove(container)
     return _split(stdout)
 
 
@@ -395,19 +390,3 @@ def _split(stdout: str) -> dict[str, str]:
         name, _, body = block.partition("\n")
         files[name.strip()] = body
     return files
-
-
-def _kill(container: Container) -> None:
-    try:
-        container.kill()
-    except DockerException:
-        pass
-
-
-def _remove(container: Container | None) -> None:
-    if container is None:
-        return
-    try:
-        container.remove(force=True)
-    except DockerException:
-        pass

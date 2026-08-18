@@ -184,7 +184,7 @@ def test_discovery_container_is_read_only_networkless_and_reads_no_project_code(
 
     call = calls[0]
     assert call["read_only"] is True
-    assert call["network_disabled"] is True
+    assert call["network_mode"] == "none"
     assert call["volumes"] == {"workspace": {"bind": "/workspace", "mode": "ro"}}
     assert ".agent/preview.yaml" not in str(call["command"])
     assert "source " not in str(call["command"])

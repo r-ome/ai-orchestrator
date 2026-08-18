@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Any, Iterator, Protocol
 
 from docker.client import DockerClient
-from docker.errors import ContainerError, ImageNotFound
+from docker.errors import ContainerError
 
+from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
+from app.containers.images import ensure_image as ensure_container_image
 from app.controller.config import get_controller_settings
 
 
@@ -300,6 +302,10 @@ class EnvironmentGitWriteCredentialSource:
         return os.environ.get(GITHUB_WRITE_TOKEN_ENVIRONMENT_VARIABLE)
 
 
+class GitTimeoutError(RuntimeError):
+    """A Git container passed its deadline and was killed."""
+
+
 class GitCredentialError(RuntimeError):
     """Raised when a controller Git credential cannot be used safely."""
 
@@ -406,7 +412,7 @@ def run_git(
             "GitHub read credentials require GitNetworkMode.ENABLED explicitly"
         )
     if ensure_image:
-        _ensure_image(docker_client, image)
+        ensure_container_image(docker_client, image)
 
     resolved_environment = dict(environment or {})
     resolved_environment.update(_DEFAULT_ENVIRONMENT)
@@ -459,7 +465,7 @@ def run_git_with_write_credentials(
     one token value for both environment variables.
     """
     if ensure_image:
-        _ensure_image(docker_client, image)
+        ensure_container_image(docker_client, image)
     resolved_environment = dict(environment or {})
     resolved_environment.update(_DEFAULT_ENVIRONMENT)
     resolved_environment.update(_HOOKS_DISABLED_ENVIRONMENT)
@@ -829,30 +835,38 @@ def _run_container(
     script: str,
     network: GitNetworkMode,
     environment: Mapping[str, str],
-) -> Any:
-    return docker_client.containers.run(
-        image=image,
-        entrypoint=["sh", "-c"],
-        command=[script],
-        remove=True,
-        network_disabled=network is GitNetworkMode.NONE,
-        read_only=True,
-        cap_drop=["ALL"],
-        security_opt=["no-new-privileges:true"],
-        environment=dict(environment),
-        volumes=dict(volumes),
-        # `/git` is a tmpfs because `alpine/git` declares `VOLUME /git` in its
-        # Dockerfile. Docker creates an anonymous volume for any declared VOLUME
-        # that a run does not mount over, and `--rm` does not always reap them,
-        # so every controller git call used to leak one empty volume. Measured:
-        # 4,423 empty anonymous volumes had accumulated on one developer machine.
-        # Mounting anything at the path stops the anonymous volume being created.
-        tmpfs={"/tmp": "rw,nosuid,size=32m", "/git": "rw,nosuid,size=1m"},
+) -> bytes:
+    command = [script]
+    result = run_hardened(
+        docker_client,
+        HardenedRunSpec(
+            image=image,
+            entrypoint=["sh", "-c"],
+            command=command,
+            egress=(
+                Egress.PROVIDER if network is GitNetworkMode.ENABLED else Egress.DENIED
+            ),
+            environment=dict(environment),
+            volumes=dict(volumes),
+            # `/git` is a tmpfs because `alpine/git` declares `VOLUME /git` in its
+            # Dockerfile. Docker creates an anonymous volume for any declared VOLUME
+            # that a run does not mount over, and `--rm` does not always reap them,
+            # so every controller git call used to leak one empty volume. Measured:
+            # 4,423 empty anonymous volumes had accumulated on one developer machine.
+            # Mounting anything at the path stops the anonymous volume being created.
+            tmpfs_size="32m",
+            extra_tmpfs={"/git": "rw,nosuid,size=1m"},
+            timeout_seconds=get_controller_settings().git_timeout_seconds,
+            max_log_bytes=1_048_576,
+            capture=Capture.SEPARATE,
+        ),
     )
-
-
-def _ensure_image(docker_client: DockerClient, image: str) -> None:
-    try:
-        docker_client.images.get(image)
-    except ImageNotFound:
-        docker_client.images.pull(image)
+    if result.timed_out:
+        # Without this the kill leaves exit_code None, and the ContainerError
+        # below would report a timeout as "non-zero exit status None".
+        raise GitTimeoutError(
+            f"Git container exceeded {get_controller_settings().git_timeout_seconds} seconds"
+        )
+    if result.exit_code != 0:
+        raise ContainerError(None, result.exit_code, command, image, result.stderr)
+    return result.stdout.encode("utf-8")

@@ -54,9 +54,26 @@ class _Containers:
         self.outputs = outputs
         self.calls: list[dict[str, Any]] = []
 
-    def run(self, **kwargs: Any) -> bytes:
+    def create(self, **kwargs: Any) -> "_Container":
         self.calls.append(kwargs)
-        return self.outputs.pop(0)
+        return _Container(self.outputs.pop(0))
+
+
+class _Container:
+    def __init__(self, output: bytes) -> None:
+        self.output = output
+
+    def start(self) -> None:
+        pass
+
+    def wait(self, *, timeout: int) -> dict[str, int]:
+        return {"StatusCode": 0}
+
+    def logs(self, *, stdout: bool, stderr: bool) -> bytes:
+        return self.output if stdout else b""
+
+    def remove(self, *, force: bool) -> None:
+        pass
 
 
 class _Docker:
@@ -224,7 +241,7 @@ def test_capture_feature_target_follows_the_accepted_task_chain() -> None:
     )
 
     assert target == delivery.FeatureTarget("main", BASE, HEAD)
-    assert docker.containers.calls[0]["network_disabled"] is True
+    assert docker.containers.calls[0]["network_mode"] == "none"
     assert docker.containers.calls[0]["volumes"]["sandbox-volume"]["mode"] == "ro"
 
 
