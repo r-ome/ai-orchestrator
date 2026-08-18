@@ -77,9 +77,7 @@ def transition_sandbox_lifecycle(
     manifest UPDATE's WHERE clause, keeping the check and write atomic.
     """
     target = replace(manifest, lifecycle_status=to_status)
-    # Rewriting operation details without changing status is not a transition,
-    # but it still needs the same atomic guard against a concurrent move.
-    statuses = source_statuses(to_status).union({to_status})
+    statuses = source_statuses(to_status)
     return _write_manifest(store, target, from_statuses=statuses)
 
 

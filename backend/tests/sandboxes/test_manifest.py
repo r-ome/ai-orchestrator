@@ -85,6 +85,32 @@ def test_illegal_lifecycle_transition_changes_nothing(tmp_path: Path) -> None:
     assert stored.operation == "create"
 
 
+def test_same_status_lifecycle_transition_changes_nothing(tmp_path: Path) -> None:
+    store = _store_with_sandbox(tmp_path)
+    manifest = SandboxManifest(
+        sandbox_id="sandbox-1",
+        lifecycle_version="v1",
+        feature_key="guard-self-transition",
+        desired_state="active",
+        lifecycle_status=SandboxLifecycleStatus.CREATING,
+        operation="create",
+        operation_phase="workspace",
+    )
+    assert write_manifest(store, manifest)
+
+    assert not transition_sandbox_lifecycle(
+        store,
+        replace(
+            manifest,
+            operation="resume",
+            operation_phase="database_provisioning",
+            last_error="must not persist",
+        ),
+        to_status=SandboxLifecycleStatus.CREATING,
+    )
+    assert read_manifest(store, manifest.sandbox_id) == manifest
+
+
 def test_v1_manifest_requires_a_human_feature_key(tmp_path: Path) -> None:
     store = _store_with_sandbox(tmp_path)
 

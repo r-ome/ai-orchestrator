@@ -31,6 +31,7 @@ from app.sandboxes.lifecycle import (
 from app.sandboxes.manifest import (
     read_manifest,
     transition_sandbox_lifecycle,
+    write_manifest,
 )
 from app.sandboxes.models import SandboxLifecycleStatus
 from app.sandboxes.naming import database_name, db_data_volume, workspace_volume
@@ -394,7 +395,7 @@ def publish(
             pushed = read_manifest(controller_store, sandbox_id)
             if pushed is None:
                 raise RuntimeError("sandbox manifest disappeared during publish")
-            transition_sandbox_lifecycle(
+            write_manifest(
                 controller_store,
                 replace(
                     pushed,
@@ -402,7 +403,6 @@ def publish(
                     operation_phase="pr_pending",
                     last_error=None,
                 ),
-                to_status=SandboxLifecycleStatus.PUBLISHING,
             )
             try:
                 pull_request = discover_or_create_pull_request(
@@ -527,19 +527,23 @@ def complete_database_provision(
         target_status = SandboxLifecycleStatus.DATABASE_FAILED
     else:
         target_status = SandboxLifecycleStatus.CREATING
-    transition_sandbox_lifecycle(
-        controller_store,
-        replace(
-            manifest,
-            operation=operation,
-            operation_phase=("migration_replay" if operation == "sync" else "database_provisioning"),
-            db_engine=engine,
-            db_name=database_name(sandbox_id),
-            db_data_volume=data_volume,
-            last_error=None,
-        ),
-        to_status=target_status,
+    provisioning = replace(
+        manifest,
+        operation=operation,
+        operation_phase=("migration_replay" if operation == "sync" else "database_provisioning"),
+        db_engine=engine,
+        db_name=database_name(sandbox_id),
+        db_data_volume=data_volume,
+        last_error=None,
     )
+    if manifest.lifecycle_status is target_status:
+        write_manifest(controller_store, provisioning)
+    else:
+        transition_sandbox_lifecycle(
+            controller_store,
+            provisioning,
+            to_status=target_status,
+        )
     try:
         settings = get_preview_settings()
         schema_files = discover_schema_baseline_files(
@@ -567,37 +571,45 @@ def complete_database_provision(
             )
         failed = read_manifest(controller_store, sandbox_id)
         if failed is not None:
-            transition_sandbox_lifecycle(
-                controller_store,
-                replace(
-                    failed,
-                    operation=operation,
-                    operation_phase="migration_failed",
-                    last_error=detail,
-                ),
-                to_status=SandboxLifecycleStatus.DATABASE_FAILED,
+            migration_failed = replace(
+                failed,
+                operation=operation,
+                operation_phase="migration_failed",
+                last_error=detail,
             )
+            if failed.lifecycle_status is SandboxLifecycleStatus.DATABASE_FAILED:
+                write_manifest(controller_store, migration_failed)
+            else:
+                transition_sandbox_lifecycle(
+                    controller_store,
+                    migration_failed,
+                    to_status=SandboxLifecycleStatus.DATABASE_FAILED,
+                )
         if operation == "sync":
             raise SandboxMigrationError(error.status_code, detail) from error
         raise
     except Exception as error:
         failed = read_manifest(controller_store, sandbox_id)
         if failed is not None:
-            database_failed = operation in {"reset-db", "sync"}
-            transition_sandbox_lifecycle(
-                controller_store,
-                replace(
-                    failed,
-                    operation=operation,
-                    operation_phase="database_provisioning_failed",
-                    last_error=str(error),
-                ),
-                to_status=(
-                    SandboxLifecycleStatus.DATABASE_FAILED
-                    if database_failed
-                    else SandboxLifecycleStatus.CREATING
-                ),
+            failure_status = (
+                SandboxLifecycleStatus.DATABASE_FAILED
+                if operation in {"reset-db", "sync"}
+                else SandboxLifecycleStatus.CREATING
             )
+            provisioning_failed = replace(
+                failed,
+                operation=operation,
+                operation_phase="database_provisioning_failed",
+                last_error=str(error),
+            )
+            if failed.lifecycle_status is failure_status:
+                write_manifest(controller_store, provisioning_failed)
+            else:
+                transition_sandbox_lifecycle(
+                    controller_store,
+                    provisioning_failed,
+                    to_status=failure_status,
+                )
         if isinstance(error, SandboxDatabaseError):
             raise
         raise SandboxDatabaseError(503, f"Sandbox database provisioning failed: {error}") from error

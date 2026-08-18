@@ -3733,6 +3733,8 @@ class ControllerStore:
                         "only destroy may acquire a lease while writers exist"
                     )
                 target = SandboxLifecycleStatus.DRAINING
+                # A failed writer drain leaves this status in place. Its destroy
+                # retry must reassert draining while it acquires the next lease.
                 sources = source_statuses(target).union({target})
                 placeholders = ", ".join("?" for _ in sources)
                 cursor = connection.execute(
