@@ -112,7 +112,7 @@ def _run_command(
                 timeout_seconds=settings.timeout_seconds,
                 max_log_bytes=settings.max_output_bytes,
                 egress=Egress.DENIED,
-                database_network=(
+                network=(
                     database_runtime.network_name
                     if database_runtime is not None and database_runtime.engine != "sqlite"
                     else None

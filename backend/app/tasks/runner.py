@@ -162,7 +162,7 @@ def run_coding_turn(
             max_log_bytes=settings.max_log_bytes,
             tmpfs_size="512m",
             egress=Egress.PROVIDER,
-            database_network=(
+            network=(
                 database_runtime.network_name
                 if database_runtime is not None and database_runtime.engine != "sqlite"
                 else None

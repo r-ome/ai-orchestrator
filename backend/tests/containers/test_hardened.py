@@ -7,6 +7,10 @@ from docker.errors import DockerException
 
 from app.containers.hardened import (
     AUTO_REMOVE,
+    Capabilities,
+    HardenedContainerSpec,
+    Rootfs,
+    create_hardened,
     CAP_DROP,
     INIT,
     PIDS_LIMIT,
@@ -129,7 +133,7 @@ def test_constants_land_on_create_for_a_minimal_spec() -> None:
 
 
 @pytest.mark.parametrize(
-    ("egress", "database_network", "expected_create", "connects"),
+    ("egress", "network", "expected_create", "connects"),
     [
         (Egress.PROVIDER, None, {}, []),
         (Egress.PROVIDER, "database", {}, ["database"]),
@@ -139,7 +143,7 @@ def test_constants_land_on_create_for_a_minimal_spec() -> None:
 )
 def test_network_construction(
     egress: Egress,
-    database_network: str | None,
+    network: str | None,
     expected_create: dict[str, str],
     connects: list[str],
 ) -> None:
@@ -148,7 +152,7 @@ def test_network_construction(
 
     run_hardened(
         client,
-        _spec(egress=egress, database_network=database_network),
+        _spec(egress=egress, network=network),
     )
 
     call = containers.calls[0]
@@ -230,3 +234,118 @@ def test_the_not_yet_migrated_list_does_not_go_stale() -> None:
     }
 
     assert already_migrated == set()
+
+
+def _container_spec(**overrides: Any) -> HardenedContainerSpec:
+    values: dict[str, Any] = {
+        "image": "test-image",
+        "labels": {"orchestrator.kind": "test"},
+    }
+    values.update(overrides)
+    return HardenedContainerSpec(**values)
+
+
+def test_create_hardened_applies_the_same_constants_and_returns_it_unstarted() -> None:
+    container = _Container()
+    client, containers, _networks = _client(container)
+
+    created = create_hardened(client, _container_spec())
+
+    call = containers.calls[0]
+    assert created is container
+    assert container.started is False
+    assert call["read_only"] is True
+    assert call["cap_drop"] == ["ALL"]
+    assert call["security_opt"] == ["no-new-privileges:true"]
+    assert call["init"] is True
+    assert call["pids_limit"] == PIDS_LIMIT
+    assert "cap_add" not in call
+
+
+def test_a_created_container_joins_its_named_network_at_creation() -> None:
+    client, containers, networks = _client(_Container())
+
+    create_hardened(client, _container_spec(egress=Egress.PROVIDER, network="preview"))
+
+    assert containers.calls[0]["network"] == "preview"
+    assert networks.requested == []
+
+
+def test_a_provider_run_joins_the_bridge_then_connects_its_network() -> None:
+    """A run needs egress, so it cannot be created on the internal network."""
+    container = _Container()
+    client, containers, networks = _client(container)
+
+    run_hardened(client, _spec(egress=Egress.PROVIDER, network="database"))
+
+    call = containers.calls[0]
+    assert "network" not in call and "network_mode" not in call
+    assert networks.connected == [container]
+
+
+def test_a_writable_rootfs_keeps_every_other_constant() -> None:
+    client, containers, _networks = _client(_Container())
+
+    create_hardened(client, _container_spec(rootfs=Rootfs.WRITABLE))
+
+    call = containers.calls[0]
+    assert call["read_only"] is False
+    assert call["cap_drop"] == ["ALL"]
+    assert call["security_opt"] == ["no-new-privileges:true"]
+    assert call["pids_limit"] == PIDS_LIMIT
+
+
+def test_database_capabilities_are_the_fixed_documented_set() -> None:
+    client, containers, _networks = _client(_Container())
+
+    create_hardened(client, _container_spec(capabilities=Capabilities.DATABASE_SERVER))
+
+    assert containers.calls[0]["cap_add"] == ["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID"]
+    assert containers.calls[0]["cap_drop"] == ["ALL"]
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [(256, 256), (PIDS_LIMIT, PIDS_LIMIT), (PIDS_LIMIT + 1, PIDS_LIMIT), (10_000, PIDS_LIMIT)],
+)
+def test_a_call_site_may_tighten_the_pids_limit_but_never_raise_it(
+    requested: int,
+    expected: int,
+) -> None:
+    client, containers, _networks = _client(_Container())
+
+    create_hardened(client, _container_spec(pids_limit=requested))
+
+    assert containers.calls[0]["pids_limit"] == expected
+
+
+def test_extra_tmpfs_mounts_join_the_standard_tmp_mount() -> None:
+    client, containers, _networks = _client(_Container())
+
+    create_hardened(
+        client,
+        _container_spec(tmpfs_size="32m", extra_tmpfs={"/git": "rw,nosuid,size=1m"}),
+    )
+
+    assert containers.calls[0]["tmpfs"] == {
+        "/tmp": "rw,nosuid,size=32m",
+        "/git": "rw,nosuid,size=1m",
+    }
+
+
+def test_unset_optional_arguments_are_not_passed_to_docker() -> None:
+    """Docker's own default must stand where the caller named nothing."""
+    client, containers, _networks = _client(_Container())
+
+    create_hardened(client, _container_spec())
+
+    call = containers.calls[0]
+    for absent in ("name", "mounts", "ports", "restart_policy", "healthcheck", "nano_cpus",
+                   "command", "entrypoint", "working_dir", "user", "mem_limit"):
+        assert absent not in call
+
+
+@pytest.mark.parametrize("field", ["timeout_seconds", "max_log_bytes"])
+def test_a_run_spec_rejects_an_unbounded_run(field: str) -> None:
+    with pytest.raises(ValueError):
+        _spec(**{field: 0})
