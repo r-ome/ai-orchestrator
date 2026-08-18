@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from docker.errors import NotFound
@@ -18,9 +19,9 @@ from app.previews.models import (
 )
 from app.previews.service import (
     PreviewOperationError,
+    _attach_shared_database,
     _identifier,
     _release_shared_database,
-    _share_candidates,
     _shared_database_names,
     _shared_schema_name,
     _shared_server_is_idle,
@@ -243,31 +244,6 @@ def test_changing_sharing_changes_the_proposal_digest() -> None:
     assert len({isolated, shared, joined}) == 3
 
 
-def test_candidates_list_only_schema_owners(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    _own_schema(store, OWNER)
-    _guest_schema(store, GUEST, OWNER)
-
-    candidates = _share_candidates(store, project_key=PROJECT_KEY, sandbox_id=OTHER)
-
-    assert [candidate.sandbox_id for candidate in candidates] == [OWNER]
-    assert candidates[0].attached_sandboxes == 1
-    assert candidates[0].project_name == "sample-sandbox-1"
-
-
-def test_a_sandbox_is_not_its_own_candidate(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    _own_schema(store, OWNER)
-
-    assert _share_candidates(store, project_key=PROJECT_KEY, sandbox_id=OWNER) == []
-
-
-def test_sandboxes_without_a_database_offer_nothing(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-
-    assert _share_candidates(store, project_key=PROJECT_KEY, sandbox_id=GUEST) == []
-
-
 def test_sharing_state_names_both_sides_of_the_coupling(tmp_path: Path) -> None:
     store = _store(tmp_path)
     _own_schema(store, OWNER)
@@ -282,6 +258,32 @@ def test_sharing_state_names_both_sides_of_the_coupling(tmp_path: Path) -> None:
     assert guest_state.sharing is PreviewSharing.SHARED_DATA
     assert guest_state.owner_project_name == "sample-sandbox-1"
     assert guest_state.schema_name == owner_state.schema_name
+
+
+def test_attaching_refuses_a_guest_from_an_older_approval(tmp_path: Path) -> None:
+    """`_validate_sharing` runs at approval, so a stored approval can predate it.
+
+    Docker and the settings are None on purpose: the refusal must come before
+    any provisioning, so nothing is created for a guest that cannot start.
+    """
+    store = _store(tmp_path)
+    database = _config(PreviewSharing.SHARED_DATA, OWNER).services["database"]
+
+    with pytest.raises(PreviewOperationError) as error:
+        _attach_shared_database(
+            cast(Any, None),
+            store,
+            cast(Any, None),
+            sandbox_id=GUEST,
+            project_key=PROJECT_KEY,
+            source_path="/projects/sample",
+            database=database,
+            run_network=None,
+            report=lambda *_: None,
+        )
+
+    assert error.value.status_code == 422
+    assert "shared_data is unavailable" in error.value.detail
 
 
 def test_validate_sharing_refuses_shared_data(tmp_path: Path) -> None:

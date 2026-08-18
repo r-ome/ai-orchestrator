@@ -67,9 +67,9 @@ class PreviewSharing(StrEnum):
     ISOLATED keeps today's behaviour: one server container per preview run.
     SHARED_SERVER reuses one server per project but gives each sandbox its own
     schema, so a migration in one sandbox stays invisible to the others.
-    SHARED_DATA points this sandbox at another sandbox's schema, which means
-    every schema change is shared. That is the reason to pick it, and the
-    reason it needs a deliberate approval.
+    SHARED_DATA pointed a sandbox at another sandbox's schema. It is historical:
+    every managed sandbox owns its schema, so the value only parses rows and
+    manifests written before that rule. Nothing can select it.
     """
 
     ISOLATED = "isolated"
@@ -210,18 +210,6 @@ class ProtectedFileChange(BaseModel):
     diff: str
 
 
-class SharedDatabaseCandidate(BaseModel):
-    """A sibling sandbox whose schema this sandbox may join."""
-
-    sandbox_id: str
-    project_name: str
-    schema_name: str
-    image: str
-    persistence: PreviewPersistence
-    attached_sandboxes: int
-    created_at: str
-
-
 class DatabaseSharingState(BaseModel):
     """The database coupling of one sandbox, shown wherever the sandbox is."""
 
@@ -240,7 +228,6 @@ class ProjectDatabaseSharing(BaseModel):
     project_name: str
     sandbox_id: str
     current: DatabaseSharingState | None
-    candidates: list[SharedDatabaseCandidate]
 
 
 class PreviewProposal(BaseModel):
@@ -259,7 +246,6 @@ class PreviewProposal(BaseModel):
     approval_required: bool
     created_at: str
     expires_at: str
-    share_candidates: list[SharedDatabaseCandidate] = Field(default_factory=list)
     required_environment: list[str] = Field(default_factory=list)
     missing_environment: list[str] = Field(default_factory=list)
     configured_environment: list[str] = Field(default_factory=list)

@@ -24,16 +24,6 @@ export interface PreviewDependencyService {
   share_target: string
 }
 
-export interface SharedDatabaseCandidate {
-  sandbox_id: string
-  project_name: string
-  schema_name: string
-  image: string
-  persistence: PreviewPersistence
-  attached_sandboxes: number
-  created_at: string
-}
-
 export interface DatabaseSharingState {
   sandbox_id: string
   sharing: PreviewSharing
@@ -50,7 +40,6 @@ export interface ProjectDatabaseSharing {
   project_name: string
   sandbox_id: string
   current: DatabaseSharingState | null
-  candidates: SharedDatabaseCandidate[]
 }
 
 export interface PreviewInitialization {
@@ -105,7 +94,6 @@ export interface PreviewProposal {
   approval_required: boolean
   created_at: string
   expires_at: string
-  share_candidates: SharedDatabaseCandidate[]
   /** Variables the project appears to need. */
   required_environment: string[]
   /** Names the controller can supply: stored secrets plus managed DATABASE_URL. */

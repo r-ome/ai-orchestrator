@@ -77,7 +77,6 @@ from app.previews.models import (
     ProjectSecretName,
     ProjectSecrets,
     SetProjectSecretsRequest,
-    SharedDatabaseCandidate,
     StartPreviewRequest,
     StopPreviewResponse,
 )
@@ -130,6 +129,10 @@ MAX_CONTEXT_BYTES = 512 * 1024 * 1024
 PREVIEW_COMMAND_TIMEOUT_SECONDS = 60
 PREVIEW_COMMAND_MAX_LOG_BYTES = 1_048_576
 PREVIEW_ARCHIVE_MAX_LOG_BYTES = 716_000_000
+# Raised at approval and again at attach, so one wording covers both.
+_SHARED_DATA_UNAVAILABLE = (
+    "shared_data is unavailable; each managed sandbox owns its database"
+)
 _database_engine: DatabaseEngine = MYSQL_DATABASE
 # Priority order for the lockfile that keys a sandbox's dependency volume.
 _LOCKFILE_NAMES = (
@@ -263,16 +266,6 @@ def propose_preview(
         approval_required=approval_required,
         created_at=created_at,
         expires_at=expires_at,
-        # Sharing is offered only when this sandbox actually runs a database.
-        share_candidates=(
-            _share_candidates(
-                controller_store,
-                project_key=_project_key(project),
-                sandbox_id=project.sandbox_id,
-            )
-            if "database" in detection.config.services
-            else []
-        ),
         required_environment=detection.required_environment,
         missing_environment=missing_environment,
         configured_environment=configured_environment,
@@ -1322,32 +1315,24 @@ def _start_native(
             )
         )
         if config.initialize.commands:
-            if database.sharing is PreviewSharing.SHARED_DATA:
-                # A guest must not migrate or seed data it does not own.
-                report(
-                    "initialize",
-                    "Skipping migration and seed commands: this sandbox is a "
-                    "guest on another sandbox's database",
+            report("initialize", "Running approved migration and seed commands")
+            containers.append(
+                _run_initialization(
+                    docker_client,
+                    settings,
+                    image=config.image,
+                    commands=config.initialize.commands,
+                    runtime=config.runtime.value,
+                    environment=application_environment,
+                    volumes=volumes,
+                    mounts=mounts,
+                    tmpfs=tmpfs,
+                    labels=labels,
+                    network=network,
+                    run_id=run_id,
                 )
-            else:
-                report("initialize", "Running approved migration and seed commands")
-                containers.append(
-                    _run_initialization(
-                        docker_client,
-                        settings,
-                        image=config.image,
-                        commands=config.initialize.commands,
-                        runtime=config.runtime.value,
-                        environment=application_environment,
-                        volumes=volumes,
-                        mounts=mounts,
-                        tmpfs=tmpfs,
-                        labels=labels,
-                        network=network,
-                        run_id=run_id,
-                    )
-                )
-                report("initialize", "Database initialization completed")
+            )
+            report("initialize", "Database initialization completed")
     elif database is not None:
         report("database-image", f"Checking database image {database.image}")
         _ensure_preview_image(docker_client, database.image)
@@ -1889,14 +1874,14 @@ def _attach_shared_database(
 ) -> tuple[dict[str, str], str]:
     """Gives one sandbox credentials on the project's shared server.
 
-    Returns the credentials and the schema the sandbox must use. For
-    SHARED_SERVER the schema is the sandbox's own. For SHARED_DATA it is the
-    target sandbox's schema, joined with this sandbox's own user so access can
-    be revoked without touching the owner.
+    Returns the credentials and the schema the sandbox must use. Every managed
+    sandbox owns its schema, so the schema is always this sandbox's own.
     """
-    owner_sandbox_id = sandbox_id
     if database.sharing is PreviewSharing.SHARED_DATA:
-        owner_sandbox_id = database.share_target
+        # `_validate_sharing` refuses shared_data at approval. An approval
+        # recorded before that guard can still reach this call, so refuse the
+        # guest here too rather than provision one nothing else supports.
+        raise PreviewOperationError(422, _SHARED_DATA_UNAVAILABLE)
     server, credentials_volume, shared_network = _shared_database_server(
         docker_client,
         settings,
@@ -1906,13 +1891,13 @@ def _attach_shared_database(
         report=report,
     )
 
-    schema_name = _shared_schema_name(owner_sandbox_id)
+    schema_name = _shared_schema_name(sandbox_id)
     # Schema names are truncated sandbox ids. A collision would silently join
     # two sandboxes' data, so refuse rather than share by accident.
     for row in controller_store.shared_schemas_for_project(project_key):
         if (
             str(row["schema_name"]) == schema_name
-            and str(row["owner_sandbox_id"]) != owner_sandbox_id
+            and str(row["owner_sandbox_id"]) != sandbox_id
         ):
             raise PreviewOperationError(
                 409,
@@ -1953,7 +1938,7 @@ def _attach_shared_database(
     controller_store.record_shared_schema(
         sandbox_id=sandbox_id,
         project_id=project_key,
-        owner_sandbox_id=owner_sandbox_id,
+        owner_sandbox_id=sandbox_id,
         sharing=database.sharing.value,
         schema_name=schema_name,
         user_name=user_name,
@@ -2051,8 +2036,10 @@ def _release_shared_database(
 ) -> dict[str, Any]:
     """Undoes one sandbox's claim on the shared server.
 
-    A guest loses only its own user. An owner loses its schema only when the
-    data is ephemeral and no guest is still attached to it.
+    An owner loses its schema only when the data is ephemeral and no guest is
+    still attached to it. A guest loses only its own user. No new guest can be
+    created, so the guest path here serves rows written before that rule and is
+    the one place that still asks whether a row belongs to its sandbox.
     """
     record = controller_store.shared_schema(sandbox_id)
     if record is None:
@@ -2173,47 +2160,6 @@ def _stop_idle_shared_server(
                 continue
 
 
-def _share_candidates(
-    controller_store: ControllerStore,
-    *,
-    project_key: str,
-    sandbox_id: str,
-) -> list[SharedDatabaseCandidate]:
-    """Sandboxes of this project whose schema another sandbox may join.
-
-    Only schema owners appear. A sandbox with no database has no row, so a
-    static-site sandbox never offers itself as a target.
-    """
-    rows = controller_store.shared_schemas_for_project(project_key)
-    names = {
-        str(sandbox["id"]): str(sandbox["project_name"])
-        for sandbox in controller_store.sandboxes()
-    }
-    attachments: dict[str, int] = {}
-    for row in rows:
-        owner = str(row["owner_sandbox_id"])
-        if owner != str(row["sandbox_id"]):
-            attachments[owner] = attachments.get(owner, 0) + 1
-    candidates = []
-    for row in rows:
-        owner = str(row["owner_sandbox_id"])
-        candidate_id = str(row["sandbox_id"])
-        if owner != candidate_id or candidate_id == sandbox_id:
-            continue
-        candidates.append(
-            SharedDatabaseCandidate(
-                sandbox_id=candidate_id,
-                project_name=names.get(candidate_id, candidate_id[:12]),
-                schema_name=str(row["schema_name"]),
-                image=str(row["image"]),
-                persistence=PreviewPersistence(str(row["persistence"])),
-                attached_sandboxes=attachments.get(candidate_id, 0),
-                created_at=str(row["created_at"]),
-            )
-        )
-    return candidates
-
-
 def _sharing_state(
     controller_store: ControllerStore,
     sandbox_id: str,
@@ -2252,18 +2198,12 @@ def database_sharing_state(
     controller_store: ControllerStore,
     project_name: str,
 ) -> ProjectDatabaseSharing:
-    """The database coupling of one sandbox, plus what it could join."""
+    """The database coupling of one sandbox."""
     project = _ready_project(docker_client, project_name, controller_store)
-    project_key = _project_key(project)
     return ProjectDatabaseSharing(
         project_name=project.name,
         sandbox_id=project.sandbox_id,
         current=_sharing_state(controller_store, project.sandbox_id),
-        candidates=_share_candidates(
-            controller_store,
-            project_key=project_key,
-            sandbox_id=project.sandbox_id,
-        ),
     )
 
 
@@ -2382,10 +2322,7 @@ def _validate_sharing(config: PreviewConfiguration) -> None:
     # folders tolerated that, because they shared one MySQL server per source
     # path. Every managed sandbox owns its own schema, so the mode has no
     # remaining meaning and no caller can opt into it.
-    raise PreviewOperationError(
-        422,
-        "shared_data is unavailable; each managed sandbox owns its database",
-    )
+    raise PreviewOperationError(422, _SHARED_DATA_UNAVAILABLE)
 
 
 def _wait_for_mysql_health(

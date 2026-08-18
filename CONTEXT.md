@@ -96,11 +96,11 @@ A project file whose change invalidates earlier preview approval.
 _Avoid_: Protected file
 
 **Shared database server**:
-One database container serving every sandbox of a project. Each sandbox holds its own schema unless it is a database guest.
+One database container serving every sandbox of a project. Each sandbox holds its own schema.
 _Avoid_: Shared database, common database
 
-**Database guest**:
-A sandbox that writes to another sandbox's schema. It never owns that data, never migrates or seeds it, and loses only its own credentials when it stops.
+**Database guest** (historical):
+A sandbox that writes to another sandbox's schema. Every managed sandbox owns its schema, so no new guest can be created. The term names rows written before that rule, which lose only their own credentials when the sandbox stops.
 _Avoid_: Attached sandbox, linked sandbox
 
 **Trusted metadata**:
