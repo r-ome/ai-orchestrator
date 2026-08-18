@@ -8,6 +8,7 @@ from threading import RLock
 from typing import Any
 
 from app.controller.config import ControllerSettings, get_controller_settings
+from app.sandboxes.models import SandboxLifecycleStatus, source_statuses
 
 
 INITIAL_MIGRATION = """
@@ -501,7 +502,7 @@ class SandboxWriterAdmissionError(SandboxAdmissionError):
         sandbox_id: str,
         *,
         lease: Mapping[str, Any] | None = None,
-        lifecycle_status: str | None = None,
+        lifecycle_status: SandboxLifecycleStatus | None = None,
         desired_state: str | None = None,
     ) -> None:
         self.sandbox_id = sandbox_id
@@ -518,7 +519,7 @@ class SandboxWriterAdmissionError(SandboxAdmissionError):
                 f"Sandbox '{sandbox_id}' does not admit writers while lifecycle status "
                 f"is '{lifecycle_status}' and desired state is '{desired_state}'"
             )
-            if lifecycle_status == "awaiting_engine_confirmation":
+            if lifecycle_status is SandboxLifecycleStatus.AWAITING_ENGINE_CONFIRMATION:
                 detail += "; confirm the database engine to unblock it"
         super().__init__(detail)
 
@@ -1154,7 +1155,7 @@ class ControllerStore:
                     operation, operation_phase, created_at, updated_at
                 ) VALUES (
                     ?, ?, ?, ?, 'creating',
-                    'v1', 'active', 'creating', 'create', 'manifest', ?, ?
+                    'v1', 'active', ?, 'create', 'manifest', ?, ?
                 )
                 ON CONFLICT(id) DO NOTHING
                 """,
@@ -1163,6 +1164,7 @@ class ControllerStore:
                     project_id,
                     project_name,
                     volume_name,
+                    SandboxLifecycleStatus.CREATING.value,
                     created_at or now,
                     now,
                 ),
@@ -1180,8 +1182,10 @@ class ControllerStore:
         *,
         sandbox_id: str,
         values: Mapping[str, Any],
-    ) -> None:
-        """Write lifecycle manifest columns."""
+        from_lifecycle_statuses: Iterable[str] | None = None,
+        allow_unset_lifecycle_status: bool = False,
+    ) -> bool:
+        """Write manifest columns with an optional atomic lifecycle guard."""
         fields = (
             "lifecycle_version",
             "feature_key",
@@ -1238,14 +1242,28 @@ class ControllerStore:
                 int(bool(values[field])) if field == "pr_requested" else values[field]
                 for field in fields
             ]
-            connection.execute(
+            lifecycle_guard = ""
+            lifecycle_parameters: tuple[str, ...] = ()
+            if from_lifecycle_statuses is not None:
+                lifecycle_parameters = tuple(from_lifecycle_statuses)
+                allowed = []
+                if lifecycle_parameters:
+                    placeholders = ", ".join("?" for _ in lifecycle_parameters)
+                    allowed.append(f"lifecycle_status IN ({placeholders})")
+                if allow_unset_lifecycle_status:
+                    allowed.append("lifecycle_status IS NULL")
+                if not allowed:
+                    return False
+                lifecycle_guard = f" AND ({' OR '.join(allowed)})"
+            cursor = connection.execute(
                 f"""
                 UPDATE sandboxes
                 SET {assignments}, updated_at = ?
-                WHERE id = ?
+                WHERE id = ?{lifecycle_guard}
                 """,
-                (*parameters, _now(), sandbox_id),
+                (*parameters, _now(), sandbox_id, *lifecycle_parameters),
             )
+        return cursor.rowcount == 1
 
     def sandboxes(self) -> list[dict[str, Any]]:
         with self._connection() as connection:
@@ -3663,10 +3681,10 @@ class ControllerStore:
         if lease is not None:
             raise SandboxWriterAdmissionError(sandbox_id, lease=dict(lease))
         desired_state = sandbox["desired_state"]
-        if lifecycle_status != "ready" or desired_state != "active":
+        if lifecycle_status != SandboxLifecycleStatus.READY or desired_state != "active":
             raise SandboxWriterAdmissionError(
                 sandbox_id,
-                lifecycle_status=str(lifecycle_status),
+                lifecycle_status=SandboxLifecycleStatus(str(lifecycle_status)),
                 desired_state=str(desired_state),
             )
 
@@ -3714,16 +3732,28 @@ class ControllerStore:
                     raise ValueError(
                         "only destroy may acquire a lease while writers exist"
                     )
-                connection.execute(
-                    """
+                target = SandboxLifecycleStatus.DRAINING
+                sources = source_statuses(target).union({target})
+                placeholders = ", ".join("?" for _ in sources)
+                cursor = connection.execute(
+                    f"""
                     UPDATE sandboxes
-                    SET desired_state = 'destroyed', lifecycle_status = 'draining',
+                    SET desired_state = 'destroyed', lifecycle_status = ?,
                         operation = 'destroy', operation_phase = 'draining',
                         updated_at = ?
-                    WHERE id = ?
+                    WHERE id = ? AND lifecycle_status IN ({placeholders})
                     """,
-                    (now, sandbox_id),
+                    (
+                        target.value,
+                        now,
+                        sandbox_id,
+                        *(status.value for status in sources),
+                    ),
                 )
+                if cursor.rowcount != 1:
+                    raise SandboxAdmissionError(
+                        f"Sandbox '{sandbox_id}' cannot enter draining from its current status"
+                    )
             connection.execute(
                 """
                 INSERT INTO sandbox_leases(
@@ -3795,10 +3825,10 @@ class ControllerStore:
     def reclaim_sandbox_leases(self, *, stale_before: str) -> int:
         """Reclaim leases whose lifecycle settled or heartbeat expired."""
         settled_statuses = {
-            "awaiting_engine_confirmation",
-            "ready",
-            "database_failed",
-            "degraded",
+            SandboxLifecycleStatus.AWAITING_ENGINE_CONFIRMATION.value,
+            SandboxLifecycleStatus.READY.value,
+            SandboxLifecycleStatus.DATABASE_FAILED.value,
+            SandboxLifecycleStatus.DEGRADED.value,
         }
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")

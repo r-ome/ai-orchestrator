@@ -31,7 +31,12 @@ from app.sandboxes import database as sandbox_database
 from app.sandboxes.database import sandbox_database_runtime, shared_database_names
 from app.sandboxes.engine_detection import EngineDetection, EngineSignal, NO_DATABASE
 from app.sandboxes.naming import database_name, db_data_volume, network
-from app.sandboxes.manifest import read_manifest, write_manifest
+from app.sandboxes.manifest import (
+    read_manifest,
+    transition_sandbox_lifecycle,
+    write_manifest,
+)
+from app.sandboxes.models import SandboxLifecycleStatus
 from app.sandboxes.publish import PullRequest, PublishError, PublishOutcome
 
 
@@ -534,13 +539,20 @@ def test_reset_database_converges_and_finalizes_a_pending_base(
     manifest = read_manifest(store, created["sandbox_id"])
     assert manifest is not None
     pending = "b" * 40
-    write_manifest(
+    assert transition_sandbox_lifecycle(
         store,
         replace(
             manifest,
-            lifecycle_status="database_failed",
             pending_base_commit=pending,
         ),
+        to_status=SandboxLifecycleStatus.CREATING,
+    )
+    manifest = read_manifest(store, created["sandbox_id"])
+    assert manifest is not None
+    assert transition_sandbox_lifecycle(
+        store,
+        manifest,
+        to_status=SandboxLifecycleStatus.DATABASE_FAILED,
     )
     create_calls: list[dict[str, object]] = []
     create = fake_docker_client.containers.create
@@ -845,9 +857,10 @@ def test_resume_reuses_an_unconfirmed_engine_detection(
     store = get_controller_store()
     manifest = read_manifest(store, sandbox["sandbox_id"])
     assert manifest is not None
-    write_manifest(
+    transition_sandbox_lifecycle(
         store,
-        replace(manifest, lifecycle_status="creating", operation_phase="workspace"),
+        replace(manifest, operation_phase="workspace"),
+        to_status=SandboxLifecycleStatus.CREATING,
     )
     monkeypatch.setattr(
         sandbox_router,

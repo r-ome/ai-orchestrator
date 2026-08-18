@@ -6,6 +6,7 @@ from docker.errors import NotFound
 
 from app.controller.store import ControllerStore
 from app.projects.models import ProjectRegistration
+from app.sandboxes.models import SandboxLifecycleStatus
 from app.sandboxes.git import run_git
 from app.sandboxes.naming import validate_ownership
 
@@ -67,14 +68,19 @@ def inspect_registered_project(
         validate_ownership(volume, sandbox_id=project_name)
     except ValueError as error:
         raise ProjectOperationError(409, str(error)) from error
-    lifecycle_status = str(sandbox.get("lifecycle_status") or "creating")
+    lifecycle_status = SandboxLifecycleStatus(
+        str(
+            sandbox.get("lifecycle_status")
+            or SandboxLifecycleStatus.CREATING.value
+        )
+    )
     return ProjectRegistration(
         sandbox_id=project_name,
         name=project_name,
         source_path=f"managed:{sandbox['project_id']}",
         volume_name=str(sandbox["volume_name"]),
         created_at=str(sandbox.get("created_at") or ""),
-        ready=lifecycle_status == "ready",
+        ready=lifecycle_status is SandboxLifecycleStatus.READY,
     )
 
 

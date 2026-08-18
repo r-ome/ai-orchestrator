@@ -4,7 +4,13 @@ from pathlib import Path
 import pytest
 
 from app.controller.store import ControllerStore
-from app.sandboxes.manifest import SandboxManifest, read_manifest, write_manifest
+from app.sandboxes.manifest import (
+    SandboxManifest,
+    read_manifest,
+    transition_sandbox_lifecycle,
+    write_manifest,
+)
+from app.sandboxes.models import SandboxLifecycleStatus
 
 
 def _store_with_sandbox(tmp_path: Path) -> ControllerStore:
@@ -54,6 +60,29 @@ def test_created_base_commit_is_write_once(tmp_path: Path) -> None:
     write_manifest(store, manifest)
     with pytest.raises(ValueError, match="created_base_commit.*immutable"):
         write_manifest(store, replace(manifest, created_base_commit="commit-two"))
+
+
+def test_illegal_lifecycle_transition_changes_nothing(tmp_path: Path) -> None:
+    store = _store_with_sandbox(tmp_path)
+    manifest = SandboxManifest(
+        sandbox_id="sandbox-1",
+        lifecycle_version="v1",
+        feature_key="guard-lifecycle",
+        desired_state="active",
+        lifecycle_status=SandboxLifecycleStatus.CREATING,
+        operation="create",
+    )
+    assert write_manifest(store, manifest)
+
+    assert not transition_sandbox_lifecycle(
+        store,
+        replace(manifest, operation="publish"),
+        to_status=SandboxLifecycleStatus.PUBLISHING,
+    )
+    stored = read_manifest(store, manifest.sandbox_id)
+    assert stored is not None
+    assert stored.lifecycle_status is SandboxLifecycleStatus.CREATING
+    assert stored.operation == "create"
 
 
 def test_v1_manifest_requires_a_human_feature_key(tmp_path: Path) -> None:

@@ -16,7 +16,13 @@ from app.controller.store import (
 )
 from app.docker_client import get_docker_client
 from app.projects.remote import normalize_remote_url, project_id_for_remote
-from app.sandboxes.manifest import SandboxManifest, read_manifest, write_manifest
+from app.sandboxes.manifest import (
+    SandboxManifest,
+    read_manifest,
+    transition_sandbox_lifecycle,
+    write_manifest,
+)
+from app.sandboxes.models import SandboxLifecycleStatus
 from app.sandboxes.lifecycle import (
     drain_sandbox_writers,
     lifecycle_conflict_detail,
@@ -113,7 +119,7 @@ class SandboxResponse(BaseModel):
     feature_key: str | None = None
     feature_title: str | None = None
     desired_state: str | None = None
-    lifecycle_status: str | None = None
+    lifecycle_status: SandboxLifecycleStatus | None = None
     base_ref: str | None = None
     feature_branch: str | None = None
     created_base_commit: str | None = None
@@ -301,7 +307,7 @@ def create_or_resolve_sandbox(
             stop_blocking_previews=request.stop_blocking_previews,
         ):
             if created:
-                write_manifest(
+                transition_sandbox_lifecycle(
                     controller_store,
                     SandboxManifest(
                         sandbox_id=sandbox_id,
@@ -309,12 +315,12 @@ def create_or_resolve_sandbox(
                         feature_key=request.feature_key,
                         feature_title=request.feature_title,
                         desired_state="active",
-                        lifecycle_status="creating",
                         feature_branch=feature_branch(request.feature_key),
                         agent_provider=request.agent_provider,
                         operation="create",
                         operation_phase="mirror",
                     ),
+                    to_status=SandboxLifecycleStatus.CREATING,
                 )
             if not created:
                 try:
@@ -408,14 +414,14 @@ def create_or_resolve_sandbox(
                 else:
                     # A human decision can take an arbitrary time. Leaving
                     # this context releases the lease before we return.
-                    write_manifest(
+                    transition_sandbox_lifecycle(
                         controller_store,
                         replace(
                             manifest,
-                            lifecycle_status="awaiting_engine_confirmation",
                             operation="create",
                             operation_phase="awaiting_engine_confirmation",
                         ),
+                        to_status=SandboxLifecycleStatus.AWAITING_ENGINE_CONFIRMATION,
                     )
             except ValueError as error:
                 raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
@@ -697,7 +703,11 @@ def confirm_engine(
     sandbox = controller_store.sandbox(sandbox_id)
     _require_v1(sandbox, sandbox_id, "does not support engine confirmation")
     manifest = read_manifest(controller_store, sandbox_id)
-    if manifest is None or manifest.lifecycle_status != "awaiting_engine_confirmation":
+    if (
+        manifest is None
+        or manifest.lifecycle_status
+        is not SandboxLifecycleStatus.AWAITING_ENGINE_CONFIRMATION
+    ):
         raise HTTPException(status.HTTP_409_CONFLICT, "Sandbox is not awaiting engine confirmation")
     detection = controller_store.sandbox_engine_detection(sandbox_id)
     if detection is None:
@@ -715,16 +725,16 @@ def confirm_engine(
             current = read_manifest(controller_store, sandbox_id)
             if current is None:
                 raise RuntimeError("v1 sandbox manifest disappeared during engine confirmation")
-            write_manifest(
+            transition_sandbox_lifecycle(
                 controller_store,
                 replace(
                     current,
-                    lifecycle_status="creating",
                     db_engine=request.engine,
                     operation="confirm-engine",
                     operation_phase="database_provisioning",
                     last_error=None,
                 ),
+                to_status=SandboxLifecycleStatus.CREATING,
             )
             complete_database_provision(
                 docker_client,
@@ -751,7 +761,10 @@ def reset_database(
     sandbox = controller_store.sandbox(sandbox_id)
     _require_v1(sandbox, sandbox_id, "does not support engine confirmation")
     manifest = read_manifest(controller_store, sandbox_id)
-    if manifest is None or manifest.lifecycle_status not in {"ready", "database_failed"}:
+    if manifest is None or manifest.lifecycle_status not in {
+        SandboxLifecycleStatus.READY,
+        SandboxLifecycleStatus.DATABASE_FAILED,
+    }:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Sandbox database can reset only from ready or database_failed",
@@ -859,7 +872,10 @@ def resume_sandbox(
                     ),
                     feature_branch=manifest.feature_branch,
                 )
-            if manifest.lifecycle_status == "awaiting_engine_confirmation":
+            if (
+                manifest.lifecycle_status
+                is SandboxLifecycleStatus.AWAITING_ENGINE_CONFIRMATION
+            ):
                 return _sandbox_response(controller_store, sandbox)
             detection = controller_store.sandbox_engine_detection(sandbox_id)
             if not detection or not detection.get("confirmed_engine"):
@@ -887,24 +903,23 @@ def resume_sandbox(
                 refreshed = read_manifest(controller_store, sandbox_id)
                 if refreshed is None:
                     raise RuntimeError("v1 sandbox manifest disappeared during resume")
-                write_manifest(
+                transition_sandbox_lifecycle(
                     controller_store,
                     replace(
                         refreshed,
-                        lifecycle_status="awaiting_engine_confirmation",
                         operation="resume",
                         operation_phase="awaiting_engine_confirmation",
                         last_error=None,
                     ),
+                    to_status=SandboxLifecycleStatus.AWAITING_ENGINE_CONFIRMATION,
                 )
                 return _sandbox_response(controller_store, sandbox)
             if detection.get("confirmed_engine") == NO_DATABASE:
                 refreshed = read_manifest(controller_store, sandbox_id) or manifest
-                write_manifest(
+                transition_sandbox_lifecycle(
                     controller_store,
                     replace(
                         refreshed,
-                        lifecycle_status="ready",
                         operation="resume",
                         operation_phase="ready",
                         db_engine=NO_DATABASE,
@@ -916,21 +931,22 @@ def resume_sandbox(
                         pending_base_commit=None,
                         last_error=None,
                     ),
+                    to_status=SandboxLifecycleStatus.READY,
                 )
             else:
                 database_row = controller_store.sandbox_database(sandbox_id)
                 if database_row is not None and database_row.get("status") == "ready":
                     sandbox_database_runtime(docker_client, controller_store, sandbox_id)
                     refreshed = read_manifest(controller_store, sandbox_id) or manifest
-                    write_manifest(
+                    transition_sandbox_lifecycle(
                         controller_store,
                         replace(
                             refreshed,
-                            lifecycle_status="ready",
                             operation="resume",
                             operation_phase="ready",
                             last_error=None,
                         ),
+                        to_status=SandboxLifecycleStatus.READY,
                     )
                 else:
                     complete_database_provision(
@@ -946,7 +962,16 @@ def resume_sandbox(
     except RuntimeError as error:
         manifest = read_manifest(controller_store, sandbox_id)
         if manifest is not None:
-            write_manifest(controller_store, replace(manifest, lifecycle_status="degraded", operation="resume", operation_phase="unsafe_inconsistency", last_error=str(error)))
+            transition_sandbox_lifecycle(
+                controller_store,
+                replace(
+                    manifest,
+                    operation="resume",
+                    operation_phase="unsafe_inconsistency",
+                    last_error=str(error),
+                ),
+                to_status=SandboxLifecycleStatus.DEGRADED,
+            )
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
     except SandboxDatabaseError as error:
         raise HTTPException(error.status_code, error.detail) from error
@@ -976,9 +1001,15 @@ def delete_sandbox(
             manifest = read_manifest(controller_store, sandbox_id)
             if manifest is None:
                 raise RuntimeError("v1 sandbox manifest disappeared during destroy")
-            write_manifest(
+            transition_sandbox_lifecycle(
                 controller_store,
-                replace(manifest, lifecycle_status="destroying", operation="destroy", operation_phase="sweep", last_error=None),
+                replace(
+                    manifest,
+                    operation="destroy",
+                    operation_phase="sweep",
+                    last_error=None,
+                ),
+                to_status=SandboxLifecycleStatus.DESTROYING,
             )
             drop_sandbox_database(
                 docker_client,
@@ -1003,9 +1034,15 @@ def delete_sandbox(
     except (DockerException, RuntimeError, ValueError, SandboxDatabaseError) as error:
         manifest = read_manifest(controller_store, sandbox_id)
         if manifest is not None:
-            write_manifest(
+            transition_sandbox_lifecycle(
                 controller_store,
-                replace(manifest, lifecycle_status="destroying", operation="destroy", operation_phase="sweep", last_error=str(error)),
+                replace(
+                    manifest,
+                    operation="destroy",
+                    operation_phase="sweep",
+                    last_error=str(error),
+                ),
+                to_status=SandboxLifecycleStatus.DESTROYING,
             )
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(error)) from error
     return _tombstone_response(tombstone)

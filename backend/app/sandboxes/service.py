@@ -28,7 +28,11 @@ from app.sandboxes.lifecycle import (
     lifecycle_lease,
     project_mirror_lock,
 )
-from app.sandboxes.manifest import read_manifest, write_manifest
+from app.sandboxes.manifest import (
+    read_manifest,
+    transition_sandbox_lifecycle,
+)
+from app.sandboxes.models import SandboxLifecycleStatus
 from app.sandboxes.naming import database_name, db_data_volume, workspace_volume
 from app.sandboxes.publish import (
     GitHubApiError,
@@ -102,7 +106,7 @@ def sync(
     require_v1(sandbox, sandbox_id, "has no canonical mirror or usable base commit; recreate it explicitly to use v1 sync.")
     assert sandbox is not None
     manifest = read_manifest(controller_store, sandbox_id)
-    if manifest is None or manifest.lifecycle_status != "ready":
+    if manifest is None or manifest.lifecycle_status is not SandboxLifecycleStatus.READY:
         raise SandboxConflict("Sandbox can sync only from ready")
     project = controller_store.project(str(sandbox["project_id"]))
     if project is None or not project.get("mirror_volume"):
@@ -184,13 +188,16 @@ def sync(
             sync_strategy = _sync_strategy(controller_store, sandbox_id)
             syncing = replace(
                 manifest,
-                lifecycle_status="syncing",
                 operation="sync",
                 operation_phase="git_sync",
                 pending_base_commit=pending_base_commit,
                 last_error=None,
             )
-            write_manifest(controller_store, syncing)
+            transition_sandbox_lifecycle(
+                controller_store,
+                syncing,
+                to_status=SandboxLifecycleStatus.SYNCING,
+            )
             try:
                 sync_workspace_from_mirror(
                     docker_client,
@@ -223,17 +230,17 @@ def sync(
                     )
                 failed = read_manifest(controller_store, sandbox_id)
                 if failed is not None:
-                    write_manifest(
+                    transition_sandbox_lifecycle(
                         controller_store,
                         replace(
                             failed,
-                            lifecycle_status="ready",
                             operation="sync",
                             operation_phase="git_restored",
                             current_base_commit=current_base_commit,
                             pending_base_commit=None,
                             last_error=detail,
                         ),
+                        to_status=SandboxLifecycleStatus.READY,
                     )
                 raise SandboxConflict(detail) from sync_error
 
@@ -282,7 +289,7 @@ def publish(
     require_v1(sandbox, sandbox_id, "cannot publish to a remote; recreate it explicitly as v1.")
     assert sandbox is not None
     manifest = read_manifest(controller_store, sandbox_id)
-    if manifest is None or manifest.lifecycle_status != "ready":
+    if manifest is None or manifest.lifecycle_status is not SandboxLifecycleStatus.READY:
         raise SandboxConflict("Sandbox can publish only from ready")
     if not manifest.feature_branch:
         raise SandboxConflict(
@@ -326,15 +333,15 @@ def publish(
             if lease is None:
                 raise RuntimeError("managed sandbox did not acquire a lifecycle lease")
             operation_id = str(lease["operation_id"])
-            write_manifest(
+            transition_sandbox_lifecycle(
                 controller_store,
                 replace(
                     manifest,
-                    lifecycle_status="publishing",
                     operation="publish",
                     operation_phase="pushing",
                     last_error=None,
                 ),
+                to_status=SandboxLifecycleStatus.PUBLISHING,
             )
             try:
                 with project_mirror_lock(
@@ -365,15 +372,15 @@ def publish(
                 )
                 failed = read_manifest(controller_store, sandbox_id)
                 if failed is not None:
-                    write_manifest(
+                    transition_sandbox_lifecycle(
                         controller_store,
                         replace(
                             failed,
-                            lifecycle_status="ready",
                             operation="publish",
                             operation_phase="pushing",
                             last_error=failure_message,
                         ),
+                        to_status=SandboxLifecycleStatus.READY,
                     )
                 raise
             publication = controller_store.record_sandbox_publication(
@@ -387,15 +394,15 @@ def publish(
             pushed = read_manifest(controller_store, sandbox_id)
             if pushed is None:
                 raise RuntimeError("sandbox manifest disappeared during publish")
-            write_manifest(
+            transition_sandbox_lifecycle(
                 controller_store,
                 replace(
                     pushed,
-                    lifecycle_status="publishing",
                     operation="publish",
                     operation_phase="pr_pending",
                     last_error=None,
                 ),
+                to_status=SandboxLifecycleStatus.PUBLISHING,
             )
             try:
                 pull_request = discover_or_create_pull_request(
@@ -416,15 +423,15 @@ def publish(
                 )
                 failed = read_manifest(controller_store, sandbox_id)
                 if failed is not None:
-                    write_manifest(
+                    transition_sandbox_lifecycle(
                         controller_store,
                         replace(
                             failed,
-                            lifecycle_status="ready",
                             operation="publish",
                             operation_phase="pr_pending",
                             last_error=str(error),
                         ),
+                        to_status=SandboxLifecycleStatus.READY,
                     )
                 raise PublishError(424, str(error)) from error
             publication = controller_store.record_sandbox_publication(
@@ -441,15 +448,15 @@ def publish(
             completed = read_manifest(controller_store, sandbox_id)
             if completed is None:
                 raise RuntimeError("sandbox manifest disappeared during publish")
-            write_manifest(
+            transition_sandbox_lifecycle(
                 controller_store,
                 replace(
                     completed,
-                    lifecycle_status="ready",
                     operation="publish",
                     operation_phase="published",
                     last_error=None,
                 ),
+                to_status=SandboxLifecycleStatus.READY,
             )
             return PublishOutcome(
                 sandbox_id=sandbox_id,
@@ -486,11 +493,10 @@ def complete_database_provision(
         raise SandboxDatabaseError(409, "Sandbox database intent is incomplete")
     engine = str(detection.get("confirmed_engine") or "")
     if engine == NO_DATABASE:
-        write_manifest(
+        transition_sandbox_lifecycle(
             controller_store,
             replace(
                 manifest,
-                lifecycle_status="ready",
                 operation=operation,
                 operation_phase="ready",
                 db_engine=engine,
@@ -500,6 +506,7 @@ def complete_database_provision(
                 pending_base_commit=None,
                 last_error=None,
             ),
+            to_status=SandboxLifecycleStatus.READY,
         )
         return
     migrate = [
@@ -511,20 +518,19 @@ def complete_database_provision(
         for value in _json_value(detection.get("seed_commands_json"), [])
     ]
     data_volume = db_data_volume(sandbox_id) if engine == "sqlite" else None
-    write_manifest(
+    if operation == "sync":
+        target_status = SandboxLifecycleStatus.SYNCING
+    elif (
+        operation == "reset-db"
+        and manifest.lifecycle_status is SandboxLifecycleStatus.DATABASE_FAILED
+    ):
+        target_status = SandboxLifecycleStatus.DATABASE_FAILED
+    else:
+        target_status = SandboxLifecycleStatus.CREATING
+    transition_sandbox_lifecycle(
         controller_store,
         replace(
             manifest,
-            lifecycle_status=(
-                "syncing"
-                if operation == "sync"
-                else (
-                    "database_failed"
-                    if operation == "reset-db"
-                    and manifest.lifecycle_status == "database_failed"
-                    else "creating"
-                )
-            ),
             operation=operation,
             operation_phase=("migration_replay" if operation == "sync" else "database_provisioning"),
             db_engine=engine,
@@ -532,6 +538,7 @@ def complete_database_provision(
             db_data_volume=data_volume,
             last_error=None,
         ),
+        to_status=target_status,
     )
     try:
         settings = get_preview_settings()
@@ -560,15 +567,15 @@ def complete_database_provision(
             )
         failed = read_manifest(controller_store, sandbox_id)
         if failed is not None:
-            write_manifest(
+            transition_sandbox_lifecycle(
                 controller_store,
                 replace(
                     failed,
-                    lifecycle_status="database_failed",
                     operation=operation,
                     operation_phase="migration_failed",
                     last_error=detail,
                 ),
+                to_status=SandboxLifecycleStatus.DATABASE_FAILED,
             )
         if operation == "sync":
             raise SandboxMigrationError(error.status_code, detail) from error
@@ -577,14 +584,18 @@ def complete_database_provision(
         failed = read_manifest(controller_store, sandbox_id)
         if failed is not None:
             database_failed = operation in {"reset-db", "sync"}
-            write_manifest(
+            transition_sandbox_lifecycle(
                 controller_store,
                 replace(
                     failed,
-                    lifecycle_status="database_failed" if database_failed else "creating",
                     operation=operation,
                     operation_phase="database_provisioning_failed",
                     last_error=str(error),
+                ),
+                to_status=(
+                    SandboxLifecycleStatus.DATABASE_FAILED
+                    if database_failed
+                    else SandboxLifecycleStatus.CREATING
                 ),
             )
         if isinstance(error, SandboxDatabaseError):
@@ -594,11 +605,10 @@ def complete_database_provision(
     if ready is None:
         raise RuntimeError("sandbox manifest disappeared after database provisioning")
     current_base = ready.pending_base_commit or ready.current_base_commit
-    write_manifest(
+    transition_sandbox_lifecycle(
         controller_store,
         replace(
             ready,
-            lifecycle_status="ready",
             operation=operation,
             operation_phase="ready",
             current_base_commit=current_base,
@@ -606,6 +616,7 @@ def complete_database_provision(
             schema_baseline_hash=baseline_hash,
             last_error=None,
         ),
+        to_status=SandboxLifecycleStatus.READY,
     )
 
 

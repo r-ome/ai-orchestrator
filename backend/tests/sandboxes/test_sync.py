@@ -15,7 +15,13 @@ from app.sandboxes import database as sandbox_database
 from app.sandboxes import lifecycle as sandbox_lifecycle
 from app.sandboxes import service as sandbox_service
 from app.sandboxes.engine_detection import EngineDetection, EngineSignal
-from app.sandboxes.manifest import SandboxManifest, read_manifest, write_manifest
+from app.sandboxes.manifest import (
+    SandboxManifest,
+    read_manifest,
+    transition_sandbox_lifecycle,
+    write_manifest,
+)
+from app.sandboxes.models import SandboxLifecycleStatus
 from app.sandboxes.naming import mirror_ownership_labels, ownership_labels
 from app.sandboxes.git import (
     GitNetworkMode,
@@ -68,19 +74,19 @@ def _register(*, fake_docker_client: Any) -> None:
         name="sync-workspace",
         labels=ownership_labels(sandbox_id=SANDBOX_ID, project_id=PROJECT_ID),
     )
-    write_manifest(
+    transition_sandbox_lifecycle(
         store,
         SandboxManifest(
             sandbox_id=SANDBOX_ID,
             lifecycle_version="v1",
             feature_key="sync-check",
             desired_state="active",
-            lifecycle_status="ready",
             feature_branch="feature/sync-check",
             base_ref="refs/heads/main",
             created_base_commit=OLD_BASE,
             current_base_commit=OLD_BASE,
         ),
+        to_status=SandboxLifecycleStatus.READY,
     )
     store.record_sandbox_engine_detection(
         sandbox_id=SANDBOX_ID,
@@ -144,16 +150,16 @@ def _complete_sync(*_args: object, **kwargs: object) -> None:
     detection = store.sandbox_engine_detection(SANDBOX_ID)
     assert detection is not None
     assert 'approved migrate' in str(detection["migrate_commands_json"])
-    write_manifest(
+    transition_sandbox_lifecycle(
         store,
         replace(
             manifest,
-            lifecycle_status="ready",
             operation="sync",
             operation_phase="ready",
             current_base_commit=manifest.pending_base_commit,
             pending_base_commit=None,
         ),
+        to_status=SandboxLifecycleStatus.READY,
     )
 
 
@@ -196,7 +202,7 @@ def test_sync_merges_only_after_an_observed_open_pull_request(
     assert first.json()["strategy"] == "rebase"
     manifest = read_manifest(store, SANDBOX_ID)
     assert manifest is not None
-    write_manifest(store, replace(manifest, current_base_commit=OLD_BASE, lifecycle_status="ready"))
+    write_manifest(store, replace(manifest, current_base_commit=OLD_BASE))
     store.record_sandbox_publication(
         sandbox_id=SANDBOX_ID,
         remote_branch="feature/sync-check",
@@ -300,7 +306,7 @@ def test_sync_allows_idle_agent_but_refuses_open_agent_writer_session(
 
     manifest = read_manifest(store, SANDBOX_ID)
     assert manifest is not None
-    write_manifest(store, replace(manifest, current_base_commit=OLD_BASE, lifecycle_status="ready"))
+    write_manifest(store, replace(manifest, current_base_commit=OLD_BASE))
     store.open_agent_writer_session(
         session_id="writer-1", sandbox_id=SANDBOX_ID, agent_run_id="agent-1", kind="terminal"
     )
