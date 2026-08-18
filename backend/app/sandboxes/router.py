@@ -51,7 +51,7 @@ from app.sandboxes.service import (
     SandboxNotFound,
     complete_database_provision,
     publish,
-    require_v1_publish,
+    require_v1,
     sync,
 )
 
@@ -512,7 +512,11 @@ def get_sandbox_staleness(
 ) -> SandboxStalenessResponse:
     """Fetch the shared mirror, then report this sandbox's informational lag."""
     sandbox = controller_store.sandbox(sandbox_id)
-    _require_v1_staleness(sandbox, sandbox_id)
+    _require_v1(
+        sandbox,
+        sandbox_id,
+        "has no canonical mirror or usable base commit; recreate it explicitly to use v1 staleness.",
+    )
     assert sandbox is not None
     project = controller_store.project(str(sandbox["project_id"]))
     if project is None or not project.get("mirror_volume"):
@@ -654,7 +658,11 @@ def get_sandbox_publication(
 ) -> SandboxPublicationResponse:
     sandbox = controller_store.sandbox(sandbox_id)
     try:
-        require_v1_publish(sandbox, sandbox_id)
+        require_v1(
+            sandbox,
+            sandbox_id,
+            "cannot publish to a remote; recreate it explicitly as v1.",
+        )
     except SandboxNotFound as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
     except SandboxConflict as error:
@@ -671,7 +679,7 @@ def get_engine_detection(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> EngineDetectionResponse:
     sandbox = controller_store.sandbox(sandbox_id)
-    _require_v1_engine_lifecycle(sandbox, sandbox_id)
+    _require_v1(sandbox, sandbox_id, "does not support engine confirmation")
     detection = controller_store.sandbox_engine_detection(sandbox_id)
     if detection is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Engine detection is not available")
@@ -687,7 +695,7 @@ def confirm_engine(
 ) -> SandboxResponse:
     """Freeze a human-approved engine and resume the creation lifecycle."""
     sandbox = controller_store.sandbox(sandbox_id)
-    _require_v1_engine_lifecycle(sandbox, sandbox_id)
+    _require_v1(sandbox, sandbox_id, "does not support engine confirmation")
     manifest = read_manifest(controller_store, sandbox_id)
     if manifest is None or manifest.lifecycle_status != "awaiting_engine_confirmation":
         raise HTTPException(status.HTTP_409_CONFLICT, "Sandbox is not awaiting engine confirmation")
@@ -741,7 +749,7 @@ def reset_database(
 ) -> SandboxResponse:
     """Drop and rebuild from the stored, human-approved command snapshot."""
     sandbox = controller_store.sandbox(sandbox_id)
-    _require_v1_engine_lifecycle(sandbox, sandbox_id)
+    _require_v1(sandbox, sandbox_id, "does not support engine confirmation")
     manifest = read_manifest(controller_store, sandbox_id)
     if manifest is None or manifest.lifecycle_status not in {"ready", "database_failed"}:
         raise HTTPException(
@@ -1082,25 +1090,17 @@ def _value(manifest: SandboxManifest, field: str) -> str | None:
     return str(value) if value is not None else None
 
 
-def _require_v1_engine_lifecycle(sandbox: dict[str, object] | None, sandbox_id: str) -> None:
-    if sandbox is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sandbox not found")
-    if sandbox.get("lifecycle_version") != "v1":
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Legacy sandbox '{sandbox_id}' does not support engine confirmation",
-        )
-
-
-def _require_v1_staleness(
-    sandbox: dict[str, object] | None, sandbox_id: str
+def _require_v1(
+    sandbox: dict[str, object] | None,
+    sandbox_id: str,
+    refusal: str,
 ) -> None:
     if sandbox is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Sandbox not found")
     if sandbox.get("lifecycle_version") != "v1":
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"Legacy sandbox '{sandbox_id}' has no canonical mirror or usable base commit; recreate it explicitly to use v1 staleness.",
+            f"Legacy sandbox '{sandbox_id}' {refusal}",
         )
 
 

@@ -99,7 +99,7 @@ def sync(
 ) -> SyncOutcome:
     """Explicitly bring one clean v1 workspace forward from its local mirror."""
     sandbox = controller_store.sandbox(sandbox_id)
-    _require_v1_sync(sandbox, sandbox_id)
+    require_v1(sandbox, sandbox_id, "has no canonical mirror or usable base commit; recreate it explicitly to use v1 sync.")
     assert sandbox is not None
     manifest = read_manifest(controller_store, sandbox_id)
     if manifest is None or manifest.lifecycle_status != "ready":
@@ -279,7 +279,7 @@ def publish(
 ) -> PublishOutcome:
     """Push one reviewed branch, then discover or create and verify its PR."""
     sandbox = controller_store.sandbox(sandbox_id)
-    _require_v1_publish(sandbox, sandbox_id)
+    require_v1(sandbox, sandbox_id, "cannot publish to a remote; recreate it explicitly as v1.")
     assert sandbox is not None
     manifest = read_manifest(controller_store, sandbox_id)
     if manifest is None or manifest.lifecycle_status != "ready":
@@ -609,31 +609,16 @@ def complete_database_provision(
     )
 
 
-def require_v1_publish(
-    sandbox: dict[str, object] | None, sandbox_id: str
-) -> None:
-    _require_v1_publish(sandbox, sandbox_id)
-
-
-def _require_v1_sync(
-    sandbox: dict[str, object] | None, sandbox_id: str
+def require_v1(
+    sandbox: dict[str, object] | None,
+    sandbox_id: str,
+    refusal: str,
 ) -> None:
     if sandbox is None:
         raise SandboxNotFound("Sandbox not found")
     if sandbox.get("lifecycle_version") != "v1":
         raise SandboxConflict(
-            f"Legacy sandbox '{sandbox_id}' has no canonical mirror or usable base commit; recreate it explicitly to use v1 sync."
-        )
-
-
-def _require_v1_publish(
-    sandbox: dict[str, object] | None, sandbox_id: str
-) -> None:
-    if sandbox is None:
-        raise SandboxNotFound("Sandbox not found")
-    if sandbox.get("lifecycle_version") != "v1":
-        raise SandboxConflict(
-            f"Legacy sandbox '{sandbox_id}' cannot publish to a remote; recreate it explicitly as v1."
+            f"Legacy sandbox '{sandbox_id}' {refusal}"
         )
 
 
