@@ -1,10 +1,10 @@
 from typing import Annotated, Callable, TypeVar
 
 from docker.client import DockerClient
-from docker.errors import APIError, DockerException, NotFound
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.docker_client import get_docker_client
+from app.docker_errors import ConflictApiError, DockerErrorPolicy, docker_response
 from app.volumes.actions import (
     MAX_FILE_BYTES,
     VolumeOperationError,
@@ -36,33 +36,16 @@ router = APIRouter(prefix="/volumes", tags=["volumes"])
 ResponseType = TypeVar("ResponseType")
 
 
+_DOCKER_ERRORS = DockerErrorPolicy(
+    domain_errors=(VolumeOperationError,),
+    api_error=ConflictApiError(
+        "Docker rejected the action because the resource is in use"
+    ),
+)
+
+
 def _docker_response(function: Callable[[], ResponseType]) -> ResponseType:
-    try:
-        return function()
-    except VolumeOperationError as error:
-        raise HTTPException(
-            status_code=error.status_code,
-            detail=error.detail,
-        ) from error
-    except NotFound as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Docker resource not found",
-        ) from error
-    except APIError as error:
-        response_status = getattr(getattr(error, "response", None), "status_code", 0)
-        if response_status == status.HTTP_409_CONFLICT:
-            detail = "Docker rejected the action because the resource is in use"
-            response_status = status.HTTP_409_CONFLICT
-        else:
-            detail = "Docker rejected the request"
-            response_status = status.HTTP_502_BAD_GATEWAY
-        raise HTTPException(status_code=response_status, detail=detail) from error
-    except DockerException as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Docker daemon is unavailable",
-        ) from error
+    return docker_response(function, _DOCKER_ERRORS)
 
 
 @router.get("", response_model=RunningVolumesResponse)

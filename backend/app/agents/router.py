@@ -6,7 +6,7 @@ from typing import Annotated, Any, TypeVar
 from uuid import uuid4
 
 from docker.client import DockerClient
-from docker.errors import APIError, DockerException, NotFound
+from docker.errors import DockerException
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, status
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
@@ -36,6 +36,12 @@ from app.agents.service import (
     stop_agent,
 )
 from app.docker_client import get_docker_client
+from app.docker_errors import (
+    DOCKER_DAEMON_UNAVAILABLE_DETAIL,
+    ConflictApiError,
+    DockerErrorPolicy,
+    docker_response,
+)
 from app.docker_terminal import close_stream, read_stream, write_stream
 from app.controller.store import (
     AgentWriterSessionExists,
@@ -51,30 +57,16 @@ _active_sessions_lock = asyncio.Lock()
 _WRITER_HEARTBEAT_SECONDS = 15
 
 
+_DOCKER_ERRORS = DockerErrorPolicy(
+    domain_errors=(AgentOperationError,),
+    api_error=ConflictApiError(
+        "Docker rejected the action because the resource conflicts"
+    ),
+)
+
+
 def _docker_response(function: Callable[[], ResponseType]) -> ResponseType:
-    try:
-        return function()
-    except AgentOperationError as error:
-        raise HTTPException(error.status_code, error.detail) from error
-    except NotFound as error:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            "Docker resource not found",
-        ) from error
-    except APIError as error:
-        response_status = getattr(getattr(error, "response", None), "status_code", 0)
-        if response_status == status.HTTP_409_CONFLICT:
-            detail = "Docker rejected the action because the resource conflicts"
-            response_status = status.HTTP_409_CONFLICT
-        else:
-            detail = "Docker rejected the request"
-            response_status = status.HTTP_502_BAD_GATEWAY
-        raise HTTPException(response_status, detail) from error
-    except DockerException as error:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Docker daemon is unavailable",
-        ) from error
+    return docker_response(function, _DOCKER_ERRORS)
 
 
 @router.get("/providers", response_model=AgentProvidersResponse)
@@ -175,7 +167,7 @@ async def agent_terminal(
         await websocket.close(code=4404, reason=error.detail)
         return
     except DockerException:
-        await websocket.close(code=4503, reason="Docker daemon is unavailable")
+        await websocket.close(code=4503, reason=DOCKER_DAEMON_UNAVAILABLE_DETAIL)
         return
 
     canonical_id = container.id
@@ -264,7 +256,7 @@ async def agent_terminal(
     except DockerException:
         if accepted and websocket.client_state == WebSocketState.CONNECTED:
             await websocket.send_json(
-                {"type": "error", "detail": "Docker daemon is unavailable"}
+                {"type": "error", "detail": DOCKER_DAEMON_UNAVAILABLE_DETAIL}
             )
     finally:
         if heartbeat_task is not None:

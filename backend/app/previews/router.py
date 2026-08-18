@@ -4,12 +4,18 @@ from socket import SHUT_RDWR
 from typing import Annotated, Any, Callable, TypeVar
 
 from docker.client import DockerClient
-from docker.errors import APIError, ContainerError, DockerException, NotFound
+from docker.errors import DockerException
 from fastapi import APIRouter, Body, Depends, HTTPException, WebSocket, status
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from app.controller.store import ControllerStore, get_controller_store
 from app.docker_client import get_docker_client
+from app.docker_errors import (
+    DOCKER_DAEMON_UNAVAILABLE_DETAIL,
+    DockerErrorPolicy,
+    PassThroughApiError,
+    docker_response,
+)
 from app.log_stream import (
     DockerFrameDemuxer,
     LOG_READ_TIMEOUT_SECONDS,
@@ -65,33 +71,15 @@ _TERMINAL_STATUSES = {"running", "failed"}
 LOG_READ_TIMEOUT_SECONDS = 0.5
 
 
+_DOCKER_ERRORS = DockerErrorPolicy(
+    domain_errors=(PreviewOperationError,),
+    container_error_detail="Preview helper container failed",
+    api_error=PassThroughApiError("Docker rejected the preview operation"),
+)
+
+
 def _docker_response(function: Callable[[], ResponseType]) -> ResponseType:
-    try:
-        return function()
-    except PreviewOperationError as error:
-        raise HTTPException(error.status_code, error.detail) from error
-    except NotFound as error:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            "Docker resource not found",
-        ) from error
-    except ContainerError as error:
-        # The daemon is reachable here: a helper container ran and exited non-zero.
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"Preview helper container failed: {error}",
-        ) from error
-    except APIError as error:
-        response_status = getattr(getattr(error, "response", None), "status_code", 0)
-        raise HTTPException(
-            response_status or status.HTTP_502_BAD_GATEWAY,
-            "Docker rejected the preview operation",
-        ) from error
-    except DockerException as error:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Docker daemon is unavailable",
-        ) from error
+    return docker_response(function, _DOCKER_ERRORS)
 
 
 @router.post("/preview-proposals", response_model=PreviewProposal)
@@ -461,7 +449,7 @@ async def preview_events(
         await websocket.close(code=4404, reason=error.detail)
         return
     except DockerException:
-        await websocket.close(code=4503, reason="Docker daemon is unavailable")
+        await websocket.close(code=4503, reason=DOCKER_DAEMON_UNAVAILABLE_DETAIL)
         return
 
     session_key = f"{project_name}:{proposal_id}"
@@ -507,7 +495,7 @@ async def preview_events(
     except DockerException:
         if accepted and websocket.client_state == WebSocketState.CONNECTED:
             await websocket.send_json(
-                {"type": "error", "detail": "Docker daemon is unavailable"}
+                {"type": "error", "detail": DOCKER_DAEMON_UNAVAILABLE_DETAIL}
             )
     finally:
         # The session slot and every open stream are released before the

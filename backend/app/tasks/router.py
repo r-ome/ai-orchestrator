@@ -1,11 +1,11 @@
 from typing import Annotated, Callable, TypeVar
 
 from docker.client import DockerClient
-from docker.errors import APIError, ContainerError, DockerException, NotFound
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.controller.store import ControllerStore, get_controller_store
 from app.docker_client import get_docker_client
+from app.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
 from app.tasks.config import CodingTurnSettings, get_coding_turn_settings
 from app.tasks.models import (
     ReportTaskRequest,
@@ -33,33 +33,15 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 ResponseType = TypeVar("ResponseType")
 
 
+_DOCKER_ERRORS = DockerErrorPolicy(
+    domain_errors=(TaskOperationError, CodingTurnError),
+    container_error_detail="Task git container failed",
+    api_error=PassThroughApiError("Docker rejected the task operation"),
+)
+
+
 def _docker_response(function: Callable[[], ResponseType]) -> ResponseType:
-    try:
-        return function()
-    except (TaskOperationError, CodingTurnError) as error:
-        raise HTTPException(error.status_code, error.detail) from error
-    except NotFound as error:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            "Docker resource not found",
-        ) from error
-    except ContainerError as error:
-        # The daemon is reachable: a git helper container ran and exited non-zero.
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"Task git container failed: {error}",
-        ) from error
-    except APIError as error:
-        response_status = getattr(getattr(error, "response", None), "status_code", 0)
-        raise HTTPException(
-            response_status or status.HTTP_502_BAD_GATEWAY,
-            "Docker rejected the task operation",
-        ) from error
-    except DockerException as error:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Docker daemon is unavailable",
-        ) from error
+    return docker_response(function, _DOCKER_ERRORS)
 
 
 @router.post("", response_model=Task, status_code=status.HTTP_201_CREATED)

@@ -3,7 +3,7 @@ import json
 from typing import Annotated, Any, Callable, TypeVar
 
 from docker.client import DockerClient
-from docker.errors import APIError, DockerException, NotFound
+from docker.errors import DockerException, NotFound
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, status
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
@@ -44,39 +44,28 @@ from app.containers.terminal import (
     start_container_exec,
 )
 from app.docker_client import get_docker_client
+from app.docker_errors import (
+    DOCKER_DAEMON_UNAVAILABLE_DETAIL,
+    ConflictApiError,
+    DockerErrorPolicy,
+    docker_response,
+)
 from app.docker_terminal import close_stream, read_stream, write_stream
 
 router = APIRouter(prefix="/containers", tags=["containers"])
 ResponseType = TypeVar("ResponseType")
 
 
+_DOCKER_ERRORS = DockerErrorPolicy(
+    domain_errors=(ContainerOperationError,),
+    api_error=ConflictApiError(
+        "Docker rejected the action because the resource is running"
+    ),
+)
+
+
 def _docker_response(function: Callable[[], ResponseType]) -> ResponseType:
-    try:
-        return function()
-    except ContainerOperationError as error:
-        raise HTTPException(
-            status_code=error.status_code,
-            detail=error.detail,
-        ) from error
-    except NotFound as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Docker resource not found",
-        ) from error
-    except APIError as error:
-        response_status = getattr(getattr(error, "response", None), "status_code", 0)
-        if response_status == status.HTTP_409_CONFLICT:
-            detail = "Docker rejected the action because the resource is running"
-            response_status = status.HTTP_409_CONFLICT
-        else:
-            detail = "Docker rejected the request"
-            response_status = status.HTTP_502_BAD_GATEWAY
-        raise HTTPException(status_code=response_status, detail=detail) from error
-    except DockerException as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Docker daemon is unavailable",
-        ) from error
+    return docker_response(function, _DOCKER_ERRORS)
 
 
 @router.get("", response_model=RunningContainersResponse)
@@ -203,7 +192,7 @@ async def container_shell(
         await websocket.close(code=4404, reason="Container not found")
         return
     except DockerException:
-        await websocket.close(code=4503, reason="Docker daemon is unavailable")
+        await websocket.close(code=4503, reason=DOCKER_DAEMON_UNAVAILABLE_DETAIL)
         return
 
     if container.status != "running":
@@ -253,7 +242,7 @@ async def container_shell(
     except DockerException:
         if accepted and websocket.client_state == WebSocketState.CONNECTED:
             await websocket.send_json(
-                {"type": "error", "detail": "Docker daemon is unavailable"}
+                {"type": "error", "detail": DOCKER_DAEMON_UNAVAILABLE_DETAIL}
             )
     finally:
         close_stream(stream)

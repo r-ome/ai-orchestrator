@@ -2,12 +2,12 @@ from collections.abc import Callable
 from typing import Annotated, Any, TypeVar
 
 from docker.client import DockerClient
-from docker.errors import APIError, ContainerError, DockerException, NotFound
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 
 from app import jobs
 from app.agents.service import AgentOperationError
 from app.controller.store import ControllerStore, get_controller_store
+from app.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
 from app.delegation.config import (
     DelegatorSettings,
     DriverSettings,
@@ -80,34 +80,20 @@ ResponseType = TypeVar("ResponseType")
 StoreDep = Annotated[ControllerStore, Depends(get_controller_store)]
 
 
-def _response(function: Callable[[], ResponseType]) -> ResponseType:
-    try:
-        return function()
-    except (
+_DOCKER_ERRORS = DockerErrorPolicy(
+    domain_errors=(
         DelegationOperationError,
         PlanningTurnError,
         AgentOperationError,
         CodingTurnError,
-    ) as error:
-        raise HTTPException(error.status_code, error.detail) from error
-    except NotFound as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Docker resource not found") from error
-    except ContainerError as error:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"Delegation helper container failed: {error}",
-        ) from error
-    except APIError as error:
-        response_status = getattr(getattr(error, "response", None), "status_code", 0)
-        raise HTTPException(
-            response_status or status.HTTP_502_BAD_GATEWAY,
-            "Docker rejected the delegation operation",
-        ) from error
-    except DockerException as error:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Docker daemon is unavailable",
-        ) from error
+    ),
+    container_error_detail="Delegation helper container failed",
+    api_error=PassThroughApiError("Docker rejected the delegation operation"),
+)
+
+
+def _response(function: Callable[[], ResponseType]) -> ResponseType:
+    return docker_response(function, _DOCKER_ERRORS)
 
 
 @router.post("", response_model=DelegationView, status_code=status.HTTP_201_CREATED)

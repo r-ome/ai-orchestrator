@@ -2,13 +2,13 @@ from collections.abc import Callable
 from typing import Annotated, TypeVar
 
 from docker.client import DockerClient
-from docker.errors import APIError, ContainerError, DockerException, NotFound
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app import jobs
 from app.agents.service import AgentOperationError
 from app.controller.store import ControllerStore, get_controller_store
 from app.docker_client import get_docker_client
+from app.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
 from app.implementation_context.config import ContextSettings, get_context_settings
 from app.implementation_context.models import (
     GenerateContextRequest,
@@ -37,29 +37,15 @@ ResponseType = TypeVar("ResponseType")
 StoreDep = Annotated[ControllerStore, Depends(get_controller_store)]
 
 
+_DOCKER_ERRORS = DockerErrorPolicy(
+    domain_errors=(ContextOperationError, PlanningTurnError, AgentOperationError),
+    container_error_detail="Context helper container failed",
+    api_error=PassThroughApiError("Docker rejected the context operation"),
+)
+
+
 def _response(function: Callable[[], ResponseType]) -> ResponseType:
-    try:
-        return function()
-    except (ContextOperationError, PlanningTurnError, AgentOperationError) as error:
-        raise HTTPException(error.status_code, error.detail) from error
-    except NotFound as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Docker resource not found") from error
-    except ContainerError as error:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"Context helper container failed: {error}",
-        ) from error
-    except APIError as error:
-        response_status = getattr(getattr(error, "response", None), "status_code", 0)
-        raise HTTPException(
-            response_status or status.HTTP_502_BAD_GATEWAY,
-            "Docker rejected the context operation",
-        ) from error
-    except DockerException as error:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Docker daemon is unavailable",
-        ) from error
+    return docker_response(function, _DOCKER_ERRORS)
 
 
 @router.post(

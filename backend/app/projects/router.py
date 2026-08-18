@@ -1,7 +1,7 @@
-from typing import Annotated, Callable, TypeVar
+from typing import Annotated
 
 from docker.client import DockerClient
-from docker.errors import APIError, DockerException, NotFound
+from docker.errors import NotFound
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from app.docker_client import get_docker_client
@@ -14,41 +14,9 @@ from app.projects.models import (
 )
 from app.projects.remote import normalize_remote_url, project_id_for_remote
 from app.sandboxes.naming import mirror_volume, validate_mirror_ownership
-from app.projects.service import (
-    ProjectOperationError,
-)
+
 
 router = APIRouter(prefix="/projects", tags=["projects"])
-ResponseType = TypeVar("ResponseType")
-
-
-def _docker_response(function: Callable[[], ResponseType]) -> ResponseType:
-    try:
-        return function()
-    except ProjectOperationError as error:
-        raise HTTPException(
-            status_code=error.status_code,
-            detail=error.detail,
-        ) from error
-    except NotFound as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Docker resource not found",
-        ) from error
-    except APIError as error:
-        response_status = getattr(getattr(error, "response", None), "status_code", 0)
-        if response_status == status.HTTP_409_CONFLICT:
-            detail = "Docker rejected the action because the resource already exists"
-            response_status = status.HTTP_409_CONFLICT
-        else:
-            detail = "Docker rejected the request"
-            response_status = status.HTTP_502_BAD_GATEWAY
-        raise HTTPException(status_code=response_status, detail=detail) from error
-    except DockerException as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Docker daemon is unavailable",
-        ) from error
 
 
 def _remote_project(row: dict[str, object]) -> RemoteProject:
