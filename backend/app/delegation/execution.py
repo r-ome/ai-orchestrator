@@ -115,6 +115,49 @@ class RunClaim:
     project_name: str
 
 
+@dataclass(frozen=True)
+class Settlement:
+    """The one way a run stage can finish.
+
+    A failure kind requests task cleanup. A missing failure kind leaves an
+    already-settled run alone, such as when another request settled it first.
+    """
+
+    failure_detail: str | None
+    failure_kind: FailureKind | None
+    halt: str | None
+    changes: dict[str, Any]
+    response: TaskRunResponse | None
+    result_errors: list[str]
+    raise_status: int | None = None
+    raised_error: Exception | None = None
+    include_cleanup_in_detail: bool = False
+    append_cleanup_error: bool = False
+    halt_uses_reported_detail: bool = False
+
+
+@dataclass(frozen=True)
+class CodingTurn:
+    response: TaskRunResponse
+    responses: list[TaskRunResponse]
+    changes: dict[str, Any]
+    result_errors: list[str]
+
+
+@dataclass(frozen=True)
+class VerificationTurn:
+    coding: CodingTurn
+    sandbox: dict[str, Any]
+    settings: VerificationSettings
+    verification: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MergeTurn:
+    coding: CodingTurn
+    verification: dict[str, Any]
+
+
 def claim_run(
     docker_client: DockerClient,
     settings: CodingTurnSettings,
@@ -363,33 +406,53 @@ def _execute_run(
     *,
     verification_settings: VerificationSettings | None = None,
 ) -> StartRunOutcome:
-    delegation_id = claim.delegation_id
-    run_id = claim.run_id
-    task_id = claim.task_id
-    packet = claim.packet
-    decision = claim.decision
-    effective_settings = claim.turn_settings
-    session_id = claim.session_id
-    project_name = claim.project_name
+    coding = _run_coding_turn(docker_client, store, claim)
+    if isinstance(coding, Settlement):
+        return _settle(docker_client, store, claim, coding)
 
+    verification = _run_verification(
+        docker_client,
+        store,
+        claim,
+        coding,
+        verification_settings=verification_settings,
+    )
+    if isinstance(verification, Settlement):
+        return _settle(docker_client, store, claim, verification)
+
+    merged = _repair_and_reverify(docker_client, store, claim, verification)
+    if isinstance(merged, Settlement):
+        return _settle(docker_client, store, claim, merged)
+
+    return _settle(docker_client, store, claim, _merge(docker_client, store, claim, merged))
+
+
+def _run_coding_turn(
+    docker_client: DockerClient,
+    store: ControllerStore,
+    claim: RunClaim,
+) -> CodingTurn | Settlement:
     _progress(
         store,
-        run_id,
+        claim.run_id,
         claim.sandbox_id,
         step="turn",
-        message=f"Running the coding turn on {decision.provider.value}/{decision.model}",
+        message=(
+            "Running the coding turn on "
+            f"{claim.decision.provider.value}/{claim.decision.model}"
+        ),
     )
     responses: list[TaskRunResponse] = []
     try:
         response = run_task(
             docker_client,
             store,
-            effective_settings,
-            task_id,
+            claim.turn_settings,
+            claim.task_id,
             RunTaskRequest(
-                prompt=render(packet),
-                provider=decision.provider,
-                model=decision.model,
+                prompt=render(claim.packet),
+                provider=claim.decision.provider,
+                model=claim.decision.model,
             ),
         )
         responses.append(response)
@@ -397,363 +460,357 @@ def _execute_run(
             response = run_task(
                 docker_client,
                 store,
-                effective_settings,
-                task_id,
+                claim.turn_settings,
+                claim.task_id,
                 RunTaskRequest(
-                    prompt=render(packet),
-                    provider=decision.provider,
-                    model=decision.model,
+                    prompt=render(claim.packet),
+                    provider=claim.decision.provider,
+                    model=claim.decision.model,
                 ),
             )
             responses.append(response)
     except (TaskOperationError, CodingTurnError) as error:
-        cleanup = _fail_run_and_cleanup(
-            docker_client,
-            store,
-            delegation_id,
-            run_id,
-            task_id,
-            error.detail,
-            FailureKind.PROVIDER
-            if isinstance(error, CodingTurnError)
-            else FailureKind.IMPLEMENTATION,
-            session_id=session_id,
-            project_name=project_name,
+        first_response_was_provider_failure = (
+            bool(responses)
+            and _failure_kind(responses[0]) is FailureKind.PROVIDER
         )
-        detail = error.detail + (f"; task cleanup failed: {cleanup}" if cleanup else "")
-        if responses and _failure_kind(responses[0]) is FailureKind.PROVIDER:
-            _halt_delegation(
-                store,
-                delegation_id,
-                "Provider failed twice for one work item",
-                session_id=session_id,
-                project_name=project_name,
-            )
-        raise service.DelegationOperationError(error.status_code, detail) from error
+        return Settlement(
+            failure_detail=error.detail,
+            failure_kind=(
+                FailureKind.PROVIDER
+                if isinstance(error, CodingTurnError)
+                else FailureKind.IMPLEMENTATION
+            ),
+            halt=(
+                "Provider failed twice for one work item"
+                if first_response_was_provider_failure
+                else None
+            ),
+            changes={},
+            response=None,
+            result_errors=[],
+            raise_status=error.status_code,
+            include_cleanup_in_detail=True,
+        )
     except Exception as error:
-        _fail_run_and_cleanup(
-            docker_client,
-            store,
-            delegation_id,
-            run_id,
-            task_id,
-            str(error) or type(error).__name__,
-            FailureKind.UNKNOWN,
-            session_id=session_id,
-            project_name=project_name,
+        return Settlement(
+            failure_detail=str(error) or type(error).__name__,
+            failure_kind=FailureKind.UNKNOWN,
+            halt=None,
+            changes={},
+            response=None,
+            result_errors=[],
+            raised_error=error,
         )
-        raise
 
     changes = _metrics(responses)
     result, result_errors = _result(response)
     if result is not None:
         changes["result_json"] = json.dumps(result)
+    if response.committed:
+        return CodingTurn(response, responses, changes, result_errors)
 
-    if not response.committed:
-        reason = response.turn_error or response.detail or "Turn did not commit changes"
-        cleanup = _fail_run_and_cleanup(
-            docker_client,
-            store,
-            delegation_id,
-            run_id,
-            task_id,
-            reason,
-            _failure_kind(response),
-            changes=changes,
-            session_id=session_id,
-            project_name=project_name,
-        )
-        if cleanup:
-            result_errors.append(f"task cleanup failed: {cleanup}")
-        if (
-            len(responses) == 2
-            and _failure_kind(response) is FailureKind.PROVIDER
-        ):
-            _halt_delegation(
-                store,
-                delegation_id,
-                "Provider failed twice for one work item",
-                session_id=session_id,
-                project_name=project_name,
-            )
-        return _outcome(
-            store,
-            delegation_id,
-            run_id,
-            packet=packet,
-            result_errors=result_errors,
-            response=response,
-            decision=decision,
-            session_id=session_id,
-            project_name=project_name,
-        )
+    reason = response.turn_error or response.detail or "Turn did not commit changes"
+    exhausted_provider_retry_returned_uncommitted = (
+        len(responses) == 2 and _failure_kind(response) is FailureKind.PROVIDER
+    )
+    return Settlement(
+        failure_detail=reason,
+        failure_kind=_failure_kind(response),
+        halt=(
+            "Provider failed twice for one work item"
+            if exhausted_provider_retry_returned_uncommitted
+            else None
+        ),
+        changes=changes,
+        response=response,
+        result_errors=result_errors,
+        append_cleanup_error=True,
+    )
 
+
+def _run_verification(
+    docker_client: DockerClient,
+    store: ControllerStore,
+    claim: RunClaim,
+    coding: CodingTurn,
+    *,
+    verification_settings: VerificationSettings | None,
+) -> VerificationTurn | Settlement:
     sandbox = store.sandbox(claim.sandbox_id)
     if sandbox is None:
-        raise service.DelegationOperationError(404, "Delegation sandbox was not found")
-    verifier_settings = verification_settings or get_verification_settings()
+        return Settlement(
+            failure_detail="Delegation sandbox was not found",
+            failure_kind=FailureKind.UNKNOWN,
+            halt=None,
+            changes=coding.changes,
+            response=coding.response,
+            result_errors=coding.result_errors,
+            raise_status=404,
+        )
+    settings = verification_settings or get_verification_settings()
     try:
         first_verification = run_verification(
             docker_client,
-            verifier_settings,
+            settings,
             volume_name=str(sandbox["volume_name"]),
-            commands=packet.verification,
+            commands=claim.packet.verification,
             controller_store=store,
             sandbox_id=claim.sandbox_id,
         )
     except VerificationOperationError as error:
-        _fail_run_and_cleanup(
-            docker_client,
-            store,
-            delegation_id,
-            run_id,
-            task_id,
-            error.detail,
-            FailureKind.VERIFICATION,
-            changes=changes,
-            session_id=session_id,
-            project_name=project_name,
+        return Settlement(
+            failure_detail=error.detail,
+            failure_kind=FailureKind.VERIFICATION,
+            halt=error.detail,
+            changes=coding.changes,
+            response=coding.response,
+            result_errors=coding.result_errors,
+            raise_status=error.status_code,
         )
-        _halt_delegation(
-            store,
-            delegation_id,
-            error.detail,
-            session_id=session_id,
-            project_name=project_name,
-        )
-        raise service.DelegationOperationError(
-            error.status_code,
-            error.detail,
-        ) from error
 
     verification = {
         "passed": first_verification["passed"],
         "repair_count": 0,
         "attempts": [first_verification],
     }
-    changes["verification_json"] = json.dumps(verification)
+    coding.changes["verification_json"] = json.dumps(verification)
+    return VerificationTurn(coding, sandbox, settings, verification)
 
-    if not first_verification["passed"]:
-        previous_head = response.task.head_commit
-        try:
-            reopen_task_for_repair(store, task_id)
-            repair_response = run_task(
-                docker_client,
-                store,
-                effective_settings,
-                task_id,
-                RunTaskRequest(
-                    prompt=_verification_repair_prompt(packet, first_verification),
-                    provider=decision.provider,
-                    model=decision.model,
-                ),
-            )
-        except (TaskOperationError, CodingTurnError) as error:
-            changes["repair_count"] = 1
-            _fail_run_and_cleanup(
-                docker_client,
-                store,
-                delegation_id,
-                run_id,
-                task_id,
-                error.detail,
-                FailureKind.VERIFICATION,
-                changes=changes,
-                session_id=session_id,
-                project_name=project_name,
-            )
-            _halt_delegation(
-                store,
-                delegation_id,
-                error.detail,
-                session_id=session_id,
-                project_name=project_name,
-            )
-            raise service.DelegationOperationError(
-                error.status_code,
-                error.detail,
-            ) from error
 
-        responses.append(repair_response)
-        changes.update(_metrics(responses))
-        changes["repair_count"] = 1
-        repair_result, repair_errors = _result(repair_response)
-        result_errors.extend(repair_errors)
-        if repair_result is not None:
-            changes["result_json"] = json.dumps(repair_result)
-        no_new_commit = repair_response.task.head_commit == previous_head
-        if not repair_response.committed or no_new_commit:
-            reason = (
-                # Name what the repair was sent to fix. On its own "did not
-                # create a new commit" reads as the repair misbehaving, when
-                # the usual cause is a verification failure the model could not
-                # act on — a sandbox fault, or a command that was never going
-                # to pass. Without this the real error is only in the run row.
-                "Focused repair made no commit; the verification failure it was "
-                f"sent to fix was: {_verification_failure(first_verification)}"
-                if no_new_commit
-                else repair_response.turn_error
-                or repair_response.detail
-                or "Focused repair failed"
-            )
-            _fail_run_and_cleanup(
-                docker_client,
-                store,
-                delegation_id,
-                run_id,
-                task_id,
-                reason,
-                FailureKind.VERIFICATION,
-                changes=changes,
-                session_id=session_id,
-                project_name=project_name,
-            )
-            _halt_delegation(
-                store,
-                delegation_id,
-                reason,
-                session_id=session_id,
-                project_name=project_name,
-            )
-            return _outcome(
-                store,
-                delegation_id,
-                run_id,
-                packet=packet,
-                result_errors=result_errors,
-                response=repair_response,
-                decision=decision,
-                session_id=session_id,
-                project_name=project_name,
-            )
+def _repair_and_reverify(
+    docker_client: DockerClient,
+    store: ControllerStore,
+    claim: RunClaim,
+    verification_turn: VerificationTurn,
+) -> MergeTurn | Settlement:
+    coding = verification_turn.coding
+    verification = verification_turn.verification
+    if verification["passed"]:
+        return MergeTurn(coding, verification)
 
-        response = repair_response
-        try:
-            second_verification = run_verification(
-                docker_client,
-                verifier_settings,
-                volume_name=str(sandbox["volume_name"]),
-                commands=packet.verification,
-                controller_store=store,
-                sandbox_id=claim.sandbox_id,
-            )
-        except VerificationOperationError as error:
-            second_verification = {
-                "passed": False,
-                "commands": [],
-                "error": error.detail,
-            }
-        verification = {
-            "passed": second_verification["passed"],
-            "repair_count": 1,
-            "attempts": [first_verification, second_verification],
-        }
-        changes["verification_json"] = json.dumps(verification)
-        if not second_verification["passed"]:
-            reason = _verification_failure(second_verification)
-            _fail_run_and_cleanup(
-                docker_client,
-                store,
-                delegation_id,
-                run_id,
-                task_id,
-                reason,
-                FailureKind.VERIFICATION,
-                changes=changes,
-                session_id=session_id,
-                project_name=project_name,
-            )
-            _halt_delegation(
-                store,
-                delegation_id,
-                reason,
-                session_id=session_id,
-                project_name=project_name,
-            )
-            return _outcome(
-                store,
-                delegation_id,
-                run_id,
-                packet=packet,
-                result_errors=result_errors,
-                response=response,
-                decision=decision,
-                session_id=session_id,
-                project_name=project_name,
-            )
+    first_verification = verification["attempts"][0]
+    previous_head = coding.response.task.head_commit
+    try:
+        reopen_task_for_repair(store, claim.task_id)
+        repair_response = run_task(
+            docker_client,
+            store,
+            claim.turn_settings,
+            claim.task_id,
+            RunTaskRequest(
+                prompt=_verification_repair_prompt(claim.packet, first_verification),
+                provider=claim.decision.provider,
+                model=claim.decision.model,
+            ),
+        )
+    except (TaskOperationError, CodingTurnError) as error:
+        coding.changes["repair_count"] = 1
+        return Settlement(
+            failure_detail=error.detail,
+            failure_kind=FailureKind.VERIFICATION,
+            halt=error.detail,
+            changes=coding.changes,
+            response=coding.response,
+            result_errors=coding.result_errors,
+            raise_status=error.status_code,
+        )
+
+    coding.responses.append(repair_response)
+    coding.changes.update(_metrics(coding.responses))
+    coding.changes["repair_count"] = 1
+    repair_result, repair_errors = _result(repair_response)
+    coding.result_errors.extend(repair_errors)
+    if repair_result is not None:
+        coding.changes["result_json"] = json.dumps(repair_result)
+    no_new_commit = repair_response.task.head_commit == previous_head
+    if not repair_response.committed or no_new_commit:
+        reason = (
+            # Name what the repair was sent to fix. On its own "did not
+            # create a new commit" reads as the repair misbehaving, when
+            # the usual cause is a verification failure the model could not
+            # act on — a sandbox fault, or a command that was never going
+            # to pass. Without this the real error is only in the run row.
+            "Focused repair made no commit; the verification failure it was "
+            f"sent to fix was: {_verification_failure(first_verification)}"
+            if no_new_commit
+            else repair_response.turn_error
+            or repair_response.detail
+            or "Focused repair failed"
+        )
+        return Settlement(
+            failure_detail=reason,
+            failure_kind=FailureKind.VERIFICATION,
+            halt=reason,
+            changes=coding.changes,
+            response=repair_response,
+            result_errors=coding.result_errors,
+        )
 
     try:
-        verified = verify_task(
+        second_verification = run_verification(
+            docker_client,
+            verification_turn.settings,
+            volume_name=str(verification_turn.sandbox["volume_name"]),
+            commands=claim.packet.verification,
+            controller_store=store,
+            sandbox_id=claim.sandbox_id,
+        )
+    except VerificationOperationError as error:
+        second_verification = {
+            "passed": False,
+            "commands": [],
+            "error": error.detail,
+        }
+    verification = {
+        "passed": second_verification["passed"],
+        "repair_count": 1,
+        "attempts": [first_verification, second_verification],
+    }
+    coding.changes["verification_json"] = json.dumps(verification)
+    if not second_verification["passed"]:
+        reason = _verification_failure(second_verification)
+        return Settlement(
+            failure_detail=reason,
+            failure_kind=FailureKind.VERIFICATION,
+            halt=reason,
+            changes=coding.changes,
+            response=repair_response,
+            result_errors=coding.result_errors,
+        )
+    return MergeTurn(
+        CodingTurn(
+            repair_response,
+            coding.responses,
+            coding.changes,
+            coding.result_errors,
+        ),
+        verification,
+    )
+
+
+def _merge(
+    docker_client: DockerClient,
+    store: ControllerStore,
+    claim: RunClaim,
+    merge_turn: MergeTurn,
+) -> Settlement:
+    coding = merge_turn.coding
+    try:
+        verify_task(
             store,
-            task_id,
-            verification_passed=bool(verification["passed"]),
+            claim.task_id,
+            verification_passed=bool(merge_turn.verification["passed"]),
             detail="Controller-run verification passed",
         )
     except TaskOperationError as error:
-        cleanup = _fail_run_and_cleanup(
-            docker_client,
-            store,
-            delegation_id,
-            run_id,
-            task_id,
-            error.detail,
-            FailureKind.VERIFICATION,
-            changes=changes,
-            session_id=session_id,
-            project_name=project_name,
+        return Settlement(
+            failure_detail=error.detail,
+            failure_kind=FailureKind.VERIFICATION,
+            halt=None,
+            changes=coding.changes,
+            response=coding.response,
+            result_errors=coding.result_errors,
+            raise_status=error.status_code,
+            include_cleanup_in_detail=True,
         )
-        detail = error.detail + (f"; task cleanup failed: {cleanup}" if cleanup else "")
-        raise service.DelegationOperationError(error.status_code, detail) from error
 
-    store.record_work_item_run(run_id, changes)
+    store.record_work_item_run(claim.run_id, coding.changes)
     try:
-        accepted = accept_task(docker_client, store, task_id)
+        accepted = accept_task(docker_client, store, claim.task_id)
     except TaskOperationError as error:
-        cleanup = _fail_run_and_cleanup(
-            docker_client,
-            store,
-            delegation_id,
-            run_id,
-            task_id,
-            error.detail,
-            FailureKind.IMPLEMENTATION,
-            changes=changes,
-            session_id=session_id,
-            project_name=project_name,
+        return Settlement(
+            failure_detail=error.detail,
+            failure_kind=FailureKind.IMPLEMENTATION,
+            halt=error.detail,
+            changes=coding.changes,
+            response=coding.response,
+            result_errors=coding.result_errors,
+            raise_status=error.status_code,
+            include_cleanup_in_detail=True,
+            halt_uses_reported_detail=True,
         )
-        detail = error.detail + (f"; task cleanup failed: {cleanup}" if cleanup else "")
-        _halt_delegation(
-            store,
-            delegation_id,
-            detail,
-            session_id=session_id,
-            project_name=project_name,
-        )
-        raise service.DelegationOperationError(error.status_code, detail) from error
 
     if store.settle_work_item_run(
-        run_id,
+        claim.run_id,
         to_status=RunStatus.SUCCEEDED.value,
-        changes=changes,
+        changes=coding.changes,
     ) is None:
-        raise service.DelegationOperationError(409, "Run was settled by another request")
+        # Another request owns this run after it has settled it.
+        return Settlement(
+            failure_detail="Run was settled by another request",
+            failure_kind=None,
+            halt=None,
+            changes=coding.changes,
+            response=coding.response,
+            result_errors=coding.result_errors,
+            raise_status=409,
+        )
     _complete_if_finished(
         store,
-        delegation_id,
-        session_id=session_id,
-        project_name=project_name,
+        claim.delegation_id,
+        session_id=claim.session_id,
+        project_name=claim.project_name,
     )
-    response = response.model_copy(update={"task": accepted})
+    return Settlement(
+        failure_detail=None,
+        failure_kind=None,
+        halt=None,
+        changes=coding.changes,
+        response=coding.response.model_copy(update={"task": accepted}),
+        result_errors=coding.result_errors,
+    )
+
+
+def _settle(
+    docker_client: DockerClient,
+    store: ControllerStore,
+    claim: RunClaim,
+    settlement: Settlement,
+) -> StartRunOutcome:
+    detail = settlement.failure_detail
+    if settlement.failure_kind is not None:
+        assert detail is not None
+        cleanup = _fail_run_and_cleanup(
+            docker_client,
+            store,
+            claim.delegation_id,
+            claim.run_id,
+            claim.task_id,
+            detail,
+            settlement.failure_kind,
+            changes=settlement.changes,
+            session_id=claim.session_id,
+            project_name=claim.project_name,
+        )
+        if cleanup and settlement.append_cleanup_error:
+            settlement.result_errors.append(f"task cleanup failed: {cleanup}")
+        if cleanup and settlement.include_cleanup_in_detail:
+            detail += f"; task cleanup failed: {cleanup}"
+        if settlement.halt is not None:
+            _halt_delegation(
+                store,
+                claim.delegation_id,
+                detail if settlement.halt_uses_reported_detail else settlement.halt,
+                session_id=claim.session_id,
+                project_name=claim.project_name,
+            )
+
+    if settlement.raised_error is not None:
+        raise settlement.raised_error
+    if settlement.raise_status is not None:
+        assert detail is not None
+        raise service.DelegationOperationError(settlement.raise_status, detail)
     return _outcome(
         store,
-        delegation_id,
-        run_id,
-        packet=packet,
-        result_errors=result_errors,
-        response=response,
-        decision=decision,
-        session_id=session_id,
-        project_name=project_name,
+        claim.delegation_id,
+        claim.run_id,
+        packet=claim.packet,
+        result_errors=settlement.result_errors,
+        response=settlement.response,
+        decision=claim.decision,
+        session_id=claim.session_id,
+        project_name=claim.project_name,
     )
 
 

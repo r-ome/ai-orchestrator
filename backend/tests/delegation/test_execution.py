@@ -482,6 +482,26 @@ def test_provider_retry_can_recover(
     assert outcome.task_status == TaskStatus.ACCEPTED.value
 
 
+def test_missing_sandbox_cleans_up_the_task(
+    store: ControllerStore,
+    tasks: _Tasks,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delegation = _delegation(store, [_item("a")])
+    monkeypatch.setattr(store, "sandbox", lambda _sandbox_id: None)
+
+    with pytest.raises(service.DelegationOperationError) as error:
+        _start(store, delegation.delegation.id, "a")
+
+    assert error.value.status_code == 404
+    assert error.value.detail == "Delegation sandbox was not found"
+    assert tasks.rejected
+    task = Task.model_validate(store.task(tasks.rejected[0]))
+    assert task.status is TaskStatus.REJECTED
+    run = service.view(store, delegation.delegation.id).items[0].runs[0]
+    assert run.status is RunStatus.FAILED
+
+
 def test_verification_failure_gets_one_focused_repair(
     store: ControllerStore,
     tasks: _Tasks,
