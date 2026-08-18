@@ -29,6 +29,7 @@ from app.planning.models import (
     PlanningSessionDetail,
     PlanningSessionsResponse,
     PlanningStatus,
+    source_statuses,
 )
 from app.planning.prompts import clarifier_prompt, feature_brief, planner_prompt, reviewer_prompt
 from app.planning.runner import (
@@ -306,10 +307,10 @@ def correct_understanding(
         role=PlanningRole.USER.value,
         text=request.text,
     )
-    controller_store.advance_planning_status(
+    transition_planning_session(
+        controller_store,
         session_id=session_id,
-        from_statuses=(PlanningStatus.AWAITING_CONFIRMATION.value,),
-        to_status=PlanningStatus.CLARIFYING.value,
+        to_status=PlanningStatus.CLARIFYING,
     )
     schedule_turn(controller_store, settings, session_id, TurnKind.CLARIFIER)
     return _session_model(_required_session(controller_store, session_id))
@@ -341,13 +342,34 @@ def cancel_session(
 ) -> PlanningSession:
     session = _session_for_project(controller_store, project_name, session_id)
     if not _is_terminal(session):
-        controller_store.advance_planning_status(
+        transition_planning_session(
+            controller_store,
             session_id=session_id,
-            from_statuses=(str(session["status"]),),
-            to_status=PlanningStatus.CANCELLED.value,
-            settled=True,
+            to_status=PlanningStatus.CANCELLED,
         )
     return _session_model(_required_session(controller_store, session_id))
+
+
+def transition_planning_session(
+    controller_store: ControllerStore,
+    *,
+    session_id: str,
+    to_status: PlanningStatus,
+    failure_reason: str | None = None,
+) -> bool:
+    """The only way a planning status changes. Sources come from PLANNING_TRANSITIONS.
+
+    Callers name a destination, never a source, so a transition the table does
+    not draw cannot be requested. The store turns the sources into the UPDATE's
+    WHERE clause, which makes the check atomic rather than a read-then-write.
+    """
+    return controller_store.advance_planning_status(
+        session_id=session_id,
+        from_statuses=[status.value for status in source_statuses(to_status)],
+        to_status=to_status.value,
+        settled=to_status in TERMINAL_PLANNING_STATUSES,
+        failure_reason=failure_reason,
+    )
 
 
 def schedule_turn(
@@ -652,10 +674,10 @@ def _apply_clarifier_result(
             session_id=str(session["id"]),
             summary=str(payload["understanding_summary"]),
         )
-        controller_store.advance_planning_status(
+        transition_planning_session(
+            controller_store,
             session_id=str(session["id"]),
-            from_statuses=(PlanningStatus.CLARIFYING.value,),
-            to_status=PlanningStatus.AWAITING_CONFIRMATION.value,
+            to_status=PlanningStatus.AWAITING_CONFIRMATION,
         )
 
 
@@ -694,10 +716,10 @@ def _apply_planner_result(
             status=str(response["status"]),
             planner_response=str(response["rationale"]),
         )
-    controller_store.advance_planning_status(
+    transition_planning_session(
+        controller_store,
         session_id=session_id,
-        from_statuses=(PlanningStatus.PLANNING.value,),
-        to_status=PlanningStatus.UNDER_REVIEW.value,
+        to_status=PlanningStatus.UNDER_REVIEW,
     )
     schedule_turn(controller_store, settings, session_id, TurnKind.REVIEWER)
 
@@ -788,10 +810,10 @@ def _apply_reviewer_result(
             status=PlanningStatus.REVIEW_LIMIT_REACHED,
         )
     else:
-        controller_store.advance_planning_status(
+        transition_planning_session(
+            controller_store,
             session_id=session_id,
-            from_statuses=(PlanningStatus.UNDER_REVIEW.value,),
-            to_status=PlanningStatus.PLANNING.value,
+            to_status=PlanningStatus.PLANNING,
         )
         schedule_turn(controller_store, settings, session_id, TurnKind.PLANNER)
 
@@ -805,11 +827,10 @@ def _record_turn_error(
     if _is_terminal(session):
         _append_raw_system_message(controller_store, session_id, error.raw_output)
         return
-    controller_store.advance_planning_status(
+    transition_planning_session(
+        controller_store,
         session_id=session_id,
-        from_statuses=(str(session["status"]),),
-        to_status=PlanningStatus.FAILED.value,
-        settled=True,
+        to_status=PlanningStatus.FAILED,
         failure_reason=error.detail,
     )
     _append_raw_system_message(controller_store, session_id, error.raw_output)
@@ -849,10 +870,10 @@ def _freeze_and_start_planning(
         brief=brief,
         confirmed=confirmed,
     )
-    controller_store.advance_planning_status(
+    transition_planning_session(
+        controller_store,
         session_id=str(session["id"]),
-        from_statuses=(str(session["status"]),),
-        to_status=PlanningStatus.PLANNING.value,
+        to_status=PlanningStatus.PLANNING,
     )
     schedule_turn(controller_store, settings, str(session["id"]), TurnKind.PLANNER)
 
@@ -1075,11 +1096,10 @@ def _settle_with_plan_spec(
         session_id=str(session["id"]),
         plan_spec=plan_spec.model_dump(mode="json"),
     )
-    controller_store.advance_planning_status(
+    transition_planning_session(
+        controller_store,
         session_id=str(session["id"]),
-        from_statuses=(PlanningStatus.UNDER_REVIEW.value,),
-        to_status=status.value,
-        settled=True,
+        to_status=status,
     )
 
 

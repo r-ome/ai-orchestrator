@@ -71,6 +71,8 @@ TERMINAL_PLANNING_STATUSES: frozenset[PlanningStatus] = frozenset(
 # unreachable, because the service derives the guarded UPDATE's source
 # statuses from this table and never accepts them from a caller.
 PLANNING_TRANSITIONS: Mapping[PlanningStatus, frozenset[PlanningStatus]] = {
+    # A person can cancel any live session, and any live turn can fail. These
+    # exits also let startup reconciliation settle a turn interrupted by restart.
     PlanningStatus.CLARIFYING: frozenset(
         {
             PlanningStatus.AWAITING_CONFIRMATION,

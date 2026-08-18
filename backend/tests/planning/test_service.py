@@ -95,6 +95,19 @@ def test_create_stores_request_as_first_message_and_starts_clarifying(
     ]
 
 
+def test_illegal_planning_transition_changes_nothing(
+    controller_store: ControllerStore, settings: PlanningSettings
+) -> None:
+    session = _create(controller_store, settings)
+
+    assert not service.transition_planning_session(
+        controller_store,
+        session_id=session.id,
+        to_status=PlanningStatus.UNDER_REVIEW,
+    )
+    assert controller_store.planning_session(session.id)["status"] == PlanningStatus.CLARIFYING.value
+
+
 def test_create_records_resolved_model_defaults(
     controller_store: ControllerStore, settings: PlanningSettings
 ) -> None:

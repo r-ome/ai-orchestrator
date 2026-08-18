@@ -9,6 +9,8 @@ from docker.errors import DockerException
 from app.agents.service import LABEL_RUN_ID as AGENT_RUN_ID
 from app.controller.config import ControllerSettings
 from app.controller.store import ControllerStore
+from app.planning.models import PlanningStatus
+from app.planning.service import transition_planning_session
 from app.previews.service import (
     LABEL_CONTROLLER_MANAGED,
     LABEL_KIND,
@@ -134,11 +136,10 @@ def reconcile_controller_state(store: ControllerStore) -> dict[str, int]:
     # writer row is therefore stale, even when its last heartbeat was recent.
     counts["writer_sessions"] = store.close_open_agent_writer_sessions()
     for session in store.running_planning_sessions():
-        if store.advance_planning_status(
+        if transition_planning_session(
+            store,
             session_id=str(session["id"]),
-            from_statuses=(str(session["status"]),),
-            to_status="failed",
-            settled=True,
+            to_status=PlanningStatus.FAILED,
             failure_reason="The backend restarted while this turn was running",
         ):
             counts["planning"] += 1

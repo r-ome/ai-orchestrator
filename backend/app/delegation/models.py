@@ -69,16 +69,6 @@ class RunStatus(StrEnum):
     ABANDONED = "abandoned"
 
 
-RUN_TRANSITIONS: Mapping[RunStatus, frozenset[RunStatus]] = {
-    RunStatus.RUNNING: frozenset(
-        {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.ABANDONED}
-    ),
-    RunStatus.SUCCEEDED: frozenset(),
-    RunStatus.FAILED: frozenset(),
-    RunStatus.ABANDONED: frozenset(),
-}
-
-
 class FailureKind(StrEnum):
     PROVIDER = "provider"
     VERIFICATION = "verification"
