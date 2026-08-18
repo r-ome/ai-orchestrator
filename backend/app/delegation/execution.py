@@ -531,7 +531,7 @@ def _execute_run(
                 effective_settings,
                 task_id,
                 RunTaskRequest(
-                    prompt=_repair_prompt(packet, first_verification),
+                    prompt=_verification_repair_prompt(packet, first_verification),
                     provider=decision.provider,
                     model=decision.model,
                 ),
@@ -1125,7 +1125,7 @@ def _strings(value: Any) -> list[str]:
     return [entry for entry in value if isinstance(entry, str) and entry.strip()]
 
 
-def _repair_prompt(packet: Packet, verification: dict[str, Any]) -> str:
+def _verification_repair_prompt(packet: Packet, verification: dict[str, Any]) -> str:
     failures = [
         command
         for command in verification.get("commands", [])
