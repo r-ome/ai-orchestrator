@@ -33,6 +33,18 @@ import {
 import CollapsibleCard from './CollapsibleCard'
 import type { TabDefinition } from './Tabs'
 import TurnConsole from './TurnConsole'
+import {
+  EMPTY_DATA,
+  selectDisabledTabs,
+  selectPhaseTab,
+  selectTabs,
+  selectTurnToWatch,
+  selectWorkspaceRows,
+  shouldPollWorkspace,
+  type DelegationTabId,
+  type WatchedTurn,
+  type WorkspaceData,
+} from './delegationWorkspaceModel'
 import { useApiResource } from '../hooks/useApiResource'
 import { formatRelativeTime, formatTimestamp } from '../utils/format'
 
@@ -44,24 +56,7 @@ import { formatRelativeTime, formatTimestamp } from '../utils/format'
  * `ContextModal`, opened from "Implement this plan"; the result it produces is
  * read from the collapsed "Implementation context" card on the items tab.
  */
-export type DelegationTabId = 'items' | 'feature-review'
-
-/** The turn the workspace is currently watching, if any. */
-interface WatchedTurn {
-  kind: TurnKind
-  jobId: string
-  title: string
-}
-
-interface WorkspaceData {
-  context: ImplementationContext | null
-  delegation: DelegationView | null
-}
-
-const EMPTY_DATA: WorkspaceData = {
-  context: null,
-  delegation: null,
-}
+export type { DelegationTabId } from './delegationWorkspaceModel'
 
 function stateLabel(state: WorkItemState): string {
   return {
@@ -741,12 +736,7 @@ export function useDelegationWorkspace(
     // Every long phase settles its row from a background thread, so the page
     // has to poll to notice. A reload is also what turns a finished turn back
     // into a readable result.
-    pollWhile: (data) =>
-      data.context?.status === 'generating' ||
-      data.delegation?.items.some((entry) => entry.state === 'running') === true ||
-      data.delegation?.delegation.status === 'running' ||
-      data.delegation?.review?.status === 'generating' ||
-      data.delegation?.changes.some((change) => change.status === 'running') === true,
+    pollWhile: shouldPollWorkspace,
     intervalMs: 2_000,
   })
   const [busy, setBusy] = useState('')
@@ -766,15 +756,15 @@ export function useDelegationWorkspace(
 
   // One row, so "the context" and "the one being generated" are the same row
   // read through its status rather than two separate lookups.
-  const sessionContext = data?.context ?? null
-  const context = sessionContext?.status === 'ready' ? sessionContext : null
-  const delegation = data?.delegation ?? null
-  const generatingContext =
-    sessionContext?.status === 'generating' ? sessionContext : null
-  const runningItem =
-    delegation?.items.find((entry) => entry.state === 'running') ?? null
-  const runningChange =
-    delegation?.changes.find((change) => change.status === 'running') ?? null
+  const rows = selectWorkspaceRows(data)
+  const {
+    sessionContext,
+    context,
+    delegation,
+    generatingContext,
+    runningItem,
+    runningChange,
+  } = rows
 
   useEffect(() => {
     setActionError(null)
@@ -811,40 +801,13 @@ export function useDelegationWorkspace(
     // Reattach after a page reload: the turn outlives the request that started
     // it, so an in-flight row is enough to know what to watch.
     if (watching) return
-    if (generatingContext) {
-      setWatching({
-        kind: 'context',
-        jobId: generatingContext.id,
-        title: 'Implementation context',
-      })
-      return
+    const next = selectTurnToWatch(rows)
+    if (next) {
+      setWatching(next)
     }
-    if (delegation?.review?.status === 'generating') {
-      setWatching({
-        kind: 'review',
-        jobId: delegation.review.id,
-        title: 'Feature review',
-      })
-      return
-    }
-    if (runningChange) {
-      setWatching({
-        kind: 'change',
-        jobId: runningChange.id,
-        title: `Requested changes · revision ${runningChange.revision}`,
-      })
-      return
-    }
-    if (runningItem) {
-      const latest = runningItem.runs[runningItem.runs.length - 1]
-      if (latest) {
-        setWatching({
-          kind: 'run',
-          jobId: latest.id,
-          title: runningItem.item.title,
-        })
-      }
-    }
+    // `rows` is derived from the dependencies above. Keep these dependencies
+    // unchanged so the reattach timing stays identical to the original hook.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watching, generatingContext, runningItem, runningChange, delegation])
 
   const runAction = async (label: string, action: () => Promise<unknown>) => {
@@ -908,48 +871,9 @@ export function useDelegationWorkspace(
     })
   }
 
-  const completedItems = delegation
-    ? delegation.items.filter((entry) => entry.state === 'completed').length
-    : 0
-
-  const disabledTabs: Record<DelegationTabId, boolean> = {
-    // Nothing to delegate until the plan settles, and nothing to decompose
-    // until a context is ready. An existing delegation keeps its items
-    // reachable even if no context row survives.
-    items: !enabled || (context === null && delegation === null),
-    'feature-review': !enabled || delegation?.delegation.status !== 'completed',
-  }
-
-  const tabs: TabDefinition<DelegationTabId>[] = [
-    {
-      id: 'items',
-      label: 'Work items',
-      badge: runningItem
-        ? 'running'
-        : delegation
-          ? `${completedItems}/${delegation.items.length}`
-          : undefined,
-      disabled: disabledTabs.items,
-    },
-    {
-      id: 'feature-review',
-      label: 'Feature review',
-      badge:
-        runningChange
-          ? 'updating'
-          : delegation?.review?.status === 'generating'
-          ? 'running'
-          : delegation?.review?.status === 'completed'
-            ? delegation.review.approved
-              ? 'approved'
-              : `${delegation.review.findings.length} finding${delegation.review.findings.length === 1 ? '' : 's'}`
-            : undefined,
-      disabled: disabledTabs['feature-review'],
-    },
-  ]
-
-  const phaseTab: DelegationTabId =
-    delegation?.delegation.status === 'completed' ? 'feature-review' : 'items'
+  const disabledTabs = selectDisabledTabs(enabled, context, delegation)
+  const tabs = selectTabs(rows, disabledTabs)
+  const phaseTab = selectPhaseTab(delegation)
 
   return {
     projectName,
