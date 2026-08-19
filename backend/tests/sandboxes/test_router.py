@@ -812,6 +812,51 @@ def test_resume_recreates_only_a_missing_workspace_and_preserves_present_worktre
     assert fake_docker_client.volumes.get(workspace_name) is not before
 
 
+def test_resume_recovers_a_missing_workspace_but_reraises_other_workspace_errors(
+    client: TestClient, fake_docker_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    imported_workspaces: list[str] = []
+    ensure_workspace_import = sandbox_router.ensure_workspace_import
+
+    def record_workspace_import(*args, **kwargs) -> None:
+        imported_workspaces.append(kwargs["sandbox_id"])
+        ensure_workspace_import(*args, **kwargs)
+
+    monkeypatch.setattr(sandbox_router, "ensure_workspace_import", record_workspace_import)
+    recoverable = _create(client).json()
+    imported_workspaces.clear()
+    recoverable_workspace = fake_docker_client.volumes.get(
+        workspace_volume(recoverable["sandbox_id"])
+    )
+    recoverable_workspace.remove(force=True)
+
+    recovered = client.post(f"/sandboxes/{recoverable['sandbox_id']}/resume")
+
+    assert recovered.status_code == 200
+    assert imported_workspaces == [recoverable["sandbox_id"]]
+    assert fake_docker_client.volumes.get(workspace_volume(recoverable["sandbox_id"])) is not (
+        recoverable_workspace
+    )
+
+    rejected = _create(client, feature_key="reject-workspace-error").json()
+    imported_workspaces.clear()
+    rejected_workspace = fake_docker_client.volumes.get(workspace_volume(rejected["sandbox_id"]))
+    monkeypatch.setattr(
+        sandbox_router,
+        "verify_workspace_identity",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("identity check failed")),
+    )
+
+    response = client.post(f"/sandboxes/{rejected['sandbox_id']}/resume")
+
+    assert response.status_code == 409
+    assert imported_workspaces == []
+    assert fake_docker_client.volumes.get(workspace_volume(rejected["sandbox_id"])) is rejected_workspace
+    manifest = read_manifest(get_controller_store(), rejected["sandbox_id"])
+    assert manifest is not None
+    assert manifest.lifecycle_status is SandboxLifecycleStatus.DEGRADED
+
+
 def test_resume_recovers_a_workspace_phase_failure_without_engine_detection(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
