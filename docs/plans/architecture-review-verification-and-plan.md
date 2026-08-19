@@ -2,7 +2,29 @@
 
 **Source reviewed:** `docs/plans/ai-orchestrator-architecture-review-consolidated.md`
 **Verified against:** `main` @ `30e7ca9`, 19 Aug 2026
-**Baseline:** `backend/.venv/bin/python -m pytest -q` → 818 passed, 43 skipped, 26.1s
+**Baseline at verification:** `backend/.venv/bin/python -m pytest -q` → 818 passed, 43 skipped, 26.1s
+
+> **Progress, 19 Aug 2026 — `main` @ `ce205cd`.** Phases 0, 1, 2, 3.1, 3.2, 3.3, 4 and 5 are
+> done. Phase 3.4 is partially done and deliberately stopped; see its status block. Phase 6 is
+> next. Current suite: **822 passed, 43 skipped**.
+>
+> The gated suite (`RUN_DOCKER_PREVIEW_TESTS=1`) is **5 failed, 855 passed**. All five are
+> genuine test rot, unrelated to any phase:
+> `tests/previews/test_docker_integration.py::test_approved_proposal_starts_and_stops_through_the_full_service`,
+> `::test_events_websocket_replays_and_streams_live_container_logs`,
+> `tests/previews/test_preview_kinds.py::test_task_preview_serves_its_commit_and_keeps_it_across_a_restart`,
+> `::test_failed_task_preview_returns_the_task_to_review` — all four build a preview without
+> registering its project, which a later phase made mandatory — and
+> `tests/tasks/test_docker_tasks.py::test_an_agent_written_preview_proposal_cannot_move_the_task`,
+> which asserts `.agent` appears in a refusal detail that now reads
+> "Task branch '...' has no commit beyond ...".
+>
+> Gated runs need a live daemon and leak roughly 2 containers, 5 networks and 30 volumes each.
+> Leaked `orchestrator-preview-*` networks are not harmless: 28 of them exhausted Colima's
+> address pool and broke 5 unrelated tests until pruned.
+>
+> **The figures in the phase text below are the review's, not the tree's.** Each phase that has
+> run carries a status block with corrections. Where they disagree, the status block wins.
 
 ## Verdict
 
@@ -309,6 +331,37 @@ The router should end as: validate request → one service call → error mappin
 *Risk: medium — dense lock-ordering and lifecycle sequencing. Highest value per unit of
 risk in the plan, and by then Phases 3 and 4 have already removed much of the bulk.*
 
+**Phase 5 status, 19 Aug 2026: done.** Three commits, `a4e5cdd`, `15d32b4` and `ce205cd`.
+
+`sandboxes/router.py` 1220 → 614 lines; `sandboxes/service.py` 695 → 1487. All 14 sandbox
+handlers now read as validate request → one service call → build the response; the largest is
+31 lines and is almost entirely argument mapping. No handler reaches into a `service._private`
+function.
+
+Corrections to the text above:
+
+- **55 inline `HTTPException`s, not 54** — 50 in `sandboxes/router.py`, 5 in `projects/router.py`.
+  49 are retired. The 7 that remain are deliberate: two 400 request-shape guards, and
+  `remove_orphan_resource`'s own `NotFound` and `DockerException` mappings, which carry details
+  the shared policy would overwrite.
+- **Five handler bodies were not enough to reach the target shape.** Two more held domain logic
+  the plan never named: `_sandbox_staleness_response` (70 lines: mirror lock, canonical fetch,
+  staleness count) and `remove_orphan_resource`. Both moved in `ce205cd`.
+- The service exceptions gained `status_code` and `detail` so they fit
+  `DockerErrorPolicy.domain_errors`. `SandboxUnavailable` (503) is new, added because the orphan
+  path returns Docker's own message and `docker_response` would have replaced it with a constant.
+
+Two coverage gaps this phase exposed, both now closed:
+
+- `projects/router.py` had **no tests at all**. Its new error policy was unverified — deleting
+  the policy left the suite green. `tests/projects/test_router.py` covers it in six tests.
+- The new `SandboxUnavailable` mapping was likewise unbound until
+  `test_orphan_removal_reports_a_docker_outage_as_unavailable` was added.
+
+Verified by: a 38-branch error-path probe identical across each commit, a byte-identical
+generated OpenAPI schema, normalised AST diffs of every moved body against its original, and
+mutation checks on each new policy. `pytest -q` 815 → 822 passed, 43 skipped.
+
 ---
 
 ### Phase 6 — Frontend workflow composition
@@ -319,6 +372,16 @@ Requires 0.3. Add tests for the "what am I watching?" projection in
 prefer improving the backend projection over adding frontend logic.
 
 *Risk: medium, currently unprotected by any test.*
+
+**Both line counts re-measured 19 Aug 2026 and correct**: `frontend/src/components/DelegationWorkspace.tsx`
+is 1,782 lines and `frontend/src/pages/PlanningSessionPage.tsx` is 1,268. The first plan figures
+in this document that needed no correction.
+
+"Unprotected by any test" is literal: the whole frontend has one test file,
+`frontend/src/test/smoke.test.tsx`. Build the safety net before the split.
+
+Do not delegate this phase to Codex. It cannot screenshot and localhost is blocked to it.
+Claude's own Bash can drive headless CDP against this app.
 
 ---
 
