@@ -4,14 +4,17 @@ import json
 from dataclasses import dataclass, replace
 
 from docker.client import DockerClient
-from docker.errors import DockerException
+from docker.errors import DockerException, NotFound
 
 from app.controller.store import ControllerStore, SandboxAdmissionError
 from app.previews.config import get_preview_settings
+from app.projects.remote import project_id_for_remote
 from app.sandboxes.database import (
     SandboxDatabaseError,
     SandboxMigrationError,
+    drop_sandbox_database,
     provision_sandbox_database,
+    sandbox_database_runtime,
 )
 from app.sandboxes.engine_detection import NO_DATABASE, discover_engine, discover_schema_baseline_files
 from app.sandboxes.git import (
@@ -24,17 +27,35 @@ from app.sandboxes.git import (
     sync_workspace_from_mirror,
 )
 from app.sandboxes.lifecycle import (
+    drain_sandbox_writers,
     lifecycle_conflict_detail,
     lifecycle_lease,
     project_mirror_lock,
 )
 from app.sandboxes.manifest import (
+    SandboxManifest,
     read_manifest,
     transition_sandbox_lifecycle,
     write_manifest,
 )
+from app.sandboxes.mirror import (
+    WorkspaceMissing,
+    ensure_project_mirror,
+    ensure_workspace_import,
+    validate_project_mirror,
+    validate_workspace_import,
+    verify_workspace_identity,
+)
 from app.sandboxes.models import SandboxLifecycleStatus
-from app.sandboxes.naming import database_name, db_data_volume, workspace_volume
+from app.sandboxes.naming import (
+    database_name,
+    db_data_volume,
+    feature_branch,
+    mirror_volume,
+    sandbox_id_for,
+    validate_ownership,
+    workspace_volume,
+)
 from app.sandboxes.publish import (
     GitHubApiError,
     PublishError,
@@ -62,6 +83,27 @@ class SandboxNotFound(Exception):
 
 class SandboxInternalFailure(Exception):
     """An internal sandbox failure that maps to HTTP 500."""
+
+
+class SandboxValidationError(Exception):
+    """A rejected sandbox request that maps to HTTP 422."""
+
+
+@dataclass(frozen=True)
+class EngineConfirmation:
+    """One human-approved engine choice, already validated by the caller."""
+
+    engine: str
+    migrate_commands: list[str]
+    seed_commands: list[str]
+    commands_source: dict[str, str]
+    actor: str
+
+
+@dataclass(frozen=True)
+class CreateOutcome:
+    sandbox: dict[str, object]
+    created: bool
 
 
 @dataclass(frozen=True)
@@ -693,3 +735,586 @@ def _json_value(value: object, default: object) -> object:
 
 def _optional_string(value: object) -> str | None:
     return str(value) if value is not None else None
+
+
+def create_or_resolve(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    *,
+    remote_url: str,
+    feature_key: str,
+    feature_title: str | None,
+    agent_provider: str | None,
+    stop_blocking_previews: bool,
+    engine_confirmation: EngineConfirmation | None,
+) -> CreateOutcome:
+    """Provision the Phase 4 Git resources for a deterministic v1 sandbox."""
+    project_id = project_id_for_remote(remote_url)
+    sandbox_id = sandbox_id_for(project_id, feature_key)
+    project = controller_store.register_v1_project(
+        project_id=project_id,
+        remote_url=remote_url,
+        default_branch="",
+        mirror_volume=mirror_volume(project_id),
+        created_at="",
+    )
+    sandbox, created = controller_store.register_v1_sandbox(
+        sandbox_id=sandbox_id,
+        project_id=str(project["id"]),
+        project_name=str(project["remote_url"]),
+        volume_name=workspace_volume(sandbox_id),
+        created_at="",
+    )
+    try:
+        with lifecycle_lease(
+            controller_store,
+            sandbox_id,
+            "create",
+            docker_client=docker_client,
+            stop_blocking_previews=stop_blocking_previews,
+        ):
+            if created:
+                write_manifest(
+                    controller_store,
+                    SandboxManifest(
+                        sandbox_id=sandbox_id,
+                        lifecycle_version="v1",
+                        feature_key=feature_key,
+                        feature_title=feature_title,
+                        desired_state="active",
+                        lifecycle_status=SandboxLifecycleStatus.CREATING,
+                        feature_branch=feature_branch(feature_key),
+                        agent_provider=agent_provider,
+                    ),
+                )
+            if not created:
+                try:
+                    # Even inspection validates shared mirror state, so it
+                    # takes the project lock after the sandbox lease.
+                    with project_mirror_lock(controller_store, project_id, "create"):
+                        validate_project_mirror(docker_client, project_id=project_id)
+                    validate_workspace_import(docker_client, sandbox_id=sandbox_id)
+                except (ValueError, RuntimeError) as error:
+                    raise SandboxConflict(str(error)) from error
+                return CreateOutcome(sandbox, False)
+
+            try:
+                git_image = get_preview_settings().git_image
+                # Fixed global order: sandbox lease, then project mirror lock.
+                # The lock ends before the clone, so separate sandbox creates
+                # only serialize their shared fetch.
+                with project_mirror_lock(controller_store, project_id, "create"):
+                    mirror = ensure_project_mirror(
+                        docker_client,
+                        image=git_image,
+                        project_id=project_id,
+                        remote_url=str(project["remote_url"]),
+                    )
+                controller_store.set_v1_project_mirror(
+                    project_id=project_id,
+                    default_branch=mirror.default_branch,
+                    mirror_volume=mirror.volume_name,
+                )
+                manifest = read_manifest(controller_store, sandbox_id)
+                if manifest is None:
+                    raise RuntimeError("v1 sandbox manifest disappeared during create")
+                pinned_ref = f"refs/heads/{mirror.default_branch}"
+                manifest = replace(
+                    manifest,
+                    base_ref=pinned_ref,
+                    created_base_commit=mirror.commit,
+                    current_base_commit=mirror.commit,
+                )
+                write_manifest(controller_store, manifest)
+                controller_store.record_sandbox_resource(
+                    sandbox_id, kind="volume", name=workspace_volume(sandbox_id)
+                )
+                ensure_workspace_import(
+                    docker_client,
+                    image=git_image,
+                    sandbox_id=sandbox_id,
+                    project_id=project_id,
+                    mirror=mirror,
+                    feature_branch=manifest.feature_branch
+                    or feature_branch(feature_key),
+                )
+                write_manifest(controller_store, manifest)
+                detection = discover_engine(
+                    docker_client,
+                    image=git_image,
+                    volume_name=workspace_volume(sandbox_id),
+                )
+                if detection.tracked_database_paths:
+                    paths = ", ".join(detection.tracked_database_paths)
+                    raise ValueError(
+                        "Project tracks database file(s): "
+                        f"{paths}. Move the database out of Git before creating a sandbox."
+                    )
+                detection_row = controller_store.record_sandbox_engine_detection(
+                    sandbox_id=sandbox_id,
+                    signals=[signal.as_dict() for signal in detection.signals],
+                    proposed_engine=detection.proposed_engine,
+                    migrate_commands=detection.migrate_commands,
+                    seed_commands=detection.seed_commands,
+                    commands_source=detection.commands_source,
+                    detected_at_commit=manifest.created_base_commit or "",
+                )
+                if engine_confirmation is not None:
+                    _confirm_engine_snapshot(
+                        controller_store,
+                        sandbox_id=sandbox_id,
+                        confirmation=engine_confirmation,
+                        detection=detection_row,
+                    )
+                    complete_database_provision(
+                        docker_client,
+                        controller_store,
+                        sandbox_id=sandbox_id,
+                        operation="create",
+                        rebuild=False,
+                    )
+                else:
+                    # A human decision can take an arbitrary time. Leaving
+                    # this context releases the lease before we return.
+                    transition_sandbox_lifecycle(
+                        controller_store,
+                        manifest,
+                        to_status=SandboxLifecycleStatus.AWAITING_ENGINE_CONFIRMATION,
+                    )
+            except ValueError as error:
+                raise SandboxConflict(str(error)) from error
+            except RuntimeError as error:
+                raise SandboxInternalFailure(str(error)) from error
+            return CreateOutcome(sandbox, True)
+    except SandboxAdmissionError as error:
+        raise SandboxConflict(lifecycle_conflict_detail(error)) from error
+
+
+def confirm_engine(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    *,
+    sandbox_id: str,
+    confirmation: EngineConfirmation,
+) -> dict[str, object]:
+    """Freeze a human-approved engine and resume the creation lifecycle."""
+    sandbox = controller_store.sandbox(sandbox_id)
+    require_v1(sandbox, sandbox_id, "does not support engine confirmation")
+    assert sandbox is not None
+    manifest = read_manifest(controller_store, sandbox_id)
+    if (
+        manifest is None
+        or manifest.lifecycle_status
+        is not SandboxLifecycleStatus.AWAITING_ENGINE_CONFIRMATION
+    ):
+        raise SandboxConflict("Sandbox is not awaiting engine confirmation")
+    detection = controller_store.sandbox_engine_detection(sandbox_id)
+    if detection is None:
+        raise SandboxConflict("Sandbox has no engine detection to confirm")
+    try:
+        # This is intentionally a fresh lifecycle lease. The create lease was
+        # released before the human received the proposal.
+        with lifecycle_lease(controller_store, sandbox_id, "confirm-engine", docker_client=docker_client):
+            _confirm_engine_snapshot(
+                controller_store,
+                sandbox_id=sandbox_id,
+                confirmation=confirmation,
+                detection=detection,
+            )
+            current = read_manifest(controller_store, sandbox_id)
+            if current is None:
+                raise RuntimeError("v1 sandbox manifest disappeared during engine confirmation")
+            transition_sandbox_lifecycle(
+                controller_store,
+                replace(
+                    current,
+                    db_engine=confirmation.engine,
+                    last_error=None,
+                ),
+                to_status=SandboxLifecycleStatus.CREATING,
+            )
+            complete_database_provision(
+                docker_client,
+                controller_store,
+                sandbox_id=sandbox_id,
+                operation="confirm-engine",
+                rebuild=False,
+            )
+    except SandboxAdmissionError as error:
+        raise SandboxConflict(lifecycle_conflict_detail(error)) from error
+    return sandbox
+
+
+def reset_database(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    *,
+    sandbox_id: str,
+    stop_blocking_preview: bool,
+) -> dict[str, object]:
+    """Drop and rebuild from the stored, human-approved command snapshot."""
+    sandbox = controller_store.sandbox(sandbox_id)
+    require_v1(sandbox, sandbox_id, "does not support engine confirmation")
+    assert sandbox is not None
+    manifest = read_manifest(controller_store, sandbox_id)
+    if manifest is None or manifest.lifecycle_status not in {
+        SandboxLifecycleStatus.READY,
+        SandboxLifecycleStatus.DATABASE_FAILED,
+    }:
+        raise SandboxConflict(
+            "Sandbox database can reset only from ready or database_failed"
+        )
+    if manifest.db_engine == NO_DATABASE:
+        raise SandboxConflict(f"Sandbox '{sandbox_id}' has no database to reset")
+    try:
+        with lifecycle_lease(
+            controller_store,
+            sandbox_id,
+            "reset-db",
+            docker_client=docker_client,
+            stop_blocking_previews=stop_blocking_preview,
+        ):
+            write_manifest(
+                controller_store,
+                replace(
+                    manifest,
+                    last_error=None,
+                ),
+            )
+            complete_database_provision(
+                docker_client,
+                controller_store,
+                sandbox_id=sandbox_id,
+                operation="reset-db",
+                rebuild=True,
+            )
+    except SandboxAdmissionError as error:
+        raise SandboxConflict(lifecycle_conflict_detail(error)) from error
+    return sandbox
+
+
+def resume(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    *,
+    sandbox_id: str,
+) -> dict[str, object]:
+    """Converge safe missing v1 resources without replacing workspace state."""
+    sandbox = controller_store.sandbox(sandbox_id)
+    if sandbox is None:
+        raise SandboxNotFound("Sandbox not found")
+    if sandbox.get("lifecycle_version") != "v1":
+        raise SandboxConflict("Legacy sandboxes do not support resume")
+    if sandbox.get("desired_state") != "active":
+        raise SandboxConflict("Destroyed sandboxes cannot resume")
+    try:
+        with lifecycle_lease(controller_store, sandbox_id, "resume", docker_client=docker_client):
+            manifest = read_manifest(controller_store, sandbox_id)
+            project = controller_store.project(str(sandbox["project_id"]))
+            if manifest is None or project is None:
+                raise RuntimeError("sandbox manifest or project is missing")
+            # The mirror is shared. Validate it under the project lock, but do
+            # not retain that lock while inspecting or repairing the workspace.
+            try:
+                with project_mirror_lock(controller_store, str(project["id"]), "resume"):
+                    validate_project_mirror(docker_client, project_id=str(project["id"]))
+            except ValueError as error:
+                raise RuntimeError(f"unsafe mirror ownership inconsistency: {error}") from error
+            try:
+                validate_workspace_import(docker_client, sandbox_id=sandbox_id)
+                if not manifest.feature_branch:
+                    raise RuntimeError("workspace feature branch is missing from the manifest")
+                verify_workspace_identity(
+                    docker_client,
+                    image=get_preview_settings().git_image,
+                    sandbox_id=sandbox_id,
+                    feature_branch=manifest.feature_branch,
+                )
+            except ValueError as error:
+                raise RuntimeError(f"unsafe workspace ownership inconsistency: {error}") from error
+            except WorkspaceMissing:
+                # A missing workspace is safe to recreate.  It has no worktree
+                # to preserve.  We use the immutable original base, never the
+                # latest mirror head.
+                from app.sandboxes.mirror import MirrorPin
+
+                if not manifest.created_base_commit or not manifest.feature_branch:
+                    raise RuntimeError("workspace is missing and the immutable clone identity is absent")
+                controller_store.record_sandbox_resource(
+                    sandbox_id, kind="volume", name=workspace_volume(sandbox_id)
+                )
+                ensure_workspace_import(
+                    docker_client,
+                    image=get_preview_settings().git_image,
+                    sandbox_id=sandbox_id,
+                    project_id=str(project["id"]),
+                    mirror=MirrorPin(
+                        mirror_volume(str(project["id"])),
+                        str(project.get("default_branch") or "main"),
+                        manifest.created_base_commit,
+                    ),
+                    feature_branch=manifest.feature_branch,
+                )
+            if (
+                manifest.lifecycle_status
+                is SandboxLifecycleStatus.AWAITING_ENGINE_CONFIRMATION
+            ):
+                return sandbox
+            detection = controller_store.sandbox_engine_detection(sandbox_id)
+            if not detection or not detection.get("confirmed_engine"):
+                if detection is None:
+                    detected = discover_engine(
+                        docker_client,
+                        image=get_preview_settings().git_image,
+                        volume_name=workspace_volume(sandbox_id),
+                    )
+                    if detected.tracked_database_paths:
+                        paths = ", ".join(detected.tracked_database_paths)
+                        raise ValueError(
+                            "Project tracks database file(s): "
+                            f"{paths}. Move the database out of Git before creating a sandbox."
+                        )
+                    detection = controller_store.record_sandbox_engine_detection(
+                        sandbox_id=sandbox_id,
+                        signals=[signal.as_dict() for signal in detected.signals],
+                        proposed_engine=detected.proposed_engine,
+                        migrate_commands=detected.migrate_commands,
+                        seed_commands=detected.seed_commands,
+                        commands_source=detected.commands_source,
+                        detected_at_commit=manifest.created_base_commit or "",
+                    )
+                refreshed = read_manifest(controller_store, sandbox_id)
+                if refreshed is None:
+                    raise RuntimeError("v1 sandbox manifest disappeared during resume")
+                transition_sandbox_lifecycle(
+                    controller_store,
+                    replace(
+                        refreshed,
+                        last_error=None,
+                    ),
+                    to_status=SandboxLifecycleStatus.AWAITING_ENGINE_CONFIRMATION,
+                )
+                return sandbox
+            if detection.get("confirmed_engine") == NO_DATABASE:
+                refreshed = read_manifest(controller_store, sandbox_id) or manifest
+                ready = replace(
+                    refreshed,
+                    db_engine=NO_DATABASE,
+                    db_name=None,
+                    db_data_volume=None,
+                    current_base_commit=(
+                        refreshed.pending_base_commit or refreshed.current_base_commit
+                    ),
+                    pending_base_commit=None,
+                    last_error=None,
+                )
+                if refreshed.lifecycle_status is SandboxLifecycleStatus.READY:
+                    write_manifest(controller_store, ready)
+                else:
+                    transition_sandbox_lifecycle(
+                        controller_store,
+                        ready,
+                        to_status=SandboxLifecycleStatus.READY,
+                    )
+            else:
+                database_row = controller_store.sandbox_database(sandbox_id)
+                if database_row is not None and database_row.get("status") == "ready":
+                    sandbox_database_runtime(docker_client, controller_store, sandbox_id)
+                    refreshed = read_manifest(controller_store, sandbox_id) or manifest
+                    ready = replace(
+                        refreshed,
+                        last_error=None,
+                    )
+                    if refreshed.lifecycle_status is SandboxLifecycleStatus.READY:
+                        write_manifest(controller_store, ready)
+                    else:
+                        transition_sandbox_lifecycle(
+                            controller_store,
+                            ready,
+                            to_status=SandboxLifecycleStatus.READY,
+                        )
+                else:
+                    complete_database_provision(
+                        docker_client,
+                        controller_store,
+                        sandbox_id=sandbox_id,
+                        operation="resume",
+                        rebuild=False,
+                    )
+            return sandbox
+    except (SandboxAdmissionError, ValueError) as error:
+        raise SandboxConflict(
+            lifecycle_conflict_detail(error) if isinstance(error, SandboxAdmissionError) else str(error)
+        ) from error
+    except RuntimeError as error:
+        manifest = read_manifest(controller_store, sandbox_id)
+        if manifest is not None:
+            degraded = replace(
+                manifest,
+                last_error=str(error),
+            )
+            if manifest.lifecycle_status is SandboxLifecycleStatus.DEGRADED:
+                write_manifest(controller_store, degraded)
+            else:
+                transition_sandbox_lifecycle(
+                    controller_store,
+                    degraded,
+                    to_status=SandboxLifecycleStatus.DEGRADED,
+                )
+        raise SandboxConflict(str(error)) from error
+
+
+def destroy(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    *,
+    sandbox_id: str,
+) -> dict[str, object]:
+    """Drain, sweep and tombstone one sandbox, returning its tombstone row."""
+    sandbox = controller_store.sandbox(sandbox_id)
+    if sandbox is None:
+        tombstone = controller_store.sandbox_tombstone(sandbox_id)
+        if tombstone is None:
+            raise SandboxNotFound("Sandbox not found")
+        return tombstone
+    try:
+        with lifecycle_lease(
+            controller_store,
+            sandbox_id,
+            "destroy",
+            docker_client=docker_client,
+            allow_writers=True,
+        ):
+            drain_sandbox_writers(docker_client, controller_store, sandbox_id)
+            manifest = read_manifest(controller_store, sandbox_id)
+            if manifest is None:
+                raise RuntimeError("v1 sandbox manifest disappeared during destroy")
+            transition_sandbox_lifecycle(
+                controller_store,
+                replace(
+                    manifest,
+                    last_error=None,
+                ),
+                to_status=SandboxLifecycleStatus.DESTROYING,
+            )
+            drop_sandbox_database(
+                docker_client,
+                controller_store,
+                get_preview_settings(),
+                sandbox_id=sandbox_id,
+            )
+            _sweep_manifest_resources(docker_client, controller_store, sandbox)
+            # The tombstone is intentionally after the complete sweep. A
+            # failed removal leaves the sandbox visible in destroying.
+            tombstone = controller_store.write_sandbox_tombstone(
+                sandbox_id,
+                reason="destroyed",
+                manifest={**sandbox, "resources": controller_store.sandbox_resources(sandbox_id)},
+            )
+            controller_store.delete_v1_sandbox_manifest(sandbox_id)
+    except SandboxAdmissionError as error:
+        raise SandboxConflict(lifecycle_conflict_detail(error)) from error
+    except (DockerException, RuntimeError, ValueError, SandboxDatabaseError) as error:
+        manifest = read_manifest(controller_store, sandbox_id)
+        if manifest is not None:
+            destroying = replace(
+                manifest,
+                last_error=str(error),
+            )
+            if manifest.lifecycle_status is SandboxLifecycleStatus.DESTROYING:
+                write_manifest(controller_store, destroying)
+            else:
+                transition_sandbox_lifecycle(
+                    controller_store,
+                    destroying,
+                    to_status=SandboxLifecycleStatus.DESTROYING,
+                )
+        raise SandboxInternalFailure(str(error)) from error
+    return tombstone
+
+
+def _sweep_manifest_resources(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    sandbox: dict[str, object],
+) -> None:
+    """Remove only exact manifest entries, after ownership validation."""
+    sandbox_id = str(sandbox["id"])
+    entries = controller_store.sandbox_resources(sandbox_id)
+    workspace = str(sandbox["volume_name"])
+    if not any(entry["kind"] == "volume" and entry["name"] == workspace for entry in entries):
+        entries.append({"kind": "volume", "name": workspace})
+    for entry in entries:
+        collection = _docker_collection(docker_client, entry["kind"])
+        try:
+            resource = collection.get(entry["name"])
+        except NotFound:
+            continue
+        validate_ownership(resource, sandbox_id=sandbox_id)
+        _remove_manifest_resource(resource, entry["kind"])
+
+
+def _docker_collection(docker_client: DockerClient, kind: str) -> object:
+    """Return the Docker collection for a supported resource kind."""
+    collections = {
+        "volume": docker_client.volumes,
+        "container": docker_client.containers,
+        "network": docker_client.networks,
+    }
+    try:
+        return collections[kind]
+    except KeyError as error:
+        raise SandboxValidationError(
+            f"Unsupported sandbox resource kind: {kind}"
+        ) from error
+
+
+def _remove_manifest_resource(resource: object, kind: str) -> None:
+    if kind == "network":
+        try:
+            resource.reload()  # type: ignore[attr-defined]
+            endpoint_ids = list((resource.attrs.get("Containers") or {}).keys())  # type: ignore[attr-defined]
+        except DockerException:
+            endpoint_ids = []
+        for endpoint_id in endpoint_ids:
+            try:
+                resource.disconnect(endpoint_id, force=True)  # type: ignore[attr-defined]
+            except DockerException:
+                continue
+        resource.remove()  # type: ignore[attr-defined]
+        return
+    resource.remove(force=True)  # type: ignore[attr-defined]
+
+
+def _confirm_engine_snapshot(
+    controller_store: ControllerStore,
+    *,
+    sandbox_id: str,
+    confirmation: EngineConfirmation,
+    detection: dict[str, object],
+) -> None:
+    proposed_migrate = [str(value) for value in _json_value(detection["migrate_commands_json"], [])]
+    proposed_seed = [str(value) for value in _json_value(detection["seed_commands_json"], [])]
+    migrate = confirmation.migrate_commands or proposed_migrate
+    seed = confirmation.seed_commands or proposed_seed
+    if confirmation.engine != NO_DATABASE and not migrate and not seed:
+        raise SandboxValidationError(
+            "Engine confirmation requires project migration or seed commands when detection proposes none"
+        )
+    sources = confirmation.commands_source or {
+        str(key): str(value)
+        for key, value in _json_value(detection["commands_source"], {}).items()
+    }
+    required_sources = ({"migrate"} if migrate else set()) | ({"seed"} if seed else set())
+    if required_sources.difference(sources):
+        raise SandboxValidationError(
+            "commands_source must identify the source for every approved command set"
+        )
+    controller_store.confirm_sandbox_engine_detection(
+        sandbox_id=sandbox_id,
+        engine=confirmation.engine,
+        migrate_commands=migrate,
+        seed_commands=seed,
+        commands_source=sources,
+        actor=confirmation.actor,
+    )

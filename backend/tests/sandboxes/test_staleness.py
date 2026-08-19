@@ -12,6 +12,7 @@ from app.controller.config import get_controller_settings
 from app.controller.store import get_controller_store
 from app.docker_client import get_docker_client
 from app.main import app
+from app.sandboxes import lifecycle as sandbox_lifecycle
 from app.sandboxes import router as sandbox_router
 from app.sandboxes.manifest import SandboxManifest, write_manifest
 from conftest import mark_sandbox_legacy, register_ready_v1_sandbox
@@ -157,8 +158,10 @@ def test_staleness_does_not_take_a_lifecycle_lease_or_block_an_open_writer(
         kind="terminal",
     )
     _stub_staleness_commands(monkeypatch, count=2)
+    # Patched at the source module so the guard holds whichever layer would
+    # call it, not just the router.
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_lifecycle,
         "lifecycle_lease",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not take lease")),
     )

@@ -78,10 +78,10 @@ def _stub_canonical_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
             )
         return MirrorPin(volume_name=name, default_branch="main", commit="a" * 40)
 
-    monkeypatch.setattr(sandbox_router, "ensure_project_mirror", ensure)
+    monkeypatch.setattr(sandbox_service, "ensure_project_mirror", ensure)
     # The Docker fake does not execute Git. Resume identity semantics are
     # exercised here at the router level, while git.py has its own script tests.
-    monkeypatch.setattr(sandbox_router, "verify_workspace_identity", lambda *_a, **_k: None)
+    monkeypatch.setattr(sandbox_service, "verify_workspace_identity", lambda *_a, **_k: None)
     monkeypatch.setattr(
         sandbox_database,
         "_read_or_create_server_credentials",
@@ -170,7 +170,7 @@ def test_conflicting_engine_signals_wait_and_surface_every_signal(
         seed_commands=(),
         commands_source={"migrate": "prisma"},
     )
-    monkeypatch.setattr(sandbox_router, "discover_engine", lambda *_args, **_kwargs: detection)
+    monkeypatch.setattr(sandbox_service, "discover_engine", lambda *_args, **_kwargs: detection)
 
     created = _create(client).json()
     record = client.get(f"/sandboxes/{created['sandbox_id']}/engine")
@@ -195,7 +195,7 @@ def test_create_refuses_a_project_that_tracks_its_sqlite_database(
         commands_source={},
         tracked_database_paths=("prisma/dev.db",),
     )
-    monkeypatch.setattr(sandbox_router, "discover_engine", lambda *_args, **_kwargs: detection)
+    monkeypatch.setattr(sandbox_service, "discover_engine", lambda *_args, **_kwargs: detection)
 
     response = _create(client)
 
@@ -795,13 +795,13 @@ def test_resume_recovers_a_missing_workspace_but_reraises_other_workspace_errors
     client: TestClient, fake_docker_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     imported_workspaces: list[str] = []
-    ensure_workspace_import = sandbox_router.ensure_workspace_import
+    ensure_workspace_import = sandbox_service.ensure_workspace_import
 
     def record_workspace_import(*args, **kwargs) -> None:
         imported_workspaces.append(kwargs["sandbox_id"])
         ensure_workspace_import(*args, **kwargs)
 
-    monkeypatch.setattr(sandbox_router, "ensure_workspace_import", record_workspace_import)
+    monkeypatch.setattr(sandbox_service, "ensure_workspace_import", record_workspace_import)
     recoverable = _create(client).json()
     imported_workspaces.clear()
     recoverable_workspace = fake_docker_client.volumes.get(
@@ -821,7 +821,7 @@ def test_resume_recovers_a_missing_workspace_but_reraises_other_workspace_errors
     imported_workspaces.clear()
     rejected_workspace = fake_docker_client.volumes.get(workspace_volume(rejected["sandbox_id"]))
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "verify_workspace_identity",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("identity check failed")),
     )
@@ -839,9 +839,9 @@ def test_resume_recovers_a_missing_workspace_but_reraises_other_workspace_errors
 def test_resume_recovers_a_workspace_phase_failure_without_engine_detection(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ensure_workspace_import = sandbox_router.ensure_workspace_import
+    ensure_workspace_import = sandbox_service.ensure_workspace_import
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "ensure_workspace_import",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("workspace import failed")),
     )
@@ -857,7 +857,7 @@ def test_resume_recovers_a_workspace_phase_failure_without_engine_detection(
     assert manifest.lifecycle_status == "creating"
     assert store.sandbox_engine_detection(sandbox_id) is None
 
-    monkeypatch.setattr(sandbox_router, "ensure_workspace_import", ensure_workspace_import)
+    monkeypatch.setattr(sandbox_service, "ensure_workspace_import", ensure_workspace_import)
     resumed = client.post(f"/sandboxes/{sandbox_id}/resume")
 
     assert resumed.status_code == 200
@@ -886,7 +886,7 @@ def test_resume_reuses_an_unconfirmed_engine_detection(
         to_status=SandboxLifecycleStatus.CREATING,
     )
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "discover_engine",
         lambda *_args, **_kwargs: pytest.fail("resume must reuse the stored detection"),
     )
