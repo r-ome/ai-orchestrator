@@ -197,6 +197,8 @@ export interface DelegationView {
   ready: string[]
   review: IntegrationReview | null
   changes: FeatureChangeRequest[]
+  review_superseded: boolean
+  feature_approved: boolean
 }
 
 export interface DelegationsResponse {

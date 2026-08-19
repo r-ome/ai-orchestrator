@@ -11,9 +11,11 @@ from app.controller.store import ControllerStore, DelegationActive, RunActive
 from app.delegation import service
 from app.delegation.models import (
     ACTIVE_DELEGATION_STATUSES,
+    ChangeRequestStatus,
     DELEGATION_TRANSITIONS,
     TERMINAL_DELEGATION_STATUSES,
     DelegationStatus,
+    IntegrationReviewStatus,
     RunStatus,
     WorkItemState,
     SetRoutingRequest,
@@ -138,6 +140,81 @@ def store(tmp_path: Path) -> ControllerStore:
     return controller_store
 
 
+def _delegation_id(store: ControllerStore) -> str:
+    return service.create_revision(store, "session-1", [_item("a")]).delegation.id
+
+
+def _create_review(
+    store: ControllerStore,
+    delegation_id: str,
+    *,
+    status: IntegrationReviewStatus = IntegrationReviewStatus.COMPLETED,
+    approved: bool = True,
+    settled_at: str | None = "2026-08-19T13:47:12Z",
+) -> str:
+    review_id = f"review-{status.value}"
+    store.claim_delegation_review(
+        {
+            "id": review_id,
+            "delegation_id": delegation_id,
+            "status": IntegrationReviewStatus.GENERATING.value,
+            "provider": "claude",
+            "model": "review-model",
+        }
+    )
+    result_json = json.dumps({"approved": approved, "summary": "", "findings": []})
+    if status is IntegrationReviewStatus.GENERATING:
+        with store._connection() as connection:
+            connection.execute(
+                "UPDATE delegation_reviews SET result_json = ? WHERE id = ?",
+                (result_json, review_id),
+            )
+    else:
+        store.settle_delegation_review(
+            review_id,
+            to_status=status.value,
+            result_json=result_json,
+        )
+    with store._connection() as connection:
+        connection.execute(
+            "UPDATE delegation_reviews SET settled_at = ? WHERE id = ?",
+            (settled_at, review_id),
+        )
+    return review_id
+
+
+def _create_change(
+    store: ControllerStore,
+    delegation_id: str,
+    *,
+    status: ChangeRequestStatus = ChangeRequestStatus.COMPLETED,
+    created_at: str = "2026-08-19T13:47:13Z",
+) -> str:
+    request_id = f"change-{status.value}-{created_at}"
+    store.claim_delegation_change_request(
+        {
+            "id": request_id,
+            "delegation_id": delegation_id,
+            "status": ChangeRequestStatus.RUNNING.value,
+            "instructions": "Apply the requested change",
+            "provider": "claude",
+            "model": "change-model",
+            "task_id": None,
+        }
+    )
+    if status is not ChangeRequestStatus.RUNNING:
+        store.settle_delegation_change_request(
+            request_id,
+            to_status=status.value,
+        )
+    with store._connection() as connection:
+        connection.execute(
+            "UPDATE delegation_change_requests SET created_at = ? WHERE id = ?",
+            (created_at, request_id),
+        )
+    return request_id
+
+
 def test_every_active_delegation_status_can_reach_a_terminal_status() -> None:
     for start in ACTIVE_DELEGATION_STATUSES:
         seen: set[DelegationStatus] = set()
@@ -155,6 +232,157 @@ def test_only_confirmed_commands_reach_graph_validation(
     store: ControllerStore,
 ) -> None:
     assert service.confirmed_command_kinds(store, "session-1") == {"build"}
+
+
+def test_view_review_fields_are_false_without_a_review(store: ControllerStore) -> None:
+    result = service.view(store, _delegation_id(store))
+
+    assert result.review_superseded is False
+    assert result.feature_approved is False
+
+
+def test_view_approves_a_completed_approved_review_without_changes(
+    store: ControllerStore,
+) -> None:
+    delegation_id = _delegation_id(store)
+    _create_review(store, delegation_id)
+
+    result = service.view(store, delegation_id)
+
+    assert result.review_superseded is False
+    assert result.feature_approved is True
+
+
+def test_view_does_not_approve_a_review_with_findings(store: ControllerStore) -> None:
+    delegation_id = _delegation_id(store)
+    _create_review(store, delegation_id, approved=False)
+
+    result = service.view(store, delegation_id)
+
+    assert result.feature_approved is False
+
+
+def test_view_marks_a_review_superseded_by_a_later_incorporated_change(
+    store: ControllerStore,
+) -> None:
+    delegation_id = _delegation_id(store)
+    _create_review(store, delegation_id, settled_at="2026-08-19T13:47:12Z")
+    _create_change(store, delegation_id, created_at="2026-08-19T13:47:13Z")
+
+    result = service.view(store, delegation_id)
+
+    assert result.review_superseded is True
+    assert result.feature_approved is False
+
+
+def test_view_keeps_a_review_valid_after_an_earlier_incorporated_change(
+    store: ControllerStore,
+) -> None:
+    delegation_id = _delegation_id(store)
+    _create_review(store, delegation_id, settled_at="2026-08-19T13:47:12Z")
+    _create_change(store, delegation_id, created_at="2026-08-19T13:47:11Z")
+
+    result = service.view(store, delegation_id)
+
+    assert result.review_superseded is False
+    assert result.feature_approved is True
+
+
+def test_latest_incorporated_change_uses_the_highest_revision(
+    store: ControllerStore,
+) -> None:
+    delegation_id = _delegation_id(store)
+    _create_change(
+        store,
+        delegation_id,
+        status=ChangeRequestStatus.AWAITING_REVIEW,
+        created_at="2026-08-19T13:47:10Z",
+    )
+    completed_id = _create_change(
+        store,
+        delegation_id,
+        created_at="2026-08-19T13:47:11Z",
+    )
+    _create_change(
+        store,
+        delegation_id,
+        status=ChangeRequestStatus.FAILED,
+        created_at="2026-08-19T13:47:12Z",
+    )
+    _create_change(
+        store,
+        delegation_id,
+        status=ChangeRequestStatus.RUNNING,
+        created_at="2026-08-19T13:47:13Z",
+    )
+
+    result = service.view(store, delegation_id)
+
+    assert service._latest_incorporated_change(result.changes).id == completed_id
+
+
+def test_view_does_not_supersede_an_unsettled_review(store: ControllerStore) -> None:
+    delegation_id = _delegation_id(store)
+    _create_review(store, delegation_id, settled_at=None)
+    _create_change(store, delegation_id)
+
+    result = service.view(store, delegation_id)
+
+    assert result.review_superseded is False
+
+
+@pytest.mark.parametrize(
+    "status",
+    [IntegrationReviewStatus.GENERATING, IntegrationReviewStatus.FAILED],
+)
+def test_view_does_not_approve_non_completed_review_with_approved_result(
+    store: ControllerStore,
+    status: IntegrationReviewStatus,
+) -> None:
+    delegation_id = _delegation_id(store)
+    _create_review(store, delegation_id, status=status, approved=True)
+
+    result = service.view(store, delegation_id)
+
+    assert result.feature_approved is False
+
+
+def test_view_compares_same_second_review_timestamps_as_datetimes(
+    store: ControllerStore,
+) -> None:
+    delegation_id = _delegation_id(store)
+    _create_review(store, delegation_id, settled_at="2026-08-19T13:47:12Z")
+    _create_change(
+        store,
+        delegation_id,
+        created_at="2026-08-19T13:47:12.500000Z",
+    )
+
+    result = service.view(store, delegation_id)
+
+    # A raw string comparison returns False here because '.' sorts below 'Z'.
+    assert result.review_superseded is True
+
+
+@pytest.mark.parametrize(
+    ("settled_at", "created_at"),
+    [
+        ("not-a-timestamp", "2026-08-19T13:47:13Z"),
+        ("2026-08-19T13:47:12Z", "not-a-timestamp"),
+    ],
+)
+def test_view_ignores_an_unparseable_timestamp(
+    store: ControllerStore,
+    settled_at: str,
+    created_at: str,
+) -> None:
+    delegation_id = _delegation_id(store)
+    _create_review(store, delegation_id, settled_at=settled_at)
+    _create_change(store, delegation_id, created_at=created_at)
+
+    result = service.view(store, delegation_id)
+
+    assert result.review_superseded is False
 
 
 def test_revision_and_work_items_are_stored_atomically(store: ControllerStore) -> None:

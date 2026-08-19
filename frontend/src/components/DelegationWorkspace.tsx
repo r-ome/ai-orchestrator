@@ -949,7 +949,7 @@ export function DelegationPanel({
   const {
     latestChange,
     runningChange,
-    reviewPredatesChange,
+    reviewSuperseded,
     featureApproved,
   } = selectReviewState(delegation)
 
@@ -1251,7 +1251,7 @@ export function DelegationPanel({
               <span className={`pill ${featureApproved ? 'ok' : 'warn'}`}>
                 {featureApproved
                   ? 'Approved'
-                  : reviewPredatesChange
+                  : reviewSuperseded
                     ? 'Review needed'
                     : 'Findings remain'}
               </span>

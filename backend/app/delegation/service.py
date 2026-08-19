@@ -1,6 +1,7 @@
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -30,6 +31,8 @@ from app.delegation.models import (
     GenerateDelegationOutcome,
     GenerateDelegationRequest,
     ItemRouting,
+    IntegrationReview,
+    IntegrationReviewStatus,
     RunStatus,
     RunUsage,
     VerificationIntent,
@@ -448,6 +451,15 @@ def view(
         )
         for item in items
     ]
+    review = latest_review(store, delegation_id)
+    changes = [
+        _change_request(change)
+        for change in store.delegation_change_requests(delegation_id)
+    ]
+    review_superseded = _review_superseded(
+        review,
+        _latest_incorporated_change(changes),
+    )
     return DelegationView(
         delegation=_delegation(row),
         items=item_views,
@@ -455,11 +467,10 @@ def view(
         ready=sorted(
             item.key for item in items if states[item.key].value == "ready"
         ),
-        review=latest_review(store, delegation_id),
-        changes=[
-            _change_request(change)
-            for change in store.delegation_change_requests(delegation_id)
-        ],
+        review=review,
+        changes=changes,
+        review_superseded=review_superseded,
+        feature_approved=_feature_approved(review, review_superseded),
     )
 
 
@@ -798,6 +809,44 @@ def _change_request(row: Mapping[str, Any]) -> FeatureChangeRequest:
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
         settled_at=row.get("settled_at"),
+    )
+
+
+def _latest_incorporated_change(
+    changes: Sequence[FeatureChangeRequest],
+) -> FeatureChangeRequest | None:
+    for change in reversed(changes):
+        if change.status in {
+            ChangeRequestStatus.AWAITING_REVIEW,
+            ChangeRequestStatus.COMPLETED,
+        }:
+            return change
+    return None
+
+
+def _review_superseded(
+    review: IntegrationReview | None,
+    change: FeatureChangeRequest | None,
+) -> bool:
+    if review is None or review.settled_at is None or change is None:
+        return False
+    try:
+        return datetime.fromisoformat(change.created_at) > datetime.fromisoformat(
+            review.settled_at
+        )
+    except ValueError:
+        return False
+
+
+def _feature_approved(
+    review: IntegrationReview | None,
+    superseded: bool,
+) -> bool:
+    return bool(
+        review
+        and review.status is IntegrationReviewStatus.COMPLETED
+        and review.approved is True
+        and not superseded
     )
 
 

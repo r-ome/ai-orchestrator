@@ -67,6 +67,8 @@ function makeDelegation(overrides: Partial<DelegationView> = {}): DelegationView
     ready: [],
     review: makeReview(),
     changes: [],
+    review_superseded: false,
+    feature_approved: true,
     ...overrides,
   }
 }
@@ -128,7 +130,12 @@ describe('DelegationPanel feature review', () => {
   })
 
   it('shows remaining findings for a completed review that is not approved', () => {
-    renderFeatureReview(makeDelegation({ review: makeReview({ approved: false }) }))
+    renderFeatureReview(
+      makeDelegation({
+        review: makeReview({ approved: false }),
+        feature_approved: false,
+      }),
+    )
 
     expect(screen.getByText('Findings remain')).toHaveClass('warn')
     expect(screen.getByRole('button', { name: 'Run review again' })).toBeEnabled()
@@ -138,6 +145,8 @@ describe('DelegationPanel feature review', () => {
     renderFeatureReview(
       makeDelegation({
         changes: [makeChange({ created_at: '2026-08-22T00:00:00Z' })],
+        review_superseded: true,
+        feature_approved: false,
       }),
     )
 
@@ -149,6 +158,8 @@ describe('DelegationPanel feature review', () => {
     renderFeatureReview(
       makeDelegation({
         changes: [makeChange({ created_at: '2026-08-18T00:00:00Z' })],
+        review_superseded: false,
+        feature_approved: true,
       }),
     )
 
@@ -181,6 +192,8 @@ describe('DelegationPanel feature review', () => {
             created_at: '2026-08-22T00:00:00Z',
           }),
         ],
+        review_superseded: true,
+        feature_approved: false,
       }),
     )
 
@@ -195,7 +208,13 @@ describe('DelegationPanel feature review', () => {
   })
 
   it('offers the first review without rendering a pill', () => {
-    renderFeatureReview(makeDelegation({ review: null }))
+    renderFeatureReview(
+      makeDelegation({
+        review: null,
+        review_superseded: false,
+        feature_approved: false,
+      }),
+    )
 
     expect(screen.getByRole('button', { name: 'Run feature review' })).toBeEnabled()
     expect(screen.queryByText('Approved')).not.toBeInTheDocument()
@@ -205,7 +224,10 @@ describe('DelegationPanel feature review', () => {
 
   it('disables the review button while another action is busy', () => {
     renderFeatureReview(
-      makeDelegation({ review: makeReview({ approved: false }) }),
+      makeDelegation({
+        review: makeReview({ approved: false }),
+        feature_approved: false,
+      }),
       'preview-feature',
     )
 

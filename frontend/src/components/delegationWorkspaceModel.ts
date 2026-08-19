@@ -37,8 +37,7 @@ export interface WorkspaceRows {
 export interface ReviewState {
   latestChange: DelegationView['changes'][number] | null
   runningChange: DelegationView['changes'][number] | null
-  latestIncorporatedChange: DelegationView['changes'][number] | null
-  reviewPredatesChange: boolean
+  reviewSuperseded: boolean
   featureApproved: boolean
 }
 
@@ -65,29 +64,13 @@ export function selectWorkspaceRows(data: WorkspaceData | null): WorkspaceRows {
 export function selectReviewState(delegation: DelegationView | null): ReviewState {
   const latestChange = delegation?.changes[delegation.changes.length - 1] ?? null
   const runningChange = selectRunningChange(delegation)
-  const latestIncorporatedChange =
-    delegation?.changes
-      .slice()
-      .reverse()
-      .find(
-        (change) => change.status === 'awaiting_review' || change.status === 'completed',
-      ) ?? null
-  const reviewPredatesChange = Boolean(
-    latestIncorporatedChange &&
-      delegation?.review?.settled_at &&
-      latestIncorporatedChange.created_at > delegation.review.settled_at,
-  )
-
-  const featureApproved =
-    delegation?.review?.status === 'completed' &&
-    delegation.review.approved === true &&
-    !reviewPredatesChange
+  const reviewSuperseded = delegation?.review_superseded ?? false
+  const featureApproved = delegation?.feature_approved ?? false
 
   return {
     latestChange,
     runningChange,
-    latestIncorporatedChange,
-    reviewPredatesChange,
+    reviewSuperseded,
     featureApproved,
   }
 }

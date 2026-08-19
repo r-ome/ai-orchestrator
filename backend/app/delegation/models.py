@@ -273,6 +273,8 @@ class DelegationView(BaseModel):
     ready: list[str] = Field(default_factory=list)
     review: IntegrationReview | None = None
     changes: list[FeatureChangeRequest] = Field(default_factory=list)
+    review_superseded: bool = False
+    feature_approved: bool = False
 
 
 class DelegationsResponse(BaseModel):

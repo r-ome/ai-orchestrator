@@ -146,6 +146,8 @@ function makeDelegation(overrides: Partial<DelegationView> = {}): DelegationView
     ready: [],
     review: null,
     changes: [],
+    review_superseded: false,
+    feature_approved: false,
     ...overrides,
   }
 }
@@ -200,50 +202,32 @@ describe('selectReviewState', () => {
     expect(selectReviewState(null)).toEqual({
       latestChange: null,
       runningChange: null,
-      latestIncorporatedChange: null,
-      reviewPredatesChange: false,
+      reviewSuperseded: false,
       featureApproved: false,
     })
   })
 
-  it('selects the last incorporated change and keeps a later review requirement', () => {
-    const firstIncorporatedChange = makeChange({
-      id: 'change-awaiting-review',
-      status: 'awaiting_review',
-      created_at: '2026-08-18T00:00:00Z',
-    })
-    const lastIncorporatedChange = makeChange({
-      id: 'change-completed',
-      status: 'completed',
-      created_at: '2026-08-22T00:00:00Z',
-    })
-    const runningChange = makeChange({
-      id: 'change-running',
-      status: 'running',
-      created_at: '2026-08-23T00:00:00Z',
-    })
-    const latestChange = makeChange({
-      id: 'change-failed',
-      status: 'failed',
-      created_at: '2026-08-24T00:00:00Z',
-    })
-    const delegation = makeDelegation({
-      review: makeReview({ approved: true, settled_at: '2026-08-20T00:00:00Z' }),
-      changes: [
-        firstIncorporatedChange,
-        lastIncorporatedChange,
-        runningChange,
-        latestChange,
-      ],
-    })
+  it('selects the last change and the running one, whatever their order', () => {
+    const awaiting = makeChange({ id: 'change-awaiting', status: 'awaiting_review' })
+    const running = makeChange({ id: 'change-running', status: 'running' })
+    const failed = makeChange({ id: 'change-failed', status: 'failed' })
+    const state = selectReviewState(
+      makeDelegation({ changes: [awaiting, running, failed] }),
+    )
 
-    expect(selectReviewState(delegation)).toEqual({
-      latestChange,
-      runningChange,
-      latestIncorporatedChange: lastIncorporatedChange,
-      reviewPredatesChange: true,
-      featureApproved: false,
-    })
+    // `latestChange` is the last entry, not the first and not the running one.
+    expect(state.latestChange).toBe(failed)
+    expect(state.runningChange).toBe(running)
+  })
+
+  it('reports no running change when none is running', () => {
+    expect(
+      selectReviewState(
+        makeDelegation({
+          changes: [makeChange({ status: 'awaiting_review' }), makeChange({ status: 'completed' })],
+        }),
+      ).runningChange,
+    ).toBeNull()
   })
 
   it('approves a completed review when its incorporated change is earlier', () => {
@@ -252,6 +236,8 @@ describe('selectReviewState', () => {
         makeDelegation({
           review: makeReview({ approved: true, settled_at: '2026-08-20T00:00:00Z' }),
           changes: [makeChange({ created_at: '2026-08-18T00:00:00Z' })],
+          review_superseded: false,
+          feature_approved: true,
         }),
       ).featureApproved,
     ).toBe(true)
@@ -266,6 +252,8 @@ describe('selectReviewState', () => {
         makeDelegation({
           review: makeReview({ status, approved: true, settled_at: null }),
           changes: [],
+          review_superseded: false,
+          feature_approved: false,
         }),
       ).featureApproved,
     ).toBe(false)
