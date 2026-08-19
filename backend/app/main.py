@@ -7,7 +7,7 @@ from fastapi.responses import PlainTextResponse
 
 from app.agents.router import router as agents_router
 from app.controller.config import get_controller_settings
-from app.controller.lifecycle import cancel_task, expiry_loop, reconcile_controller_state
+from app.startup import cancel_task, expiry_loop, reconcile_controller_state
 from app.controller.store import get_controller_store
 from app.containers.router import router as containers_router
 from app.delegation.router import router as delegation_router

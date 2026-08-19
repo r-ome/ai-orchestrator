@@ -6,7 +6,7 @@ import pytest
 
 from conftest import register_ready_v1_sandbox
 
-from app.controller.lifecycle import _settle_interrupted_turns, reconcile_controller_state
+from app.startup import _settle_interrupted_turns, reconcile_controller_state
 from app.controller.store import ControllerStore
 from app.delegation import service as delegation_service
 from app.platform.naming import ownership_labels
@@ -251,7 +251,7 @@ def test_startup_closes_every_open_agent_writer_session(
 
             raise DockerException("unavailable")
 
-    monkeypatch.setattr("app.controller.lifecycle.docker", UnavailableDocker)
+    monkeypatch.setattr("app.startup.docker", UnavailableDocker)
 
     counts = reconcile_controller_state(store)
 
@@ -290,7 +290,7 @@ def test_startup_reclaims_a_lease_for_a_settled_operation(
 
             raise DockerException("unavailable")
 
-    monkeypatch.setattr("app.controller.lifecycle.docker", UnavailableDocker)
+    monkeypatch.setattr("app.startup.docker", UnavailableDocker)
 
     counts = reconcile_controller_state(store)
 
@@ -349,7 +349,7 @@ def test_startup_reclaims_a_stale_unsettled_lease(
 
             raise DockerException("unavailable")
 
-    monkeypatch.setattr("app.controller.lifecycle.docker", UnavailableDocker)
+    monkeypatch.setattr("app.startup.docker", UnavailableDocker)
 
     counts = reconcile_controller_state(store)
 
@@ -382,7 +382,7 @@ def test_startup_reports_each_unclaimed_sbx_resource_without_removing_it(
     network = docker_client.networks.create("sbx-aaaaaaaaaaaa-network", labels=labels)
 
     monkeypatch.setattr(
-        "app.controller.lifecycle.docker.from_env", lambda: docker_client
+        "app.startup.docker.from_env", lambda: docker_client
     )
     monkeypatch.setattr(
         store,
@@ -446,7 +446,7 @@ def test_startup_orphan_reporting_skips_manifest_claims_and_shared_infrastructur
     )
 
     monkeypatch.setattr(
-        "app.controller.lifecycle.docker.from_env", lambda: docker_client
+        "app.startup.docker.from_env", lambda: docker_client
     )
     counts = reconcile_controller_state(store)
 
@@ -477,7 +477,7 @@ def test_startup_orphan_reporting_degrades_when_docker_is_unavailable(
 
             raise DockerException("unavailable")
 
-    monkeypatch.setattr("app.controller.lifecycle.docker", UnavailableDocker)
+    monkeypatch.setattr("app.startup.docker", UnavailableDocker)
 
     counts = reconcile_controller_state(store)
 
@@ -498,7 +498,7 @@ def test_startup_orphan_reporting_keeps_partial_findings_after_a_docker_failure(
     )
     docker_client.inject_failure("networks.list", DockerException("unavailable"))
     monkeypatch.setattr(
-        "app.controller.lifecycle.docker.from_env", lambda: docker_client
+        "app.startup.docker.from_env", lambda: docker_client
     )
 
     counts = reconcile_controller_state(store)

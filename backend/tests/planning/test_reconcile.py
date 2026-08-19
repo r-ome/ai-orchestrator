@@ -5,7 +5,7 @@ import pytest
 from conftest import register_ready_v1_sandbox
 from docker.errors import DockerException
 
-from app.controller.lifecycle import reconcile_controller_state
+from app.startup import reconcile_controller_state
 from app.controller.store import ControllerStore
 
 
@@ -37,7 +37,7 @@ def test_reconcile_fails_and_releases_running_turn_when_docker_is_down(
     )
     assert store.claim_planning_turn("session-1")
     monkeypatch.setattr(
-        "app.controller.lifecycle.docker.from_env",
+        "app.startup.docker.from_env",
         lambda: (_ for _ in ()).throw(DockerException("daemon unavailable")),
     )
 

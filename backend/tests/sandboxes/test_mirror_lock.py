@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.controller.lifecycle import reconcile_controller_state
+from app.startup import reconcile_controller_state
 from app.controller.store import ControllerStore, SandboxLeaseHeldError
 from app.sandboxes.lifecycle import (
     LockOrderError,
