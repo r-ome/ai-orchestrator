@@ -15,11 +15,9 @@ from app.previews.models import (
     PreviewNetworkAccess,
 )
 from app.projects.secrets import _project_secrets_response
-from app.previews.service import (
-    _environment_status,
-    _compose_service_environment,
-    _secret_environment,
-)
+from app.previews.runtimes.compose import _compose_service_environment
+from app.previews.runtimes.environment import _secret_environment
+from app.previews.service import _environment_status
 
 
 ATC_DOTENV = b"""

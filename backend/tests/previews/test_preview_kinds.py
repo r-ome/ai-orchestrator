@@ -21,9 +21,9 @@ from app.previews.models import (
 from app.previews.errors import PreviewOperationError
 from app.dependency_cache import _run_volume_name
 from app.previews.resources import _labels, _remove_resources
+from app.previews.runtimes.native import _start_native
 from app.previews.service import (
     _available_host_port,
-    _start_native,
     propose_preview,
     restart_preview,
     start_preview,
@@ -255,7 +255,7 @@ def test_failed_task_preview_returns_the_task_to_review(
     # This test covers task-state recovery. Environment masking has its own
     # integration coverage and Docker Desktop cannot mount pytest's private
     # temporary directory into a container on macOS.
-    monkeypatch.setattr("app.previews.service._environment_masks", lambda *_: [])
+    monkeypatch.setattr("app.previews.runtimes.native._environment_masks", lambda *_: [])
     client = docker.from_env()
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()

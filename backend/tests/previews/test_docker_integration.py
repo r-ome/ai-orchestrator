@@ -23,11 +23,11 @@ from app.previews.models import (
 )
 from app.dependency_cache import _volume_runtime_files
 from app.previews.resources import _labels, _remove_resources
+from app.previews.runtimes.compose import _start_compose
+from app.previews.runtimes.dockerfile import _start_dockerfile
+from app.previews.runtimes.native import _start_native
 from app.previews.service import (
     _available_host_port,
-    _start_compose,
-    _start_dockerfile,
-    _start_native,
     preview_creation_logs,
     preview_logs,
     propose_preview,
@@ -704,7 +704,7 @@ def test_reused_dependency_volume_still_reports_zero_duration(
     # This test covers dependency reuse. Environment masking has separate
     # integration coverage and Docker Desktop cannot mount pytest's private
     # temporary directory into a container on macOS.
-    monkeypatch.setattr("app.previews.service._environment_masks", lambda *_: [])
+    monkeypatch.setattr("app.previews.runtimes.native._environment_masks", lambda *_: [])
     client = docker.from_env()
     # `_dependency_volume_name` truncates to the first 12 characters of the
     # sandbox id, so the random part has to lead or two runs collide on the

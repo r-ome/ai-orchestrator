@@ -11,8 +11,8 @@ from app.previews.models import (
     PreviewNetworkAccess,
     PreviewRuntime,
 )
-from app.previews import service as preview_service
 from app.previews import resources as preview_resources
+from app.previews.runtimes import native as preview_native
 from app.delegation.packet import ResolvedVerification
 from app.delegation.verification import VerificationSettings, run_verification
 from app.sandboxes.manifest import SandboxManifest, write_manifest
@@ -104,12 +104,12 @@ def test_task_archive_preview_mounts_the_same_sandbox_sqlite_database(
         return created
 
     monkeypatch.setattr(fake_docker_client.containers, "create", capture)
-    monkeypatch.setattr(preview_service, "_ensure_preview_image", lambda *_args: None)
-    monkeypatch.setattr(preview_service, "_environment_masks", lambda *_args: [])
-    monkeypatch.setattr(preview_service, "_wait_for_container_health", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(preview_service, "_network", run_network)
+    monkeypatch.setattr(preview_native, "_ensure_preview_image", lambda *_args: None)
+    monkeypatch.setattr(preview_native, "_environment_masks", lambda *_args: [])
+    monkeypatch.setattr(preview_native, "_wait_for_container_health", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(preview_native, "_network", run_network)
     monkeypatch.setattr(
-        preview_service,
+        preview_native,
         "_export_commit",
         lambda _client, _image, source, target, commit: exports.append(
             (source, target, commit)
@@ -125,7 +125,7 @@ def test_task_archive_preview_mounts_the_same_sandbox_sqlite_database(
         build_timeout_seconds=900,
     )
     run_id = "c" * 32
-    resources = preview_service._start_native(
+    resources = preview_native._start_native(
         fake_docker_client,
         settings,
         workspace_volume(sandbox_id),
@@ -202,11 +202,11 @@ def test_server_preview_borrows_and_disconnects_the_persistent_sandbox_network(
         return created
 
     monkeypatch.setattr(fake_docker_client.containers, "create", capture)
-    monkeypatch.setattr(preview_service, "_ensure_preview_image", lambda *_args: None)
-    monkeypatch.setattr(preview_service, "_environment_masks", lambda *_args: [])
-    monkeypatch.setattr(preview_service, "_exclude_preview_masks", lambda *_args: None)
-    monkeypatch.setattr(preview_service, "_wait_for_container_health", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(preview_service, "_network", run_network)
+    monkeypatch.setattr(preview_native, "_ensure_preview_image", lambda *_args: None)
+    monkeypatch.setattr(preview_native, "_environment_masks", lambda *_args: [])
+    monkeypatch.setattr(preview_native, "_exclude_preview_masks", lambda *_args: None)
+    monkeypatch.setattr(preview_native, "_wait_for_container_health", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(preview_native, "_network", run_network)
     settings = PreviewSettings(
         inspection_image="alpine:latest",
         default_expiry_minutes=30,
@@ -217,7 +217,7 @@ def test_server_preview_borrows_and_disconnects_the_persistent_sandbox_network(
         build_timeout_seconds=900,
     )
     run_id = "1" * 32
-    resources = preview_service._start_native(
+    resources = preview_native._start_native(
         fake_docker_client,
         settings,
         workspace_volume(sandbox_id),

@@ -24,12 +24,13 @@ from app.previews.models import (
 )
 from app.previews.errors import PreviewOperationError
 from app.previews.progress import _record_preview_progress
-from app.previews.service import (
+from app.previews.runtimes.compose import (
     _compose_environment,
-    _native_runtime_environment,
     _service_order,
     _validate_compose_service,
 )
+from app.previews.runtimes.native import _native_runtime_environment
+from app.previews.service import _environment_status
 
 
 def test_compose_wins_when_project_also_has_a_dockerfile() -> None:
