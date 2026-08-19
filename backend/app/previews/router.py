@@ -49,7 +49,6 @@ from app.projects.secrets import (
     set_project_secrets,
 )
 from app.previews.service import (
-    database_sharing_state,
     get_current_preview,
     open_preview_log_stream,
     preview_creation_logs,
@@ -62,6 +61,7 @@ from app.previews.service import (
     start_preview,
     stop_preview,
 )
+from app.previews.sharing import database_sharing_state
 
 
 router = APIRouter(prefix="/projects/{project_name}", tags=["previews"])

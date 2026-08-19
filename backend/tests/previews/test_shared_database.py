@@ -20,7 +20,7 @@ from app.previews.models import (
     PreviewServiceType,
     PreviewSharing,
 )
-from app.previews.service import (
+from app.previews.sharing import (
     _attach_shared_database,
     _identifier,
     _release_shared_database,

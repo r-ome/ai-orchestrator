@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 import app.previews.service as preview_service
+import app.previews.sharing as preview_sharing
 import app.sandboxes.database as sandbox_database
 from app.previews.config import get_preview_settings
 from app.previews.errors import PreviewOperationError
@@ -19,7 +20,7 @@ from app.previews.models import (
     PreviewServiceType,
     PreviewSharing,
 )
-from app.previews.service import _validate_sharing
+from app.previews.sharing import _validate_sharing
 from app.sandboxes.database import (
     MYSQL_DATABASE,
     POSTGRESQL_DATABASE,
@@ -300,16 +301,16 @@ def test_sandbox_and_preview_shared_server_creation_use_the_same_project_lock(
         return names
 
     monkeypatch.setattr(sandbox_database, "shared_database_names", sandbox_names)
-    monkeypatch.setattr(preview_service, "_shared_database_names", preview_names)
+    monkeypatch.setattr(preview_sharing, "_shared_database_names", preview_names)
     monkeypatch.setattr(sandbox_database, "ensure_image", lambda *_: None)
-    monkeypatch.setattr(preview_service, "_ensure_preview_image", lambda *_: None)
+    monkeypatch.setattr(preview_sharing, "_ensure_preview_image", lambda *_: None)
     monkeypatch.setattr(
         sandbox_database,
         "_wait_for_server_health",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        preview_service,
+        preview_sharing,
         "_wait_for_mysql_health",
         lambda *_args, **_kwargs: None,
     )
@@ -334,7 +335,7 @@ def test_sandbox_and_preview_shared_server_creation_use_the_same_project_lock(
         )
 
     def from_preview() -> object:
-        return preview_service._shared_database_server(
+        return preview_sharing._shared_database_server(
             docker,
             settings,
             project_key="project-123456789",
