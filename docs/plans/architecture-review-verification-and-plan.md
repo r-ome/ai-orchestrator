@@ -4,9 +4,16 @@
 **Verified against:** `main` @ `30e7ca9`, 19 Aug 2026
 **Baseline at verification:** `backend/.venv/bin/python -m pytest -q` → 818 passed, 43 skipped, 26.1s
 
-> **Progress, 19 Aug 2026 — `main` @ `4889bed`.** Phases 0, 1, 2, 3.1, 3.2, 3.3, 4, 5, 6, 7,
+> **Progress, 19 Aug 2026 — `main` @ `6f94db3`.** Phases 0, 1, 2, 3.1, 3.2, 3.3, 4, 5, 6, 7,
 > 8 and 9 are done. Phase 3.4 is partially done and deliberately stopped; see its status block.
-> Phase 10 is next. Current suite: **backend 835 passed, 43 skipped; frontend 74 passed**.
+> Phase 10 is in progress: its `Severity` item is **closed unbuilt**, the `SandboxChange`
+> rename is not started. Current suite: **backend 835 passed, 43 skipped; frontend 80 passed**.
+>
+> Phase 10's `Severity` candidate pairs the wrong two sites. Plan risks and integration
+> findings share a scale but not a concept; planning reviewer findings and integration
+> findings share the concept but not the scale, and unifying those is a wire change. The
+> audit found a real defect the candidate had not named — three of four finding lists
+> hardcoded `pill warn` — and that was fixed instead. See the Phase 10 status block.
 >
 > Phase 9 built the `platform` layer and cut the module import cycle from **10 nodes to 8**.
 > It did **not** reach the "no cycles" goal its own text states, and that goal is not
@@ -176,6 +183,8 @@ the shared `docker_response` policy (candidate 8) and `useApiResource` polling
 (candidate 9). Its remaining candidate 10 — one `Severity` enum for planning findings
 and integration review — does **not** exist in the tree yet (`grep 'class Severity'`
 returns nothing) and is folded in below as an optional item.
+**Closed unbuilt in Phase 10, 19 Aug 2026**: the candidate pairs the wrong two sites, and
+the pair that is genuinely one concept needs a wire change. See the Phase 10 status block.
 
 ---
 
@@ -751,6 +760,37 @@ premise is partly wrong. There are **three** vocabularies, not two:
 Only the last two share a scale. Planning findings use a genuinely different one, and the
 frontend renders all three as pill labels, so collapsing them changes the wire format. Scope
 this to unifying the two `{high, medium, low}` sites, or drop it.
+
+> **Candidate 10 closed, 19 Aug 2026, `main` @ `6f94db3`. The pairing axis above is wrong.**
+> The two sites that share a scale are not the same concept, and the two sites that are the
+> same concept do not share a scale.
+>
+> Plan risks (`PlanRisk.severity`, `planning/models.py:199`) are an advisory annotation. They
+> gate nothing. Integration review findings (`IntegrationFinding.severity`,
+> `delegation/models.py:170`) are defects, and `{high, medium}` blocks a delegation at
+> `integration_review.py:501`. They coincide on three strings and nothing else. Sharing an
+> enum between them would also have to land in `app/platform/`, since `planning` and
+> `delegation` are both inside the residual 8-node cycle — cost with no meaning bought.
+>
+> The pair that **is** one concept is planning reviewer findings and integration review
+> findings. Both are review findings; both gate approval on their own top two rungs
+> (`planning/service.py:766`, `integration_review.py:501`); the frontend already mapped both
+> onto the same three pill colours. They are one three-rung ladder wearing two names.
+> Unifying them is a wire change — the vocabulary is encoded in the DB column
+> (`controller/store/schema.py:219`), in both LLM prompts (`planning/prompts.py:107`,
+> `integration_review.py:489`), and in the frontend — so it cannot ride in this
+> structural-move phase. Recorded as an open item, not attempted.
+>
+> **What was done instead.** The audit found a real defect the candidate had not named:
+> three of the four finding lists hardcoded `pill warn` and ignored severity entirely — at
+> `47c6951`, `PlanSpecView.tsx:110`, `PlanReviewPanel.tsx:189` and `FeatureReviewPanel.tsx:70`
+> — so a `blocking` finding drew the same amber as a `minor` one. `frontend/src/utils/severity.ts`
+> now maps both vocabularies onto shared rungs 3/2/1 and pills `err`/`warn`/`muted`, and the
+> two sites that already had local maps use it too. No wire change. Frontend went 74 → 80
+> tests; `npm run build` clean.
+>
+> The `Severity` **enum** as such stays unbuilt. The severity strings remain strings on the
+> backend; only the frontend now reads them consistently.
 
 ---
 
