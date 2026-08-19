@@ -4,16 +4,11 @@ import {
   cancelPlanningSession,
   confirmPlanningUnderstanding,
   correctPlanningUnderstanding,
-  fetchPlanningMessageRaw,
   fetchPlanningSession,
   fetchPlanningSessions,
   isPlanningTerminal,
   proceedPlanningSession,
   sendPlanningMessage,
-  type PlanningMessage,
-  type PlanningSession,
-  type PlanningSessionDetail,
-  type PlanningStatus,
 } from '../api/planning'
 import {
   fetchSandbox,
@@ -21,369 +16,28 @@ import {
   type Sandbox,
 } from '../api/sandboxes'
 import { ApiError } from '../api/client'
-import CollapsibleCard from '../components/CollapsibleCard'
 import ConfirmDialog from '../components/ConfirmDialog'
 import {
   ContextModal,
   DelegationPanel,
   useDelegationWorkspace,
-  type DelegationTabId,
 } from '../components/DelegationWorkspace'
-import Markdown from '../components/Markdown'
 import PlanSpecView from '../components/PlanSpecView'
-import PlanningRawOutput from '../components/PlanningRawOutput'
+import { PlanningAgentInspector } from '../components/PlanningAgentInspector'
 import PlanningStatusBadge from '../components/PlanningStatusBadge'
-import PlanningTurnCard from '../components/PlanningTurnCard'
 import { useApiResource } from '../hooks/useApiResource'
-
-type PendingDialog = 'proceed' | 'cancel' | null
-
-/**
- * Every phase of the session, planning and delegation alike, in one sidebar.
- *
- * The delegation phases were their own page. They are the same session though:
- * a plan is only worth reading next to what is being built from it, and the
- * reader who approves a plan is the reader who then runs its work items.
- */
-type TabId = 'clarifier' | 'review' | 'spec' | DelegationTabId | 'preview'
-
-interface PhaseAgent {
-  id: string
-  role: InspectorAgentRole
-  label: string
-  detail: string
-  provider: string | null
-  model: string | null
-  reasoningEffort?: string | null
-  state: 'active' | 'done' | 'pending'
-}
-
-type InspectorAgentRole = 'clarifier' | 'planner' | 'reviewer' | 'work-item'
-type InspectorTab = 'history' | 'raw' | 'controls'
-
-function messageKind(message: PlanningMessage): string {
-  if (message.questions.length > 0) return 'question'
-  if (message.revision !== null) return 'revision'
-  if (message.approved !== null) return 'review'
-  return 'understanding'
-}
-
-function inspectorStatus(state: PhaseAgent['state']): string {
-  if (state === 'active') return 'active'
-  if (state === 'done') return 'done'
-  return 'pending'
-}
-
-function InspectorIcon({ role }: { role: InspectorAgentRole }) {
-  if (role === 'clarifier') return <span aria-hidden="true">◌</span>
-  if (role === 'planner') return <span aria-hidden="true">◇</span>
-  if (role === 'reviewer') return <span aria-hidden="true">✓</span>
-  return <span aria-hidden="true">›_</span>
-}
-
-interface PlanningAgentInspectorProps {
-  agent: PhaseAgent
-  messages: PlanningMessage[]
-  confirmed: boolean
-  projectName: string
-  sessionId: string
-  onClose: () => void
-}
-
-function PlanningAgentInspector({
-  agent,
-  messages,
-  confirmed,
-  projectName,
-  sessionId,
-  onClose,
-}: PlanningAgentInspectorProps) {
-  const [tab, setTab] = useState<InspectorTab>('history')
-  const agentMessages = useMemo(
-    () =>
-      agent.role === 'work-item'
-        ? []
-        : messages
-            .filter((message) => message.role === agent.role)
-            .sort((left, right) => left.sequence - right.sequence),
-    [agent.role, messages],
-  )
-  const latestRawSequence = useMemo(
-    () => [...agentMessages].reverse().find((message) => message.has_raw_output)?.sequence,
-    [agentMessages],
-  )
-  const [rawOutput, setRawOutput] = useState<string | null>(null)
-  const [rawError, setRawError] = useState<string | null>(null)
-  const [rawLoading, setRawLoading] = useState(false)
-
-  useEffect(() => {
-    setTab('history')
-  }, [agent.role])
-
-  useEffect(() => {
-    if (tab !== 'raw' || latestRawSequence === undefined) return
-
-    const controller = new AbortController()
-    setRawOutput(null)
-    setRawError(null)
-    setRawLoading(true)
-    fetchPlanningMessageRaw(projectName, sessionId, latestRawSequence, controller.signal)
-      .then((result) => {
-        if (!controller.signal.aborted) setRawOutput(result.raw_output)
-      })
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setRawError(err instanceof Error ? err.message : 'Unknown error')
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setRawLoading(false)
-      })
-
-    return () => controller.abort()
-  }, [latestRawSequence, projectName, sessionId, tab])
-
-  // TODO(redesign): planning API exposes no cost/token usage.
-  const stats = [
-    ['provider', agent.provider ?? ''],
-    ['model', agent.model ?? ''],
-    ['turns', String(agentMessages.length)],
-    ['cost', '—'],
-    ['tokens in', '—'],
-    ['tokens out', '—'],
-  ]
-  const subtitle = [agent.role, agent.provider].filter(Boolean).join(' · ')
-
-  return (
-    <aside className="planning-agent-inspector" aria-label={`${agent.label} inspector`}>
-      <header className="planning-inspector-header">
-        <span className="planning-inspector-icon"><InspectorIcon role={agent.role} /></span>
-        <div className="planning-inspector-identity">
-          <h2>{agent.label}</h2>
-          <p>{subtitle}</p>
-        </div>
-        <span className={`planning-agent-dot is-${inspectorStatus(agent.state)}`} aria-label={agent.state} />
-        <button type="button" className="planning-inspector-close" onClick={onClose} aria-label="Close agent inspector">
-          ✕
-        </button>
-      </header>
-
-      <dl className="planning-inspector-stats">
-        {stats.map(([label, value]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
-
-      <div className="planning-inspector-tabs" role="tablist" aria-label="Agent inspector views">
-        {([
-          ['history', 'History'],
-          ['raw', 'Raw output'],
-          ['controls', 'Controls'],
-        ] as const).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={tab === id}
-            className={tab === id ? 'is-active' : undefined}
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <div className="planning-inspector-content" role="tabpanel">
-        {tab === 'history' && (
-          agentMessages.length === 0 ? (
-            <p className="planning-inspector-empty">No turns recorded.</p>
-          ) : (
-            <ol className="planning-inspector-history">
-              {agentMessages.map((entry, index) => {
-                const isConfirmed = agent.role === 'clarifier' && confirmed && index === agentMessages.length - 1
-                const approved = entry.approved === true
-                return (
-                  <li key={entry.sequence}>
-                    <span className="planning-inspector-history-line" aria-hidden="true" />
-                    <div>
-                      <p className="planning-inspector-turn-label">Turn {index + 1} · {messageKind(entry)}</p>
-                      {entry.text && <p className="planning-inspector-turn-text">{entry.text}</p>}
-                      {(approved || isConfirmed) && (
-                        <span className="planning-inspector-approved">{approved ? 'approved' : 'confirmed'}</span>
-                      )}
-                    </div>
-                  </li>
-                )
-              })}
-            </ol>
-          )
-        )}
-
-        {tab === 'raw' && (
-          latestRawSequence === undefined ? (
-            <p className="planning-inspector-empty">No raw output recorded.</p>
-          ) : (
-            <>
-              {rawLoading && <p className="planning-inspector-empty">Loading raw output…</p>}
-              {rawError && <p className="status status-error" role="alert">Failed to load raw output: {rawError}</p>}
-              {rawOutput !== null && <pre className="planning-inspector-raw">{rawOutput}</pre>}
-            </>
-          )
-        )}
-
-        {tab === 'controls' && (
-          // TODO(redesign): planning API does not support per-agent overrides after a session starts.
-          <dl className="planning-inspector-controls">
-            <div><dt>Provider</dt><dd>{agent.provider ?? ''}</dd></div>
-            <div><dt>Model</dt><dd>{agent.model ?? ''}</dd></div>
-            {agent.role === 'reviewer' && (
-              <div><dt>Reasoning effort</dt><dd>{agent.reasoningEffort ?? ''}</dd></div>
-            )}
-          </dl>
-        )}
-      </div>
-    </aside>
-  )
-}
-
-function thinkingRole(status: PlanningStatus): string | null {
-  if (status === 'clarifying' || status === 'awaiting_confirmation') {
-    return 'Clarifier'
-  }
-  if (status === 'planning') return 'Planner'
-  if (status === 'under_review') return 'Plan reviewer'
-  return null
-}
-
-/**
- * The tab the session's current phase makes most useful.
- *
- * Used only until the reader picks a tab themselves, so an open page follows a
- * running session from clarification through to the finished spec.
- */
-function phaseTab(status: PlanningStatus): TabId {
-  if (status === 'plan_ready' || status === 'review_limit_reached') return 'spec'
-  if (status === 'planning' || status === 'under_review') return 'review'
-  return 'clarifier'
-}
-
-interface SplitMessages {
-  clarifier: PlanningMessage[]
-  review: PlanningMessage[]
-}
-
-/**
- * Splits the message log into the clarification thread and the planning thread.
- *
- * A system message belongs to whichever phase produced it, so it lands in the
- * clarification thread until the first planner turn appears and in the planning
- * thread after that. Otherwise a clarifier failure would be recorded on a tab
- * the reader has no reason to open.
- */
-function splitMessages(messages: PlanningMessage[]): SplitMessages {
-  const ordered = [...messages].sort((left, right) => left.sequence - right.sequence)
-  const firstPlanner = ordered.find((entry) => entry.role === 'planner')
-  const planningStarts = firstPlanner?.sequence ?? Number.POSITIVE_INFINITY
-
-  const split: SplitMessages = { clarifier: [], review: [] }
-  for (const entry of ordered) {
-    if (entry.role === 'user' || entry.role === 'clarifier') {
-      split.clarifier.push(entry)
-    } else if (entry.role === 'planner' || entry.role === 'reviewer') {
-      split.review.push(entry)
-    } else if (entry.sequence < planningStarts) {
-      split.clarifier.push(entry)
-    } else {
-      split.review.push(entry)
-    }
-  }
-  return split
-}
-
-/** One planner revision and the reviewer round that answered it. */
-interface ReviewRound {
-  key: string
-  number: number
-  planner: PlanningMessage | null
-  reviewer: PlanningMessage | null
-  /** System turns, and any second reviewer turn, recorded inside this round. */
-  extra: PlanningMessage[]
-}
-
-interface GroupedReview {
-  /** Turns recorded before the planner's first revision, so before round one. */
-  preamble: PlanningMessage[]
-  rounds: ReviewRound[]
-}
-
-/**
- * Groups the planning thread into rounds, one per planner revision.
- *
- * A round is the unit the loop actually runs in: the planner writes a revision,
- * the reviewer answers it once, and the two either settle or go again. Grouping
- * on the planner turn rather than on the revision number keeps a round intact
- * even when a turn arrives without one.
- */
-function groupRounds(messages: PlanningMessage[]): GroupedReview {
-  const grouped: GroupedReview = { preamble: [], rounds: [] }
-
-  for (const entry of messages) {
-    if (entry.role === 'planner') {
-      grouped.rounds.push({
-        key: `round-${entry.sequence}`,
-        number: entry.revision ?? grouped.rounds.length + 1,
-        planner: entry,
-        reviewer: null,
-        extra: [],
-      })
-      continue
-    }
-
-    const current = grouped.rounds[grouped.rounds.length - 1]
-    if (!current) {
-      grouped.preamble.push(entry)
-    } else if (entry.role === 'reviewer' && current.reviewer === null) {
-      current.reviewer = entry
-    } else {
-      current.extra.push(entry)
-    }
-  }
-
-  return grouped
-}
-
-function roundVerdict(round: ReviewRound): { label: string; tone: string } {
-  if (round.reviewer === null || round.reviewer.approved === null) {
-    return { label: 'Awaiting review', tone: 'muted' }
-  }
-  return round.reviewer.approved
-    ? { label: 'Approved', tone: 'ok' }
-    : { label: 'Changes requested', tone: 'warn' }
-}
-
-function providerFor(
-  session: PlanningSessionDetail,
-  message: PlanningMessage,
-): PlanningSessionDetail['clarifier_provider'] {
-  if (message.role === 'planner') return session.planner_provider
-  if (message.role === 'reviewer') return session.reviewer_provider
-  return session.clarifier_provider
-}
-
-function sessionStatusLine(session: PlanningSession): string {
-  if (session.feature_status === 'building') {
-    return `building · ${session.review_turn}/${session.max_review_turns}`
-  }
-  if (session.status === 'under_review') return `under review · rev ${session.plan_revision}`
-  if (session.status === 'plan_ready') return 'plan ready'
-  if (session.status === 'planning') return `planning · rev ${session.plan_revision}`
-  if (session.status === 'review_limit_reached') return 'review limit reached'
-  if (session.status === 'awaiting_confirmation') return 'awaiting confirmation'
-  return session.status
-}
+import { ClarifierPanel } from './ClarifierPanel'
+import { PlanReviewPanel } from './PlanReviewPanel'
+import {
+  groupRounds,
+  phaseTab,
+  sessionStatusLine,
+  splitMessages,
+  thinkingRole,
+  type PendingDialog,
+  type PhaseAgent,
+  type TabId,
+} from './planningSessionModel'
 
 function PlanningSessionPage() {
   // Planning is reachable from two places, so the route supplies one of two
@@ -829,333 +483,46 @@ function PlanningSessionPage() {
           )}
 
           {activeTab === 'clarifier' && (
-            <div role="tabpanel" id="panel-clarifier" aria-labelledby="tab-clarifier">
-              <section className="planning-thread-panel" aria-label="Conversation with the clarifier">
-                <div className="planning-thread-body">
-                  {threads.clarifier.length === 0 ? (
-                    <p className="status">No messages have been recorded yet.</p>
-                  ) : (
-                    <ol className="planning-thread">
-                      {threads.clarifier.map((entry) => (
-                        <li
-                          key={entry.sequence}
-                          className={`planning-message planning-message-${entry.role}`}
-                        >
-                          <span className="planning-message-avatar" aria-hidden="true">
-                            {entry.role === 'user' ? 'U' : entry.role === 'clarifier' ? '◌' : '·'}
-                          </span>
-                          <div className="planning-message-content">
-                            <div className="planning-message-author">
-                              {entry.role === 'user'
-                                ? 'Human'
-                                : entry.role === 'clarifier'
-                                  ? 'Clarifier · clarifier'
-                                  : 'System'}
-                            </div>
-                            {entry.text && <Markdown source={entry.text} />}
-                            {entry.questions.length > 0 && (
-                              <ol className="planning-questions">
-                                {entry.questions.map((question, index) => (
-                                  <li key={`${entry.sequence}-${index}`}>{question}</li>
-                                ))}
-                              </ol>
-                            )}
-                            {entry.has_raw_output && (
-                              <PlanningRawOutput
-                                projectName={projectName}
-                                sessionId={sessionId}
-                                sequence={entry.sequence}
-                                provider={providerFor(data, entry)}
-                                model={entry.model}
-                              />
-                            )}
-                          </div>
-                        </li>
-                      ))}
-                    </ol>
-                  )}
-                  {turnRunning && activeRole === 'Clarifier' && (
-                    <p className="status planning-thinking" aria-live="polite">
-                      <span className="planning-thinking-blip" aria-hidden="true" />
-                      Clarifier is thinking…
-                    </p>
-                  )}
-                </div>
-              </section>
-
-              {/* The understanding outlives the decision on it. Once planning
-                  starts it is what the planner was given, so it stays on this
-                  tab as the record of what the clarifier and the human agreed
-                  rather than disappearing with the Confirm buttons. */}
-              {data.understanding_summary && (
-                <section className="card">
-                  <div className="card-header">
-                    <h2>Understanding</h2>
-                    {data.confirmed ? (
-                      <span className="pill ok">
-                        <span aria-hidden="true">✓</span> confirmed
-                      </span>
-                    ) : data.status === 'awaiting_confirmation' ? (
-                      <div className="button-row">
-                        <button
-                          type="button"
-                          className="primary"
-                          onClick={() =>
-                            void runAction(() =>
-                              confirmPlanningUnderstanding(projectName, sessionId),
-                            )
-                          }
-                          disabled={busy}
-                        >
-                          Confirm and start planning
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActionError(null)
-                            setAddingClarification(true)
-                          }}
-                          disabled={busy}
-                        >
-                          Keep clarifying
-                        </button>
-                      </div>
-                    ) : (
-                      data.status !== 'clarifying' && (
-                        <span className="pill warn"><span aria-hidden="true">!</span> Sent without confirmation</span>
-                      )
-                    )}
-                  </div>
-                  <div className="card-body">
-                    <Markdown source={data.understanding_summary} />
-                  </div>
-                </section>
-              )}
-
-              {composerVisible && (
-                <section className="card">
-                  <div className="card-header">
-                    <h2>{addingClarification ? 'Clarification' : 'Reply'}</h2>
-                  </div>
-                  <div className="card-body">
-                    {turnRunning && (
-                      <p className="status">
-                        The composer is disabled while the current planning turn
-                        runs.
-                      </p>
-                    )}
-                    <form onSubmit={submitMessage}>
-                      <label className="dialog-field">
-                        {addingClarification
-                          ? 'Add to the understanding'
-                          : 'Your reply'}
-                        <textarea
-                          value={message}
-                          rows={5}
-                          maxLength={8000}
-                          onChange={(event) => setMessage(event.target.value)}
-                          disabled={turnRunning || busy}
-                          required
-                        />
-                      </label>
-                      <div className="button-row">
-                        <button type="submit" className="primary" disabled={!canSend}>
-                          {busy ? 'Sending…' : 'Send'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActionError(null)
-                            setPendingDialog('proceed')
-                          }}
-                          disabled={!canProceed || busy}
-                        >
-                          Proceed anyway
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                </section>
-              )}
-            </div>
+            <ClarifierPanel
+              data={data}
+              threads={threads}
+              projectName={projectName}
+              sessionId={sessionId}
+              turnRunning={turnRunning}
+              activeRole={activeRole}
+              busy={busy}
+              composerVisible={composerVisible}
+              addingClarification={addingClarification}
+              message={message}
+              canSend={canSend}
+              canProceed={canProceed}
+              onConfirmUnderstanding={() =>
+                void runAction(() =>
+                  confirmPlanningUnderstanding(projectName, sessionId),
+                )
+              }
+              onKeepClarifying={() => {
+                setActionError(null)
+                setAddingClarification(true)
+              }}
+              onSubmitMessage={submitMessage}
+              onMessageChange={setMessage}
+              onProceed={() => {
+                setActionError(null)
+                setPendingDialog('proceed')
+              }}
+            />
           )}
 
           {activeTab === 'review' && (
-            <div role="tabpanel" id="panel-review" aria-labelledby="tab-review">
-              {showReviewProgress && (
-                <section className="card">
-                  <div className="card-header">
-                    <h2>Review progress</h2>
-                  </div>
-                  <div className="card-body">
-                    <p>
-                      Round {data.review_turn} of {data.max_review_turns}. Current
-                      revision: {data.plan_revision}. Open findings:{' '}
-                      {
-                        data.findings.filter((finding) => finding.status === 'open')
-                          .length
-                      }
-                      .
-                    </p>
-                    {/* The rounds below read as a flat list of cards, which
-                        hides the loop that produced them. */}
-                    <p className="status">
-                      One round is one plan revision and the review it received.
-                      The planner writes a revision, the reviewer answers it once
-                      with findings and a verdict, and an unapproved verdict
-                      starts the next round. From round two on, the planner
-                      answers the previous round&rsquo;s findings and rewrites the
-                      plan in the same turn.
-                    </p>
-                  </div>
-                </section>
-              )}
-
-              {data.feature_brief && (
-                <CollapsibleCard title="Sent to the planner">
-                  <p className="status">
-                    The brief the clarifier froze when planning started. The
-                    planner works from this text alone, not from the live
-                    conversation.
-                  </p>
-                  <pre className="file-content">{data.feature_brief}</pre>
-                </CollapsibleCard>
-              )}
-
-              {review.preamble.map((entry) => (
-                <PlanningTurnCard
-                  key={entry.sequence}
-                  message={entry}
-                  projectName={projectName}
-                  sessionId={sessionId}
-                  provider={providerFor(data, entry)}
-                />
-              ))}
-
-              {review.rounds.length === 0 ? (
-                <p className="status">
-                  The planner has not run yet. It starts once the understanding is
-                  confirmed.
-                </p>
-              ) : (
-                review.rounds.map((round, index) => {
-                  const verdict = roundVerdict(round)
-                  const raised = round.reviewer?.findings.length ?? 0
-                  const earlier = index > 0 ? review.rounds[index - 1].planner : null
-                  const previousPlan =
-                    earlier && earlier.text
-                      ? {
-                          revision: earlier.revision ?? review.rounds[index - 1].number,
-                          text: earlier.text,
-                        }
-                      : null
-                  return (
-                    <CollapsibleCard
-                      key={round.key}
-                      title={`Round ${round.number} · plan revision ${round.planner?.revision ?? round.number}`}
-                      // The newest round is the one the reader came for, and
-                      // it is the only one whose outcome may still change.
-                      defaultOpen={index === review.rounds.length - 1}
-                      aside={
-                        <>
-                          {raised > 0 && (
-                            <span className="pill muted">
-                              {raised} finding{raised === 1 ? '' : 's'}
-                            </span>
-                          )}
-                          <span className={`pill ${verdict.tone}`}>
-                            {verdict.label}
-                          </span>
-                        </>
-                      }
-                    >
-                      {round.planner && (
-                        <PlanningTurnCard
-                          bare
-                          message={round.planner}
-                          projectName={projectName}
-                          sessionId={sessionId}
-                          provider={providerFor(data, round.planner)}
-                          previousPlan={previousPlan}
-                        />
-                      )}
-                      {round.reviewer ? (
-                        <PlanningTurnCard
-                          bare
-                          message={round.reviewer}
-                          projectName={projectName}
-                          sessionId={sessionId}
-                          provider={providerFor(data, round.reviewer)}
-                        />
-                      ) : (
-                        <p className="status">
-                          The reviewer has not answered this revision yet.
-                        </p>
-                      )}
-                      {round.extra.map((entry) => (
-                        <PlanningTurnCard
-                          bare
-                          key={entry.sequence}
-                          message={entry}
-                          projectName={projectName}
-                          sessionId={sessionId}
-                          provider={providerFor(data, entry)}
-                        />
-                      ))}
-                    </CollapsibleCard>
-                  )
-                })
-              )}
-
-              {settled && (
-                <section className="card">
-                  <div className="card-header">
-                    <h2>Final verdict</h2>
-                    <span
-                      className={`pill ${data.status === 'plan_ready' ? 'ok' : 'warn'}`}
-                    >
-                      <span aria-hidden="true">
-                        {data.status === 'plan_ready' ? '✓' : '!'}
-                      </span>{' '}
-                      {data.status === 'plan_ready'
-                        ? 'Approved'
-                        : 'Review limit reached'}
-                    </span>
-                  </div>
-                  <div className="card-body">
-                    <p>
-                      {data.status === 'plan_ready'
-                        ? `The reviewer approved revision ${data.plan_revision} after ${data.review_turn} of ${data.max_review_turns} rounds.`
-                        : `The loop stopped at the ${data.max_review_turns}-round limit with revision ${data.plan_revision} unapproved.`}
-                    </p>
-                    {data.plan_spec?.reviewer_outcome.summary && (
-                      <Markdown source={data.plan_spec.reviewer_outcome.summary} />
-                    )}
-                    {data.findings.filter((finding) => finding.status === 'open')
-                      .length > 0 && (
-                      <>
-                        <div className="section-heading">Findings left open</div>
-                        <ul className="kv-rows">
-                          {data.findings
-                            .filter((finding) => finding.status === 'open')
-                            .map((finding) => (
-                              <li key={finding.finding_id}>
-                                <span className="kv-key">
-                                  <span className="pill warn">{finding.severity}</span>
-                                  <span className="mono turn-finding-id">
-                                    {finding.finding_id}
-                                  </span>
-                                </span>
-                                <span className="kv-value">{finding.text}</span>
-                              </li>
-                            ))}
-                        </ul>
-                      </>
-                    )}
-                  </div>
-                </section>
-              )}
-            </div>
+            <PlanReviewPanel
+              data={data}
+              showReviewProgress={showReviewProgress}
+              review={review}
+              projectName={projectName}
+              sessionId={sessionId}
+              settled={settled}
+            />
           )}
 
           {activeTab === 'spec' && (
