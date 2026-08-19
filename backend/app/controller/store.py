@@ -636,8 +636,6 @@ def _add_sandbox_lifecycle_columns(connection: sqlite3.Connection) -> None:
         ("feature_title", "TEXT"),
         ("desired_state", "TEXT"),
         ("lifecycle_status", "TEXT"),
-        ("operation", "TEXT"),
-        ("operation_phase", "TEXT"),
         ("last_error", "TEXT"),
         ("base_ref", "TEXT"),
         ("created_base_commit", "TEXT"),
@@ -1174,10 +1172,10 @@ class ControllerStore:
                 INSERT INTO sandboxes(
                     id, project_id, project_name, volume_name, status,
                     lifecycle_version, desired_state, lifecycle_status,
-                    operation, operation_phase, created_at, updated_at
+                    created_at, updated_at
                 ) VALUES (
                     ?, ?, ?, ?, 'creating',
-                    'v1', 'active', ?, 'create', 'manifest', ?, ?
+                    'v1', 'active', ?, ?, ?
                 )
                 ON CONFLICT(id) DO NOTHING
                 """,
@@ -1214,8 +1212,6 @@ class ControllerStore:
             "feature_title",
             "desired_state",
             "lifecycle_status",
-            "operation",
-            "operation_phase",
             "last_error",
             "base_ref",
             "created_base_commit",
@@ -3808,7 +3804,6 @@ class ControllerStore:
                     f"""
                     UPDATE sandboxes
                     SET desired_state = 'destroyed', lifecycle_status = ?,
-                        operation = 'destroy', operation_phase = 'draining',
                         updated_at = ?
                     WHERE id = ? AND lifecycle_status IN ({placeholders})
                     """,

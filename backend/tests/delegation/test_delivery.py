@@ -657,8 +657,6 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
                 replace(
                     manifest,
                     lifecycle_status="ready",
-                    operation="sync",
-                    operation_phase="ready",
                     current_base_commit=manifest.pending_base_commit,
                     pending_base_commit=None,
                 ),

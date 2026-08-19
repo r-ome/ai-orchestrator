@@ -13,8 +13,6 @@ SANDBOX_LIFECYCLE_COLUMNS = {
     "feature_title": ("TEXT", 0, None),
     "desired_state": ("TEXT", 0, None),
     "lifecycle_status": ("TEXT", 0, None),
-    "operation": ("TEXT", 0, None),
-    "operation_phase": ("TEXT", 0, None),
     "last_error": ("TEXT", 0, None),
     "base_ref": ("TEXT", 0, None),
     "created_base_commit": ("TEXT", 0, None),

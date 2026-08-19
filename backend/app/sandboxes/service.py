@@ -189,8 +189,6 @@ def sync(
             sync_strategy = _sync_strategy(controller_store, sandbox_id)
             syncing = replace(
                 manifest,
-                operation="sync",
-                operation_phase="git_sync",
                 pending_base_commit=pending_base_commit,
                 last_error=None,
             )
@@ -235,8 +233,6 @@ def sync(
                         controller_store,
                         replace(
                             failed,
-                            operation="sync",
-                            operation_phase="git_restored",
                             current_base_commit=current_base_commit,
                             pending_base_commit=None,
                             last_error=detail,
@@ -338,8 +334,6 @@ def publish(
                 controller_store,
                 replace(
                     manifest,
-                    operation="publish",
-                    operation_phase="pushing",
                     last_error=None,
                 ),
                 to_status=SandboxLifecycleStatus.PUBLISHING,
@@ -377,8 +371,6 @@ def publish(
                         controller_store,
                         replace(
                             failed,
-                            operation="publish",
-                            operation_phase="pushing",
                             last_error=failure_message,
                         ),
                         to_status=SandboxLifecycleStatus.READY,
@@ -399,8 +391,6 @@ def publish(
                 controller_store,
                 replace(
                     pushed,
-                    operation="publish",
-                    operation_phase="pr_pending",
                     last_error=None,
                 ),
             )
@@ -427,8 +417,6 @@ def publish(
                         controller_store,
                         replace(
                             failed,
-                            operation="publish",
-                            operation_phase="pr_pending",
                             last_error=str(error),
                         ),
                         to_status=SandboxLifecycleStatus.READY,
@@ -452,8 +440,6 @@ def publish(
                 controller_store,
                 replace(
                     completed,
-                    operation="publish",
-                    operation_phase="published",
                     last_error=None,
                 ),
                 to_status=SandboxLifecycleStatus.READY,
@@ -497,8 +483,6 @@ def complete_database_provision(
             controller_store,
             replace(
                 manifest,
-                operation=operation,
-                operation_phase="ready",
                 db_engine=engine,
                 db_name=None,
                 db_data_volume=None,
@@ -529,8 +513,6 @@ def complete_database_provision(
         target_status = SandboxLifecycleStatus.CREATING
     provisioning = replace(
         manifest,
-        operation=operation,
-        operation_phase=("migration_replay" if operation == "sync" else "database_provisioning"),
         db_engine=engine,
         db_name=database_name(sandbox_id),
         db_data_volume=data_volume,
@@ -573,8 +555,6 @@ def complete_database_provision(
         if failed is not None:
             migration_failed = replace(
                 failed,
-                operation=operation,
-                operation_phase="migration_failed",
                 last_error=detail,
             )
             if failed.lifecycle_status is SandboxLifecycleStatus.DATABASE_FAILED:
@@ -598,8 +578,6 @@ def complete_database_provision(
             )
             provisioning_failed = replace(
                 failed,
-                operation=operation,
-                operation_phase="database_provisioning_failed",
                 last_error=str(error),
             )
             if failed.lifecycle_status is failure_status:
@@ -621,8 +599,6 @@ def complete_database_provision(
         controller_store,
         replace(
             ready,
-            operation=operation,
-            operation_phase="ready",
             current_base_commit=current_base,
             pending_base_commit=None,
             schema_baseline_hash=baseline_hash,

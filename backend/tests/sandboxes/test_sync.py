@@ -155,8 +155,6 @@ def _complete_sync(*_args: object, **kwargs: object) -> None:
         store,
         replace(
             manifest,
-            operation="sync",
-            operation_phase="ready",
             current_base_commit=manifest.pending_base_commit,
             pending_base_commit=None,
         ),

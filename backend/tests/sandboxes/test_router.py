@@ -650,7 +650,6 @@ def test_migration_failure_never_marks_the_sandbox_ready(
     assert response.status_code == 422
     sandbox = get_controller_store().sandboxes()[0]
     assert sandbox["lifecycle_status"] == "database_failed"
-    assert sandbox["operation_phase"] == "migration_failed"
     assert sandbox["lifecycle_status"] != "ready"
 
 
@@ -856,7 +855,6 @@ def test_resume_recovers_a_workspace_phase_failure_without_engine_detection(
     manifest = read_manifest(store, sandbox_id)
     assert manifest is not None
     assert manifest.lifecycle_status == "creating"
-    assert manifest.operation_phase == "workspace"
     assert store.sandbox_engine_detection(sandbox_id) is None
 
     monkeypatch.setattr(sandbox_router, "ensure_workspace_import", ensure_workspace_import)
@@ -884,7 +882,7 @@ def test_resume_reuses_an_unconfirmed_engine_detection(
     assert manifest is not None
     transition_sandbox_lifecycle(
         store,
-        replace(manifest, operation_phase="workspace"),
+        manifest,
         to_status=SandboxLifecycleStatus.CREATING,
     )
     monkeypatch.setattr(
@@ -1230,8 +1228,6 @@ def test_publish_records_verified_git_and_pull_request_result(
     assert publication.json()["pr_merged_at"] == "2026-08-14T00:00:00Z"
     manifest = read_manifest(get_controller_store(), created["sandbox_id"])
     assert manifest is not None
-    assert manifest.operation == "publish"
-    assert manifest.operation_phase == "published"
 
 
 def test_publish_failure_records_a_retryable_checkpoint(
@@ -1265,7 +1261,6 @@ def test_publish_failure_records_a_retryable_checkpoint(
     manifest = read_manifest(get_controller_store(), created["sandbox_id"])
     assert manifest is not None
     assert manifest.lifecycle_status == "ready"
-    assert manifest.operation_phase == "pushing"
 
 
 def test_publish_push_failure_stores_a_safe_message(
@@ -1362,7 +1357,6 @@ def test_publish_pr_failure_keeps_the_pushed_commit_and_retry_creates_one_pr(
     assert publication["last_error"] == "GitHub pull request creation failed (HTTP 500)"
     failed_manifest = read_manifest(get_controller_store(), created["sandbox_id"])
     assert failed_manifest is not None
-    assert failed_manifest.operation_phase == "pr_pending"
 
     retried = client.post(f"/sandboxes/{created['sandbox_id']}/publish")
 

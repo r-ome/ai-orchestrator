@@ -323,8 +323,6 @@ def create_or_resolve_sandbox(
                         lifecycle_status=SandboxLifecycleStatus.CREATING,
                         feature_branch=feature_branch(request.feature_key),
                         agent_provider=request.agent_provider,
-                        operation="create",
-                        operation_phase="mirror",
                     ),
                 )
             if not created:
@@ -362,7 +360,6 @@ def create_or_resolve_sandbox(
                 pinned_ref = f"refs/heads/{mirror.default_branch}"
                 manifest = replace(
                     manifest,
-                    operation_phase="workspace",
                     base_ref=pinned_ref,
                     created_base_commit=mirror.commit,
                     current_base_commit=mirror.commit,
@@ -380,7 +377,6 @@ def create_or_resolve_sandbox(
                     feature_branch=manifest.feature_branch
                     or feature_branch(request.feature_key),
                 )
-                manifest = replace(manifest, operation_phase="cloned")
                 write_manifest(controller_store, manifest)
                 detection = discover_engine(
                     docker_client,
@@ -421,11 +417,7 @@ def create_or_resolve_sandbox(
                     # this context releases the lease before we return.
                     transition_sandbox_lifecycle(
                         controller_store,
-                        replace(
-                            manifest,
-                            operation="create",
-                            operation_phase="awaiting_engine_confirmation",
-                        ),
+                        manifest,
                         to_status=SandboxLifecycleStatus.AWAITING_ENGINE_CONFIRMATION,
                     )
             except ValueError as error:
@@ -735,8 +727,6 @@ def confirm_engine(
                 replace(
                     current,
                     db_engine=request.engine,
-                    operation="confirm-engine",
-                    operation_phase="database_provisioning",
                     last_error=None,
                 ),
                 to_status=SandboxLifecycleStatus.CREATING,
@@ -791,8 +781,6 @@ def reset_database(
                 controller_store,
                 replace(
                     manifest,
-                    operation="reset-db",
-                    operation_phase="database_rebuilding",
                     last_error=None,
                 ),
             )
@@ -910,8 +898,6 @@ def resume_sandbox(
                     controller_store,
                     replace(
                         refreshed,
-                        operation="resume",
-                        operation_phase="awaiting_engine_confirmation",
                         last_error=None,
                     ),
                     to_status=SandboxLifecycleStatus.AWAITING_ENGINE_CONFIRMATION,
@@ -921,8 +907,6 @@ def resume_sandbox(
                 refreshed = read_manifest(controller_store, sandbox_id) or manifest
                 ready = replace(
                     refreshed,
-                    operation="resume",
-                    operation_phase="ready",
                     db_engine=NO_DATABASE,
                     db_name=None,
                     db_data_volume=None,
@@ -947,8 +931,6 @@ def resume_sandbox(
                     refreshed = read_manifest(controller_store, sandbox_id) or manifest
                     ready = replace(
                         refreshed,
-                        operation="resume",
-                        operation_phase="ready",
                         last_error=None,
                     )
                     if refreshed.lifecycle_status is SandboxLifecycleStatus.READY:
@@ -975,8 +957,6 @@ def resume_sandbox(
         if manifest is not None:
             degraded = replace(
                 manifest,
-                operation="resume",
-                operation_phase="unsafe_inconsistency",
                 last_error=str(error),
             )
             if manifest.lifecycle_status is SandboxLifecycleStatus.DEGRADED:
@@ -1020,8 +1000,6 @@ def delete_sandbox(
                 controller_store,
                 replace(
                     manifest,
-                    operation="destroy",
-                    operation_phase="sweep",
                     last_error=None,
                 ),
                 to_status=SandboxLifecycleStatus.DESTROYING,
@@ -1051,8 +1029,6 @@ def delete_sandbox(
         if manifest is not None:
             destroying = replace(
                 manifest,
-                operation="destroy",
-                operation_phase="sweep",
                 last_error=str(error),
             )
             if manifest.lifecycle_status is SandboxLifecycleStatus.DESTROYING:

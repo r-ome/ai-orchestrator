@@ -16,8 +16,6 @@ class SandboxManifest:
     feature_title: str | None = None
     desired_state: str | None = None
     lifecycle_status: SandboxLifecycleStatus | None = None
-    operation: str | None = None
-    operation_phase: str | None = None
     last_error: str | None = None
     base_ref: str | None = None
     created_base_commit: str | None = None

@@ -56,19 +56,18 @@ def test_illegal_lifecycle_transition_changes_nothing(tmp_path: Path) -> None:
         feature_key="guard-lifecycle",
         desired_state="active",
         lifecycle_status=SandboxLifecycleStatus.CREATING,
-        operation="create",
     )
     assert write_manifest(store, manifest)
 
     assert not transition_sandbox_lifecycle(
         store,
-        replace(manifest, operation="publish"),
+        replace(
+            manifest,
+            last_error="must not persist",
+        ),
         to_status=SandboxLifecycleStatus.PUBLISHING,
     )
-    stored = read_manifest(store, manifest.sandbox_id)
-    assert stored is not None
-    assert stored.lifecycle_status is SandboxLifecycleStatus.CREATING
-    assert stored.operation == "create"
+    assert read_manifest(store, manifest.sandbox_id) == manifest
 
 
 def test_same_status_lifecycle_transition_changes_nothing(tmp_path: Path) -> None:
@@ -79,8 +78,6 @@ def test_same_status_lifecycle_transition_changes_nothing(tmp_path: Path) -> Non
         feature_key="guard-self-transition",
         desired_state="active",
         lifecycle_status=SandboxLifecycleStatus.CREATING,
-        operation="create",
-        operation_phase="workspace",
     )
     assert write_manifest(store, manifest)
 
@@ -88,8 +85,6 @@ def test_same_status_lifecycle_transition_changes_nothing(tmp_path: Path) -> Non
         store,
         replace(
             manifest,
-            operation="resume",
-            operation_phase="database_provisioning",
             last_error="must not persist",
         ),
         to_status=SandboxLifecycleStatus.CREATING,

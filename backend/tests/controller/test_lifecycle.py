@@ -272,7 +272,7 @@ def test_startup_reclaims_a_lease_for_a_settled_operation(
             """
             UPDATE sandboxes
             SET lifecycle_version = 'v1', desired_state = 'active',
-                lifecycle_status = 'ready', operation = 'sync'
+                lifecycle_status = 'ready'
             WHERE id = 'sandbox-1'
             """
         )
@@ -318,7 +318,7 @@ def test_startup_reclaims_a_stale_unsettled_lease(
             """
             UPDATE sandboxes
             SET lifecycle_version = 'v1', desired_state = 'active',
-                lifecycle_status = 'ready', operation = 'sync'
+                lifecycle_status = 'ready'
             WHERE id = 'sandbox-1'
             """
         )
