@@ -117,7 +117,7 @@ backend/tests/        backend tests
 backend/agent-images/ Claude and Codex images
 frontend/src/         React control panel
 docs/adr/             architecture decisions
-docs/plans/           design and implementation plans
+docs/plans/           open work and design notes
 CONTEXT.md            domain language
 ```
 
