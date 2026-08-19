@@ -455,6 +455,19 @@ Roughly 3,700 lines and about 100 top-level functions. It owns preview lifecycle
 
 Several of those concerns are not preview-specific at all.
 
+> **Resolved by Phase 8, 19 Aug 2026, `main` @ `e7e84cc`.** Both figures were exact: 3,704
+> lines and 104 top-level functions. `previews/service.py` is now **1,097 lines** and owns
+> the lifecycle and proposal only. The other concerns this finding names moved out:
+> `previews/runtimes/{native,compose,dockerfile,environment}.py`, `previews/sharing.py`,
+> `previews/network.py`, `previews/protected_files.py`, `previews/resources.py`,
+> `previews/health.py`, `previews/progress.py`, `previews/_shared.py`, `previews/errors.py`,
+> plus `app/dependency_cache.py` and `app/projects/secrets.py`.
+>
+> "Several of those concerns are not preview-specific at all" is confirmed and only partly
+> acted on. Project-secrets CRUD moved to the projects domain. Dependency caching moved to
+> `app/dependency_cache.py`, which still imports eight names from `app.previews.*` and is
+> therefore not yet neutral; Phase 9 moves it into `platform/`.
+
 ## 5.3 The sandbox router is a service in disguise (**confirmed**)
 
 `sandboxes/router.py` is roughly 1,250 lines with around 50 raw `HTTPException`s. Create/resume/delete flows orchestrate leases, mirror locks, Git, engine detection, database provisioning, and lifecycle transitions directly in the route layer.

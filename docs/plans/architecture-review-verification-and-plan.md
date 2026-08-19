@@ -4,10 +4,14 @@
 **Verified against:** `main` @ `30e7ca9`, 19 Aug 2026
 **Baseline at verification:** `backend/.venv/bin/python -m pytest -q` → 818 passed, 43 skipped, 26.1s
 
-> **Progress, 19 Aug 2026 — `main` @ `282dc1e`.** Phases 0, 1, 2, 3.1, 3.2, 3.3, 4, 5 and 6
-> are done. Phase 3.4 is partially done and deliberately stopped; see its status block. Phase 7
-> is now done too; see its status block. Phase 8 is next. Current suite: **backend 834 passed,
-> 43 skipped; frontend 74 passed**.
+> **Progress, 19 Aug 2026 — `main` @ `e7e84cc`.** Phases 0, 1, 2, 3.1, 3.2, 3.3, 4, 5, 6, 7
+> and 8 are done. Phase 3.4 is partially done and deliberately stopped; see its status block.
+> Phase 9 is next, and its prerequisites (Phases 1, 5, 7) are all met. Current suite:
+> **backend 834 passed, 43 skipped; frontend 74 passed**.
+>
+> Phase 8 left `previews/service.py` at 1,097 lines, down from 3,704, across 15 modules rather
+> than the 7 the plan named. It did **not** add `PreviewStatus`, and `app/dependency_cache.py`
+> is extracted but not yet neutral — both carry into Phase 9. See its status block.
 >
 > Phase 6 added the frontend's first real tests: 1 file and 1 test became 4 files and 74. It
 > also found and fixed a backend defect the plan did not anticipate; see its status block.
@@ -553,6 +557,83 @@ Add a typed `PreviewStatus` only for lifecycle that is genuinely read. Do not re
 unused string state with an unused enum.
 
 *Risk: low-to-medium.*
+
+> **Status — done, 19 Aug 2026, `main` @ `e7e84cc`.** Four commits: `3cb4f5d` extracted four
+> leaf modules, `f7d4dcc` moved the dependency cache and project secrets out, `fe6c486` moved
+> the shared-database code, `e7e84cc` split the three runtimes, masks and network.
+> `previews/service.py` was 3,704 lines; it is now **1,097**, holding the lifecycle and
+> proposal only.
+>
+> **The two headline figures are right; the module list is not.** 3,704 lines and 104
+> top-level functions both check out, and the 3 private imports in `agents/service.py` were
+> real. But the phase text names **7** modules and the split needs **15**. Measured
+> distribution of the 3,321 lines of function bodies: lifecycle 694, runtimes/native 525,
+> **sharing 476**, runtimes/compose 392, dependency cache 272, **resources 196**, proposal
+> 157, protected_files 112, secrets 107, runtimes/dockerfile 105, network 91, **progress 73**,
+> **_shared 68**, **health 51**, **errors 2**. The six in bold have no name in the plan, and
+> `sharing.py` at 577 final lines is the second-largest module the phase produced.
+>
+> **The plan's order is backwards.** It puts the runtimes before everything else. All three
+> runtime starters call into the shared-database cluster — `_start_native` calls
+> `_attach_shared_database`, and all three call `_connect_sandbox_database_endpoint` or
+> `_managed_preview_database`. Moving the runtimes first forces three back-imports into
+> `service.py`. Sharing has to go first, and did.
+>
+> **The call graph was nearly a DAG already.** Six two-cycles existed among the fifteen
+> candidate modules. Three reassignments removed all six: `_ignore_progress`, `_timed_step`
+> and `_record_preview_progress` into `progress.py` (this alone kills four, since all three
+> runtimes call `_ignore_progress`); `_compose_service_environment` into `runtimes/compose.py`
+> because it calls `_compose_environment`; and `_run_from_record` kept with lifecycle because
+> it calls `_sharing_state`.
+>
+> **`PreviewStatus` was not added.** The phase text asks for it "only for lifecycle that is
+> genuinely read". Nothing in this phase established which states are genuinely read, and
+> adding an enum is a behaviour change that does not belong in a move commit. It remains open.
+>
+> **The neutral module is not neutral.** `app/dependency_cache.py` is extracted — the 3
+> private imports in `agents/service.py` are gone, which was the phase's stated point — but it
+> still imports `_safe_relative_path`, `_slug`, `_run_preview_command`,
+> `_decode_preview_archive`, `PreviewOperationError`, `PreviewSettings`,
+> `ENVIRONMENT_FILE_NAMES` and `PreviewConfiguration` from `app.previews.*`. Cutting those
+> needs signature changes, which must not ride in a move commit. Phase 9 already plans to move
+> this mechanics into `platform/` and the shared settings out of `previews/config.py`.
+>
+> **The oracle.** A script dumping every definition across `app.previews`, `app.projects` and
+> `app.dependency_cache` — 203 names, each body normalised through `inspect.getsource` and
+> `textwrap.dedent().strip()` — plus module constants and the 78-path `app.openapi()`. The
+> definition name set, all 203 bodies and the OpenAPI document are byte-identical across all
+> four commits. It was confirmed deterministic across repeat runs **and across
+> `PYTHONHASHSEED` values**; two real nondeterminism sources had to be fixed first, set
+> iteration order and object `repr` addresses. **It was mutation-tested** and caught 4 of 4: a
+> removed function, a semantics-preserving identifier rename inside one body, a changed
+> constant, and an altered route path.
+>
+> **Two defects, both caught by reading Codex's report rather than by any test.** Slice 2
+> copied `_DEPENDENCY_READY_MARKER` into the new module while leaving the original in
+> `service.py`, giving one literal two definitions. Slice 3 deleted two live
+> `_wait_for_container_health` monkeypatches from `tests/sandboxes/test_database_consumers.py`
+> as "stale"; `service.py` still imported and called that name. **In both cases the suite was
+> green and the oracle byte-identical.** Codex volunteered each in the last paragraph of its
+> own report. Restating each violation verbatim in the next prompt worked: slice 4 introduced
+> neither and explicitly reported keeping every monkeypatch. **The rule holds — Codex may
+> write, Claude must verify, and its self-reported caveats are the highest-value part of its
+> output.**
+>
+> **The from-import trap is real and was mutation-tested.** Tests that patch a helper must
+> target the module that *imports and calls* it, not the module that *defines* it. Pointing
+> the `runtimes/native` patches at `protected_files` and `network` instead fails two tests.
+> The Phase 7 lesson generalises: every retarget was mutation-tested, and each one failed when
+> aimed wrong.
+>
+> Three small findings left open on purpose, each a behaviour change that does not belong in a
+> move commit: `_identifier` is dead in production and only `test_shared_database.py` uses it;
+> `PREVIEW_CONTAINER_PREFIX` lives in `network.py`, a container-naming constant in a network
+> module; `_database_engine` is a lowercase module global reachable by from-import, though
+> nothing rebinds it today.
+>
+> Verification on every commit: `pytest -q` → **834 passed, 43 skipped**, unchanged from the
+> baseline. No frontend file was touched. Not done and not attempted: `ruff` is still not
+> installed in this environment, so no lint gate ran on any of the four commits.
 
 ---
 
