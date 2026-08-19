@@ -7,7 +7,7 @@ import docker
 import pytest
 from fastapi.testclient import TestClient
 
-from app.controller import store as controller_store_module
+from app.controller.store import projects as store_projects_module
 from app.controller.config import get_controller_settings
 from app.controller.store import get_controller_store
 from app.docker_client import get_docker_client
@@ -86,7 +86,7 @@ def test_staleness_fetches_then_returns_count_and_moving_timestamp(
             "2026-08-11T00:00:04Z",
         )
     )
-    monkeypatch.setattr(controller_store_module, "_now", lambda: next(timestamps))
+    monkeypatch.setattr(store_projects_module, "_now", lambda: next(timestamps))
     _stub_staleness_commands(monkeypatch, count=3)
 
     first = client.get(f"/sandboxes/{SANDBOX_ID}/staleness")
