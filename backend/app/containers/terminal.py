@@ -17,9 +17,7 @@ MAX_ROWS = 300
 
 # Prefer bash for line editing and completion, but fall back to sh so slim
 # images (alpine, distroless-with-busybox) still get a usable prompt.
-_SHELL_COMMAND = (
-    "if command -v bash >/dev/null 2>&1; then exec bash; else exec sh; fi"
-)
+_SHELL_COMMAND = "if command -v bash >/dev/null 2>&1; then exec bash; else exec sh; fi"
 
 
 def get_container(docker_client: DockerClient, container_id: str) -> Container:

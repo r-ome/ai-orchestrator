@@ -129,9 +129,7 @@ def test_task_endpoints_cover_start_list_and_report(client: Any) -> None:
 def test_accept_and_reject_endpoints(client: Any) -> None:
     test_client, docker_client = client
 
-    task = test_client.post(
-        "/tasks", json={"project_name": "Sample Project"}
-    ).json()
+    task = test_client.post("/tasks", json={"project_name": "Sample Project"}).json()
 
     # Accept refuses a task that is not in review, without running git.
     early = test_client.post(f"/tasks/{task['id']}/accept")
@@ -139,9 +137,9 @@ def test_accept_and_reject_endpoints(client: Any) -> None:
     assert "not in review" in early.json()["detail"]
 
     # Reject works straight from open, which is what frees the sandbox.
-    docker_client.containers.settle_output = b"result deleted\nbase " + (
-        BASE_COMMIT.encode()
-    ) + b"\n"
+    docker_client.containers.settle_output = (
+        b"result deleted\nbase " + (BASE_COMMIT.encode()) + b"\n"
+    )
     rejected = test_client.post(f"/tasks/{task['id']}/reject")
     assert rejected.status_code == 200
     assert rejected.json()["status"] == TaskStatus.REJECTED.value
@@ -157,9 +155,7 @@ def test_accept_and_reject_endpoints(client: Any) -> None:
 def test_accept_endpoint_reports_a_divergence_as_409(client: Any) -> None:
     test_client, docker_client = client
 
-    task = test_client.post(
-        "/tasks", json={"project_name": "Sample Project"}
-    ).json()
+    task = test_client.post("/tasks", json={"project_name": "Sample Project"}).json()
     docker_client.containers.report_output = (
         f"head {NEXT_COMMIT}\nbranch {task['branch']}\n"
     ).encode()
@@ -172,8 +168,11 @@ def test_accept_endpoint_reports_a_divergence_as_409(client: Any) -> None:
         )
 
     docker_client.containers.settle_output = (
-        b"result diverged\nbase " + BASE_COMMIT.encode() + b"\ntask "
-        + NEXT_COMMIT.encode() + b"\ncounts 1 4\n"
+        b"result diverged\nbase "
+        + BASE_COMMIT.encode()
+        + b"\ntask "
+        + NEXT_COMMIT.encode()
+        + b"\ncounts 1 4\n"
     )
     conflict = test_client.post(f"/tasks/{task['id']}/accept")
 

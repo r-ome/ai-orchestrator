@@ -140,7 +140,9 @@ def _base_config(**overrides: object) -> PreviewConfiguration:
 def test_digest_changes_when_variable_name_added() -> None:
     base = _base_config()
     with_variable = _base_config(
-        environment={"NEXTAUTH_SECRET": PreviewEnvironmentSource(from_secret="NEXTAUTH_SECRET")}
+        environment={
+            "NEXTAUTH_SECRET": PreviewEnvironmentSource(from_secret="NEXTAUTH_SECRET")
+        }
     )
 
     assert proposal_digest(base, {}) != proposal_digest(with_variable, {})
@@ -149,7 +151,9 @@ def test_digest_changes_when_variable_name_added() -> None:
 def test_digest_unchanged_when_only_secret_value_changes() -> None:
     """The digest never sees secret values, so rotating one must not move it."""
     config = _base_config(
-        environment={"NEXTAUTH_SECRET": PreviewEnvironmentSource(from_secret="NEXTAUTH_SECRET")}
+        environment={
+            "NEXTAUTH_SECRET": PreviewEnvironmentSource(from_secret="NEXTAUTH_SECRET")
+        }
     )
 
     digest_before = proposal_digest(config, {})

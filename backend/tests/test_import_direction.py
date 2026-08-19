@@ -51,7 +51,9 @@ def _module_parts(path: Path, app_root: Path) -> tuple[str, ...]:
     return ("app", *parts)
 
 
-def _import_targets(node: ast.Import | ast.ImportFrom, package: tuple[str, ...]) -> Iterable[tuple[str, ...]]:
+def _import_targets(
+    node: ast.Import | ast.ImportFrom, package: tuple[str, ...]
+) -> Iterable[tuple[str, ...]]:
     if isinstance(node, ast.Import):
         return [tuple(alias.name.split(".")) for alias in node.names]
     if node.level:
@@ -76,13 +78,17 @@ def _app_nodes(app_root: Path) -> set[str]:
         for child in app_root.iterdir()
         if child.is_dir() and (child / "__init__.py").is_file()
     }
-    modules = {child.stem for child in app_root.glob("*.py") if child.stem != "__init__"}
+    modules = {
+        child.stem for child in app_root.glob("*.py") if child.stem != "__init__"
+    }
     return packages | modules
 
 
 def _package_import_graph(app_root: Path) -> dict[str, set[str]]:
     packages = _app_nodes(app_root)
-    graph: dict[str, set[str]] = defaultdict(set, {package: set() for package in packages})
+    graph: dict[str, set[str]] = defaultdict(
+        set, {package: set() for package in packages}
+    )
     for path in app_root.rglob("*.py"):
         module = _module_parts(path, app_root)
         if len(module) < 2:

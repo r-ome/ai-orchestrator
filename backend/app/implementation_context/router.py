@@ -30,8 +30,7 @@ from app.platform.docker_errors import (
 
 router = APIRouter(
     prefix=(
-        "/projects/{project_name}/planning/sessions/{session_id}"
-        "/implementation-context"
+        "/projects/{project_name}/planning/sessions/{session_id}/implementation-context"
     ),
     tags=["implementation context"],
 )

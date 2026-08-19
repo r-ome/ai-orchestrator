@@ -55,6 +55,7 @@ def _remote_project(row: dict[str, object]) -> RemoteProject:
         created_at=str(row.get("created_at") or ""),
     )
 
+
 @router.get("/remote", response_model=RemoteProjectsResponse)
 def list_remote_projects(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
@@ -98,7 +99,9 @@ def get_remote_project(
     project_id: str,
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> RemoteProject:
-    row = _docker_response(lambda: _require_remote_project(controller_store, project_id))
+    row = _docker_response(
+        lambda: _require_remote_project(controller_store, project_id)
+    )
     return _remote_project(row)
 
 
@@ -154,7 +157,9 @@ def _require_remote_project(
 ) -> dict[str, object]:
     row = controller_store.v1_project(project_id)
     if row is None:
-        raise ProjectOperationError(status.HTTP_404_NOT_FOUND, f"no project {project_id!r}")
+        raise ProjectOperationError(
+            status.HTTP_404_NOT_FOUND, f"no project {project_id!r}"
+        )
     return row
 
 

@@ -89,7 +89,11 @@ class _Networks:
 def _client(container: _Container) -> tuple[Any, _Containers, _Networks]:
     containers = _Containers(container)
     networks = _Networks()
-    return SimpleNamespace(containers=containers, networks=networks), containers, networks
+    return (
+        SimpleNamespace(containers=containers, networks=networks),
+        containers,
+        networks,
+    )
 
 
 def _spec(**overrides: Any) -> HardenedRunSpec:
@@ -148,7 +152,9 @@ def test_network_construction(
     )
 
     call = containers.calls[0]
-    assert {key: call[key] for key in ("network", "network_mode") if key in call} == expected_create
+    assert {
+        key: call[key] for key in ("network", "network_mode") if key in call
+    } == expected_create
     assert networks.requested == connects
     assert networks.connected == ([container] if connects else [])
 
@@ -292,13 +298,23 @@ def test_database_capabilities_are_the_fixed_documented_set() -> None:
 
     create_hardened(client, _container_spec(capabilities=Capabilities.DATABASE_SERVER))
 
-    assert containers.calls[0]["cap_add"] == ["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID"]
+    assert containers.calls[0]["cap_add"] == [
+        "CHOWN",
+        "DAC_OVERRIDE",
+        "SETGID",
+        "SETUID",
+    ]
     assert containers.calls[0]["cap_drop"] == ["ALL"]
 
 
 @pytest.mark.parametrize(
     ("requested", "expected"),
-    [(256, 256), (PIDS_LIMIT, PIDS_LIMIT), (PIDS_LIMIT + 1, PIDS_LIMIT), (10_000, PIDS_LIMIT)],
+    [
+        (256, 256),
+        (PIDS_LIMIT, PIDS_LIMIT),
+        (PIDS_LIMIT + 1, PIDS_LIMIT),
+        (10_000, PIDS_LIMIT),
+    ],
 )
 def test_a_call_site_may_tighten_the_pids_limit_but_never_raise_it(
     requested: int,
@@ -332,8 +348,19 @@ def test_unset_optional_arguments_are_not_passed_to_docker() -> None:
     create_hardened(client, _container_spec())
 
     call = containers.calls[0]
-    for absent in ("name", "mounts", "ports", "restart_policy", "healthcheck", "nano_cpus",
-                   "command", "entrypoint", "working_dir", "user", "mem_limit"):
+    for absent in (
+        "name",
+        "mounts",
+        "ports",
+        "restart_policy",
+        "healthcheck",
+        "nano_cpus",
+        "command",
+        "entrypoint",
+        "working_dir",
+        "user",
+        "mem_limit",
+    ):
         assert absent not in call
 
 

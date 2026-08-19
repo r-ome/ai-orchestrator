@@ -105,7 +105,9 @@ def test_timed_step_emits_no_completion_event_when_the_block_fails(
         )
 
     try:
-        with _timed_step(report, "dependencies", "Running the install command") as finish:
+        with _timed_step(
+            report, "dependencies", "Running the install command"
+        ) as finish:
             raise RuntimeError("npm exploded")
     except RuntimeError:
         pass
@@ -119,7 +121,9 @@ def test_timed_step_emits_no_completion_event_when_the_block_fails(
 def test_ignore_progress_accepts_started_at_and_duration_ms() -> None:
     # _timed_step calls report(step, message, duration_ms=..., started_at=...);
     # _ignore_progress is the default reporter and must accept that shape.
-    _ignore_progress("workspace", "message", duration_ms=12, started_at="2026-08-06T00:00:00Z")
+    _ignore_progress(
+        "workspace", "message", duration_ms=12, started_at="2026-08-06T00:00:00Z"
+    )
 
 
 def test_reused_dependency_volume_still_reports_zero_duration_and_no_started_at(

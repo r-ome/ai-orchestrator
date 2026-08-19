@@ -39,4 +39,6 @@ def test_reconcile_settles_an_interrupted_turn_and_releases_it(
     assert counts["planning"] == 1
     assert session["status"] == "failed"
     assert session["turn_state"] == "idle"
-    assert session["failure_reason"] == "The backend restarted while this turn was running"
+    assert (
+        session["failure_reason"] == "The backend restarted while this turn was running"
+    )

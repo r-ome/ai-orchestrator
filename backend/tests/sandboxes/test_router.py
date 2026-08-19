@@ -64,8 +64,14 @@ def client(override_docker_client):
 @pytest.fixture(autouse=True)
 def _stub_canonical_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
     """Router tests use the shared Docker fake, not a real Git remote."""
+
     def ensure(
-        docker_client, *, image: str, project_id: str, remote_url: str, credential_source=None
+        docker_client,
+        *,
+        image: str,
+        project_id: str,
+        remote_url: str,
+        credential_source=None,
     ) -> MirrorPin:
         name = mirror_volume(project_id)
         try:
@@ -81,7 +87,9 @@ def _stub_canonical_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sandbox_service, "ensure_project_mirror", ensure)
     # The Docker fake does not execute Git. Resume identity semantics are
     # exercised here at the router level, while git.py has its own script tests.
-    monkeypatch.setattr(sandbox_service, "verify_workspace_identity", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        sandbox_service, "verify_workspace_identity", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(
         sandbox_database,
         "_read_or_create_server_credentials",
@@ -130,7 +138,9 @@ def test_create_provisions_deterministic_v1_git_resources(
     assert all(container.removed for container in fake_docker_client.containers.items)
 
 
-def test_second_create_resolves_same_sandbox_without_a_sibling(client: TestClient) -> None:
+def test_second_create_resolves_same_sandbox_without_a_sibling(
+    client: TestClient,
+) -> None:
     first = _create(client)
     second = _create(client)
 
@@ -162,7 +172,9 @@ def test_conflicting_engine_signals_wait_and_surface_every_signal(
 ) -> None:
     detection = EngineDetection(
         signals=(
-            EngineSignal("mysql", "prisma", "prisma/schema.prisma", "provider = mysql", 1),
+            EngineSignal(
+                "mysql", "prisma", "prisma/schema.prisma", "provider = mysql", 1
+            ),
             EngineSignal("postgres", "dotenv", ".env", "DATABASE_URL", 2),
         ),
         proposed_engine=None,
@@ -170,7 +182,9 @@ def test_conflicting_engine_signals_wait_and_surface_every_signal(
         seed_commands=(),
         commands_source={"migrate": "prisma"},
     )
-    monkeypatch.setattr(sandbox_service, "discover_engine", lambda *_args, **_kwargs: detection)
+    monkeypatch.setattr(
+        sandbox_service, "discover_engine", lambda *_args, **_kwargs: detection
+    )
 
     created = _create(client).json()
     record = client.get(f"/sandboxes/{created['sandbox_id']}/engine")
@@ -178,7 +192,9 @@ def test_conflicting_engine_signals_wait_and_surface_every_signal(
     assert created["lifecycle_status"] == "awaiting_engine_confirmation"
     assert record.status_code == 200
     assert record.json()["proposed_engine"] is None
-    assert {(signal["engine"], signal["source"]) for signal in record.json()["signals"]} == {
+    assert {
+        (signal["engine"], signal["source"]) for signal in record.json()["signals"]
+    } == {
         ("mysql", "prisma"),
         ("postgres", "dotenv"),
     }
@@ -195,7 +211,9 @@ def test_create_refuses_a_project_that_tracks_its_sqlite_database(
         commands_source={},
         tracked_database_paths=("prisma/dev.db",),
     )
-    monkeypatch.setattr(sandbox_service, "discover_engine", lambda *_args, **_kwargs: detection)
+    monkeypatch.setattr(
+        sandbox_service, "discover_engine", lambda *_args, **_kwargs: detection
+    )
 
     response = _create(client)
 
@@ -252,7 +270,9 @@ def test_confirm_engine_freezes_snapshot_claims_a_fresh_lease_and_advances(
     assert record["confirmed_at"]
 
 
-def test_confirm_engine_requires_commands_when_detection_has_none(client: TestClient) -> None:
+def test_confirm_engine_requires_commands_when_detection_has_none(
+    client: TestClient,
+) -> None:
     created = _create(client).json()
 
     response = client.post(
@@ -261,9 +281,9 @@ def test_confirm_engine_requires_commands_when_detection_has_none(client: TestCl
     )
 
     assert response.status_code == 422
-    assert client.get(f"/sandboxes/{created['sandbox_id']}").json()["lifecycle_status"] == (
-        "awaiting_engine_confirmation"
-    )
+    assert client.get(f"/sandboxes/{created['sandbox_id']}").json()[
+        "lifecycle_status"
+    ] == ("awaiting_engine_confirmation")
 
 
 def test_confirm_no_database_reaches_ready_without_database_resources(
@@ -283,9 +303,12 @@ def test_confirm_no_database_reaches_ready_without_database_resources(
     assert body["db_name"] is None
     assert body["db_data_volume"] is None
     assert get_controller_store().sandbox_database(created["sandbox_id"]) is None
-    assert sandbox_database_runtime(
-        fake_docker_client, get_controller_store(), created["sandbox_id"]
-    ) is None
+    assert (
+        sandbox_database_runtime(
+            fake_docker_client, get_controller_store(), created["sandbox_id"]
+        )
+        is None
+    )
     assert fake_docker_client.networks.items == []
 
 
@@ -377,11 +400,17 @@ def test_no_database_provision_and_destroy_leave_no_database_residue() -> None:
         assert manifest.db_data_volume is None
         assert store.sandbox_database(sandbox_id) is None
         assert docker_client.networks.list(names=[network(sandbox_id)]) == []
-        assert docker_client.volumes.list(filters={"name": db_data_volume(sandbox_id)}) == []
-        assert docker_client.containers.list(
-            all=True,
-            filters={"label": f"orchestrator.sandbox.id={sandbox_id}"},
-        ) == []
+        assert (
+            docker_client.volumes.list(filters={"name": db_data_volume(sandbox_id)})
+            == []
+        )
+        assert (
+            docker_client.containers.list(
+                all=True,
+                filters={"label": f"orchestrator.sandbox.id={sandbox_id}"},
+            )
+            == []
+        )
 
         def override():
             yield docker_client
@@ -393,7 +422,10 @@ def test_no_database_provision_and_destroy_leave_no_database_residue() -> None:
         with pytest.raises(NotFound):
             docker_client.volumes.get(workspace)
         assert docker_client.networks.list(names=[network(sandbox_id)]) == []
-        assert docker_client.volumes.list(filters={"name": db_data_volume(sandbox_id)}) == []
+        assert (
+            docker_client.volumes.list(filters={"name": db_data_volume(sandbox_id)})
+            == []
+        )
     finally:
         if previous_override is None:
             app.dependency_overrides.pop(get_docker_client, None)
@@ -461,9 +493,16 @@ def test_second_create_does_not_reprovision_the_sandbox_database(
     assert second.status_code == 200
     assert before is not None and after is not None
     assert after["provisioned_at"] == before["provisioned_at"]
-    assert len(
-        [call for call in calls if str(call.get("name", "")).endswith("-database-migrate")]
-    ) == 1
+    assert (
+        len(
+            [
+                call
+                for call in calls
+                if str(call.get("name", "")).endswith("-database-migrate")
+            ]
+        )
+        == 1
+    )
 
 
 def test_migration_runner_has_only_sandbox_database_authority(
@@ -490,7 +529,9 @@ def test_migration_runner_has_only_sandbox_database_authority(
 
     sandbox_id = response.json()["sandbox_id"]
     runner = next(
-        call for call in calls if str(call.get("name", "")).endswith("-database-migrate")
+        call
+        for call in calls
+        if str(call.get("name", "")).endswith("-database-migrate")
     )
     assert runner["command"] == [
         "sh",
@@ -573,9 +614,16 @@ def test_reset_database_converges_and_finalizes_a_pending_base(
     assert first.json()["pending_base_commit"] is None
     assert second.json()["current_base_commit"] == pending
     assert store.sandbox_database(created["sandbox_id"])["status"] == "ready"
-    assert len(
-        [call for call in create_calls if "rm -f /database/database.sqlite3" in str(call["command"])]
-    ) == 2
+    assert (
+        len(
+            [
+                call
+                for call in create_calls
+                if "rm -f /database/database.sqlite3" in str(call["command"])
+            ]
+        )
+        == 2
+    )
 
 
 def test_reset_database_refuses_a_preview_then_honors_explicit_stop(
@@ -675,8 +723,13 @@ def test_destroy_sweeps_only_manifest_resources_and_keeps_shared_infrastructure(
     assert fake_docker_client.volumes.get(mirror_volume(project_id)).removed is False
     assert dependency.removed is False
     assert shared_database.removed is False
-    assert fake_docker_client.volumes.get(workspace_volume(second["sandbox_id"])).removed is False
-    assert first["sandbox_id"] not in {row["id"] for row in get_controller_store().sandboxes()}
+    assert (
+        fake_docker_client.volumes.get(workspace_volume(second["sandbox_id"])).removed
+        is False
+    )
+    assert first["sandbox_id"] not in {
+        row["id"] for row in get_controller_store().sandboxes()
+    }
 
 
 def test_destroy_removes_sqlite_database_volume_and_sandbox_network(
@@ -801,7 +854,9 @@ def test_resume_recovers_a_missing_workspace_but_reraises_other_workspace_errors
         imported_workspaces.append(kwargs["sandbox_id"])
         ensure_workspace_import(*args, **kwargs)
 
-    monkeypatch.setattr(sandbox_service, "ensure_workspace_import", record_workspace_import)
+    monkeypatch.setattr(
+        sandbox_service, "ensure_workspace_import", record_workspace_import
+    )
     recoverable = _create(client).json()
     imported_workspaces.clear()
     recoverable_workspace = fake_docker_client.volumes.get(
@@ -813,24 +868,31 @@ def test_resume_recovers_a_missing_workspace_but_reraises_other_workspace_errors
 
     assert recovered.status_code == 200
     assert imported_workspaces == [recoverable["sandbox_id"]]
-    assert fake_docker_client.volumes.get(workspace_volume(recoverable["sandbox_id"])) is not (
-        recoverable_workspace
-    )
+    assert fake_docker_client.volumes.get(
+        workspace_volume(recoverable["sandbox_id"])
+    ) is not (recoverable_workspace)
 
     rejected = _create(client, feature_key="reject-workspace-error").json()
     imported_workspaces.clear()
-    rejected_workspace = fake_docker_client.volumes.get(workspace_volume(rejected["sandbox_id"]))
+    rejected_workspace = fake_docker_client.volumes.get(
+        workspace_volume(rejected["sandbox_id"])
+    )
     monkeypatch.setattr(
         sandbox_service,
         "verify_workspace_identity",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("identity check failed")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("identity check failed")
+        ),
     )
 
     response = client.post(f"/sandboxes/{rejected['sandbox_id']}/resume")
 
     assert response.status_code == 409
     assert imported_workspaces == []
-    assert fake_docker_client.volumes.get(workspace_volume(rejected["sandbox_id"])) is rejected_workspace
+    assert (
+        fake_docker_client.volumes.get(workspace_volume(rejected["sandbox_id"]))
+        is rejected_workspace
+    )
     manifest = read_manifest(get_controller_store(), rejected["sandbox_id"])
     assert manifest is not None
     assert manifest.lifecycle_status is SandboxLifecycleStatus.DEGRADED
@@ -843,7 +905,9 @@ def test_resume_recovers_a_workspace_phase_failure_without_engine_detection(
     monkeypatch.setattr(
         sandbox_service,
         "ensure_workspace_import",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("workspace import failed")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("workspace import failed")
+        ),
     )
 
     failed = _create(client)
@@ -857,7 +921,9 @@ def test_resume_recovers_a_workspace_phase_failure_without_engine_detection(
     assert manifest.lifecycle_status == "creating"
     assert store.sandbox_engine_detection(sandbox_id) is None
 
-    monkeypatch.setattr(sandbox_service, "ensure_workspace_import", ensure_workspace_import)
+    monkeypatch.setattr(
+        sandbox_service, "ensure_workspace_import", ensure_workspace_import
+    )
     resumed = client.post(f"/sandboxes/{sandbox_id}/resume")
 
     assert resumed.status_code == 200
@@ -1094,7 +1160,9 @@ def test_orphan_removal_refuses_shared_infrastructure(
     assert docker_resource.removed is False
 
 
-def test_equivalent_remote_forms_resolve_one_project_and_one_sandbox(client: TestClient) -> None:
+def test_equivalent_remote_forms_resolve_one_project_and_one_sandbox(
+    client: TestClient,
+) -> None:
     remotes = [
         "git@github.com:owner/repo.git",
         "https://github.com/owner/repo.git",
@@ -1111,7 +1179,9 @@ def test_equivalent_remote_forms_resolve_one_project_and_one_sandbox(client: Tes
     assert len({row["project_id"] for row in store.sandboxes()}) == 1
 
 
-def test_token_remote_is_stripped_before_response_and_persistence(client: TestClient) -> None:
+def test_token_remote_is_stripped_before_response_and_persistence(
+    client: TestClient,
+) -> None:
     token = "secret-token-value"
     response = _create(
         client,
@@ -1236,7 +1306,9 @@ def test_publish_records_verified_git_and_pull_request_result(
             pushed=True,
         )
 
-    monkeypatch.setattr(sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(sandbox_service, "publish_reviewed_feature", publish)
     monkeypatch.setattr(
         sandbox_service,
@@ -1280,7 +1352,9 @@ def test_publish_failure_records_a_retryable_checkpoint(
             "actor": "jerome",
         },
     ).json()
-    monkeypatch.setattr(sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         sandbox_service,
         "publish_reviewed_feature",
@@ -1325,7 +1399,9 @@ def test_publish_push_failure_stores_a_safe_message(
         image="alpine/git:latest",
         stderr=stderr,
     )
-    monkeypatch.setattr(sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         sandbox_service,
         "publish_reviewed_feature",
@@ -1352,8 +1428,10 @@ def test_publish_pr_failure_keeps_the_pushed_commit_and_retry_creates_one_pr(
     created = _create(
         client,
         engine_confirmation={
-            "engine": "sqlite", "migrate_commands": ["make migrate"],
-            "commands_source": {"migrate": "makefile"}, "actor": "jerome",
+            "engine": "sqlite",
+            "migrate_commands": ["make migrate"],
+            "commands_source": {"migrate": "makefile"},
+            "actor": "jerome",
         },
     ).json()
     publish_calls: list[dict[str, object]] = []
@@ -1377,12 +1455,18 @@ def test_publish_pr_failure_keeps_the_pushed_commit_and_retry_creates_one_pr(
         nonlocal api_calls
         api_calls += 1
         if api_calls == 1:
-            raise sandbox_publish.GitHubApiError("GitHub pull request creation failed (HTTP 500)")
+            raise sandbox_publish.GitHubApiError(
+                "GitHub pull request creation failed (HTTP 500)"
+            )
         return PullRequest(42, "https://github.com/owner/repo/pull/42", "open")
 
-    monkeypatch.setattr(sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(sandbox_service, "publish_reviewed_feature", publish)
-    monkeypatch.setattr(sandbox_service, "discover_or_create_pull_request", pull_request)
+    monkeypatch.setattr(
+        sandbox_service, "discover_or_create_pull_request", pull_request
+    )
 
     failed = client.post(f"/sandboxes/{created['sandbox_id']}/publish")
 
@@ -1401,7 +1485,8 @@ def test_publish_pr_failure_keeps_the_pushed_commit_and_retry_creates_one_pr(
     assert retried.status_code == 202
     assert retried.json()["pr_number"] == 42
     assert [call["remote_branch"] for call in publish_calls] == [
-        "feature/add-sandbox-api", "feature/add-sandbox-api"
+        "feature/add-sandbox-api",
+        "feature/add-sandbox-api",
     ]
     assert pushed_flags == [True, False]
     assert api_calls == 2
@@ -1414,21 +1499,31 @@ def test_publish_api_failure_never_persists_or_returns_the_write_token(
     created = _create(
         client,
         engine_confirmation={
-            "engine": "sqlite", "migrate_commands": ["make migrate"],
-            "commands_source": {"migrate": "makefile"}, "actor": "jerome",
+            "engine": "sqlite",
+            "migrate_commands": ["make migrate"],
+            "commands_source": {"migrate": "makefile"},
+            "actor": "jerome",
         },
     ).json()
-    monkeypatch.setattr(sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         sandbox_service,
         "publish_reviewed_feature",
-        lambda *_args, **_kwargs: PublishOutcome("feature/add-sandbox-api", "b" * 40, "b" * 40, True),
+        lambda *_args, **_kwargs: PublishOutcome(
+            "feature/add-sandbox-api", "b" * 40, "b" * 40, True
+        ),
     )
     monkeypatch.setenv("ORCHESTRATOR_GITHUB_WRITE_TOKEN", token)
     monkeypatch.setattr(
         sandbox_publish.requests,
         "request",
-        lambda *_args, **_kwargs: type("Response", (), {"status_code": 401, "json": lambda self: {"message": token}})(),
+        lambda *_args, **_kwargs: type(
+            "Response",
+            (),
+            {"status_code": 401, "json": lambda self: {"message": token}},
+        )(),
     )
 
     response = client.post(f"/sandboxes/{created['sandbox_id']}/publish")

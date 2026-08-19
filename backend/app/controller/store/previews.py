@@ -185,4 +185,3 @@ class PreviewsMixin:
                 "DELETE FROM shared_database_schemas WHERE sandbox_id = ?",
                 (sandbox_id,),
             )
-

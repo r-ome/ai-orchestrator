@@ -77,25 +77,28 @@ def _start_dockerfile(
     report("network", f"Creating {config.network_access.value} preview network")
     network = _network(docker_client, run_id, labels, config.network_access)
     report("container", "Creating application container")
-    container = create_hardened(docker_client, HardenedContainerSpec(
-        image=tag,
-        name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-app",
-        rootfs=Rootfs.WRITABLE,
-        labels={**labels, LABEL_SERVICE: "app"},
-        environment=application_environment,
-        volumes={
-            project_volume: {"bind": "/sandbox", "mode": "ro"},
-            **(managed_database.volumes if managed_database is not None else {}),
-        },
-        tmpfs_size="256m",
-        network=network.name,
-        egress=_preview_egress(config.network_access),
-        ports=_direct_ports(config, host_port),
-        restart_policy={"Name": "no"},
-        mem_limit=settings.preview_memory,
-        nano_cpus=1_000_000_000,
-        pids_limit=256,
-    ))
+    container = create_hardened(
+        docker_client,
+        HardenedContainerSpec(
+            image=tag,
+            name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-app",
+            rootfs=Rootfs.WRITABLE,
+            labels={**labels, LABEL_SERVICE: "app"},
+            environment=application_environment,
+            volumes={
+                project_volume: {"bind": "/sandbox", "mode": "ro"},
+                **(managed_database.volumes if managed_database is not None else {}),
+            },
+            tmpfs_size="256m",
+            network=network.name,
+            egress=_preview_egress(config.network_access),
+            ports=_direct_ports(config, host_port),
+            restart_policy={"Name": "no"},
+            mem_limit=settings.preview_memory,
+            nano_cpus=1_000_000_000,
+            pids_limit=256,
+        ),
+    )
     network.disconnect(container)
     network.connect(container, aliases=["app"])
     if managed_database is not None and managed_database.engine != "sqlite":

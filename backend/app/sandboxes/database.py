@@ -271,33 +271,40 @@ class MySQLDatabaseEngine:
             else None
         )
         try:
-            container = create_hardened(request.docker_client, HardenedContainerSpec(
-                image=request.image,
-                name=request.container_name,
-                command=command,
-                capabilities=Capabilities.DATABASE_SERVER,
-                environment=environment,
-                labels=request.labels,
-                volumes={request.data_volume: {"bind": "/var/lib/mysql", "mode": "rw"}},
-                tmpfs_size="256m",
-                extra_tmpfs={"/var/run/mysqld": "rw,nosuid,size=32m,uid=999,gid=999"},
-                network=request.network_name,
-                restart_policy={"Name": "no"},
-                healthcheck={
-                    "test": [
-                        "CMD-SHELL",
-                        'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin ping '
-                        "-h 127.0.0.1 -u root --silent",
-                    ],
-                    "interval": 1_000_000_000,
-                    "timeout": 3_000_000_000,
-                    "retries": 60,
-                    "start_period": 5_000_000_000,
-                },
-                mem_limit=request.memory_limit,
-                nano_cpus=request.nano_cpus,
-                pids_limit=request.pids_limit,
-            ))
+            container = create_hardened(
+                request.docker_client,
+                HardenedContainerSpec(
+                    image=request.image,
+                    name=request.container_name,
+                    command=command,
+                    capabilities=Capabilities.DATABASE_SERVER,
+                    environment=environment,
+                    labels=request.labels,
+                    volumes={
+                        request.data_volume: {"bind": "/var/lib/mysql", "mode": "rw"}
+                    },
+                    tmpfs_size="256m",
+                    extra_tmpfs={
+                        "/var/run/mysqld": "rw,nosuid,size=32m,uid=999,gid=999"
+                    },
+                    network=request.network_name,
+                    restart_policy={"Name": "no"},
+                    healthcheck={
+                        "test": [
+                            "CMD-SHELL",
+                            'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin ping '
+                            "-h 127.0.0.1 -u root --silent",
+                        ],
+                        "interval": 1_000_000_000,
+                        "timeout": 3_000_000_000,
+                        "retries": 60,
+                        "start_period": 5_000_000_000,
+                    },
+                    mem_limit=request.memory_limit,
+                    nano_cpus=request.nano_cpus,
+                    pids_limit=request.pids_limit,
+                ),
+            )
         except APIError:
             # Another preview can create the project's shared server between
             # the caller's lookup and this create request.
@@ -330,27 +337,34 @@ class MySQLDatabaseEngine:
         if request.runtime == "fastapi":
             command += ". /opt/venv/bin/activate\n"
         command += "\n".join(request.commands)
-        container = create_hardened(request.docker_client, HardenedContainerSpec(
-            image=request.image,
-            command=["sh", "-lc", command],
-            name=request.container_name
-            or f"orchestrator-preview-{request.run_id[:12]}-initialize",
-            working_dir="/workspace",
-            environment=request.environment,
-            labels={
-                **request.labels,
-                LABEL_SERVICE: request.service_label,
-            },
-            volumes=request.volumes,
-            mounts=request.mounts or None,
-            tmpfs_size="256m",
-            extra_tmpfs={key: value for key, value in (request.tmpfs or {}).items() if key != "/tmp"},
-            network=request.network.name,
-            restart_policy={"Name": "no"},
-            mem_limit=request.settings.preview_memory,
-            nano_cpus=1_000_000_000,
-            pids_limit=256,
-        ))
+        container = create_hardened(
+            request.docker_client,
+            HardenedContainerSpec(
+                image=request.image,
+                command=["sh", "-lc", command],
+                name=request.container_name
+                or f"orchestrator-preview-{request.run_id[:12]}-initialize",
+                working_dir="/workspace",
+                environment=request.environment,
+                labels={
+                    **request.labels,
+                    LABEL_SERVICE: request.service_label,
+                },
+                volumes=request.volumes,
+                mounts=request.mounts or None,
+                tmpfs_size="256m",
+                extra_tmpfs={
+                    key: value
+                    for key, value in (request.tmpfs or {}).items()
+                    if key != "/tmp"
+                },
+                network=request.network.name,
+                restart_policy={"Name": "no"},
+                mem_limit=request.settings.preview_memory,
+                nano_cpus=1_000_000_000,
+                pids_limit=256,
+            ),
+        )
         container.start()
         try:
             result = container.wait(timeout=request.settings.prepare_timeout_seconds)
@@ -436,12 +450,12 @@ class MySQLDatabaseEngine:
                     "sh",
                     "-c",
                     "set -eu; "
-                    "for id in $(mysql --protocol=TCP -h \"$PREVIEW_HOST\" -u root -Nse "
-                    "\"SELECT ID FROM information_schema.PROCESSLIST "
+                    'for id in $(mysql --protocol=TCP -h "$PREVIEW_HOST" -u root -Nse '
+                    '"SELECT ID FROM information_schema.PROCESSLIST '
                     "WHERE DB = '$PREVIEW_DATABASE' AND ID <> CONNECTION_ID()\"); do "
-                    "mysql --protocol=TCP -h \"$PREVIEW_HOST\" -u root -e \"KILL $id\"; "
+                    'mysql --protocol=TCP -h "$PREVIEW_HOST" -u root -e "KILL $id"; '
                     "done; printf '%s' \"$PREVIEW_SQL\" | "
-                    "mysql --protocol=TCP -h \"$PREVIEW_HOST\" -u root",
+                    'mysql --protocol=TCP -h "$PREVIEW_HOST" -u root',
                 ],
                 environment={
                     "PREVIEW_SQL": script,
@@ -459,7 +473,9 @@ class MySQLDatabaseEngine:
                 if isinstance(detail, bytes)
                 else str(detail or "")
             )[-2_048:]
-            raise error(500, f"Shared database statement failed: {text}") from container_error
+            raise error(
+                500, f"Shared database statement failed: {text}"
+            ) from container_error
 
     def _run_shared_sql(
         self,
@@ -505,7 +521,9 @@ class MySQLDatabaseEngine:
                 if isinstance(detail, bytes)
                 else str(detail or "")
             )[-2_048:]
-            raise error(500, f"Shared database statement failed: {text}") from container_error
+            raise error(
+                500, f"Shared database statement failed: {text}"
+            ) from container_error
 
     def _read_or_create_credentials(
         self,
@@ -579,28 +597,39 @@ class PostgreSQLDatabaseEngine(MySQLDatabaseEngine):
             }
         environment["POSTGRES_INITDB_ARGS"] = "--auth-host=scram-sha-256"
         try:
-            container = create_hardened(request.docker_client, HardenedContainerSpec(
-                image=request.image,
-                name=request.container_name,
-                capabilities=Capabilities.DATABASE_SERVER,
-                environment=environment,
-                labels=request.labels,
-                volumes={request.data_volume: {"bind": "/var/lib/postgresql/data", "mode": "rw"}},
-                tmpfs_size="256m",
-                extra_tmpfs={"/var/run/postgresql": "rw,nosuid,size=32m"},
-                network=request.network_name,
-                restart_policy={"Name": "no"},
-                healthcheck={
-                    "test": ["CMD-SHELL", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""],
-                    "interval": 1_000_000_000,
-                    "timeout": 3_000_000_000,
-                    "retries": 60,
-                    "start_period": 5_000_000_000,
-                },
-                mem_limit=request.memory_limit,
-                nano_cpus=request.nano_cpus,
-                pids_limit=request.pids_limit,
-            ))
+            container = create_hardened(
+                request.docker_client,
+                HardenedContainerSpec(
+                    image=request.image,
+                    name=request.container_name,
+                    capabilities=Capabilities.DATABASE_SERVER,
+                    environment=environment,
+                    labels=request.labels,
+                    volumes={
+                        request.data_volume: {
+                            "bind": "/var/lib/postgresql/data",
+                            "mode": "rw",
+                        }
+                    },
+                    tmpfs_size="256m",
+                    extra_tmpfs={"/var/run/postgresql": "rw,nosuid,size=32m"},
+                    network=request.network_name,
+                    restart_policy={"Name": "no"},
+                    healthcheck={
+                        "test": [
+                            "CMD-SHELL",
+                            'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
+                        ],
+                        "interval": 1_000_000_000,
+                        "timeout": 3_000_000_000,
+                        "retries": 60,
+                        "start_period": 5_000_000_000,
+                    },
+                    mem_limit=request.memory_limit,
+                    nano_cpus=request.nano_cpus,
+                    pids_limit=request.pids_limit,
+                ),
+            )
         except APIError:
             if not request.shared:
                 raise
@@ -683,7 +712,9 @@ class PostgreSQLDatabaseEngine(MySQLDatabaseEngine):
                 if isinstance(detail, bytes)
                 else str(detail or "")
             )[-2_048:]
-            raise error(500, f"Shared database statement failed: {text}") from container_error
+            raise error(
+                500, f"Shared database statement failed: {text}"
+            ) from container_error
 
 
 class SQLiteDatabaseEngine(MySQLDatabaseEngine):
@@ -721,26 +752,33 @@ class SQLiteDatabaseEngine(MySQLDatabaseEngine):
         if request.runtime == "fastapi":
             command += ". /opt/venv/bin/activate\n"
         command += "\n".join(request.commands)
-        container = create_hardened(request.docker_client, HardenedContainerSpec(
-            image=request.image,
-            command=["sh", "-lc", command],
-            name=request.container_name
-            or f"orchestrator-preview-{request.run_id[:12]}-initialize",
-            working_dir="/workspace",
-            environment=request.environment,
-            labels={
-                **request.labels,
-                LABEL_SERVICE: request.service_label,
-            },
-            volumes=request.volumes,
-            mounts=request.mounts or None,
-            tmpfs_size="256m",
-            extra_tmpfs={key: value for key, value in (request.tmpfs or {}).items() if key != "/tmp"},
-            restart_policy={"Name": "no"},
-            mem_limit=request.settings.preview_memory,
-            nano_cpus=1_000_000_000,
-            pids_limit=256,
-        ))
+        container = create_hardened(
+            request.docker_client,
+            HardenedContainerSpec(
+                image=request.image,
+                command=["sh", "-lc", command],
+                name=request.container_name
+                or f"orchestrator-preview-{request.run_id[:12]}-initialize",
+                working_dir="/workspace",
+                environment=request.environment,
+                labels={
+                    **request.labels,
+                    LABEL_SERVICE: request.service_label,
+                },
+                volumes=request.volumes,
+                mounts=request.mounts or None,
+                tmpfs_size="256m",
+                extra_tmpfs={
+                    key: value
+                    for key, value in (request.tmpfs or {}).items()
+                    if key != "/tmp"
+                },
+                restart_policy={"Name": "no"},
+                mem_limit=request.settings.preview_memory,
+                nano_cpus=1_000_000_000,
+                pids_limit=256,
+            ),
+        )
         container.start()
         try:
             result = container.wait(timeout=request.settings.prepare_timeout_seconds)
@@ -775,7 +813,9 @@ class SQLiteDatabaseEngine(MySQLDatabaseEngine):
         )
 
     @staticmethod
-    def _run_file_command(docker_client: DockerClient, volume_name: str, command: str) -> None:
+    def _run_file_command(
+        docker_client: DockerClient, volume_name: str, command: str
+    ) -> None:
         _run_database_command(
             docker_client,
             image=SQLITE_HELPER_IMAGE,
@@ -828,7 +868,9 @@ def _read_or_create_server_credentials(
         try:
             loaded = json.loads(output)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise error(409, "Stored persistent database credentials are invalid") from exc
+            raise error(
+                409, "Stored persistent database credentials are invalid"
+            ) from exc
         if not isinstance(loaded, dict) or any(
             not isinstance(loaded.get(key), str) or not loaded[key]
             for key in ("username", "password", "root_password")
@@ -860,9 +902,9 @@ def _read_or_create_server_credentials(
                 "destination=/credentials/$DATABASE_CREDENTIAL_FILE; "
                 "temporary=$(mktemp /credentials/.${DATABASE_CREDENTIAL_FILE}.XXXXXX); "
                 "trap 'rm -f \"$temporary\"' EXIT; "
-                "printf '%s' \"$DATABASE_CREDENTIALS\" | base64 -d > \"$temporary\"; "
-                "if ! ln \"$temporary\" \"$destination\" 2>/dev/null; then "
-                "[ -f \"$destination\" ] || exit 1; fi"
+                'printf \'%s\' "$DATABASE_CREDENTIALS" | base64 -d > "$temporary"; '
+                'if ! ln "$temporary" "$destination" 2>/dev/null; then '
+                '[ -f "$destination" ] || exit 1; fi'
             ),
         ],
         environment={
@@ -996,7 +1038,7 @@ def postgres_provision_statements(
     name = postgres_shared_database_name(sandbox_id, error)
     escaped_password = password.replace("'", "''")
     return [
-        f'CREATE ROLE "{name}" LOGIN PASSWORD \'{escaped_password}\'',
+        f"CREATE ROLE \"{name}\" LOGIN PASSWORD '{escaped_password}'",
         f'CREATE DATABASE "{name}" OWNER "{name}"',
     ]
 
@@ -1082,7 +1124,9 @@ def sandbox_database_runtime(
         create=False,
     )
     if network is None:
-        raise SandboxDatabaseError(409, f"Sandbox database network '{network_name}' is missing")
+        raise SandboxDatabaseError(
+            409, f"Sandbox database network '{network_name}' is missing"
+        )
     engine = str(row["engine"])
     data_volume = db_data_volume(sandbox_id) if engine == "sqlite" else None
     if data_volume is not None:
@@ -1142,7 +1186,9 @@ def provision_sandbox_database(
         if runtime is None:  # pragma: no cover - v1 checked above
             raise RuntimeError("sandbox database runtime disappeared")
         sandbox_row = store.sandbox(sandbox_id) or {}
-        return runtime, str(sandbox_row.get("schema_baseline_hash") or schema_baseline_hash({}))
+        return runtime, str(
+            sandbox_row.get("schema_baseline_hash") or schema_baseline_hash({})
+        )
 
     store.update_sandbox_database_status(sandbox_id, status="provisioning")
     labels = {
@@ -1337,7 +1383,9 @@ def _owned_sandbox_network(
     create: bool,
 ) -> Any | None:
     name = sandbox_network_name(sandbox_id)
-    existing = [item for item in docker_client.networks.list(names=[name]) if item.name == name]
+    existing = [
+        item for item in docker_client.networks.list(names=[name]) if item.name == name
+    ]
     if existing:
         try:
             validate_ownership(existing[0], sandbox_id=sandbox_id)
@@ -1469,7 +1517,9 @@ def _ensure_shared_server(
             )
         )
         if provision is None or provision.container is None:
-            raise RuntimeError("shared database server provisioning returned no container")
+            raise RuntimeError(
+                "shared database server provisioning returned no container"
+            )
         container = provision.container
         if container.status != "running":
             container.start()
@@ -1577,7 +1627,9 @@ def _wait_for_server_health(
         if status == "running" and (health == "healthy" or health_state is None):
             return
         if status in {"dead", "exited"} or health == "unhealthy":
-            raise SandboxDatabaseError(422, f"{engine_name} database server is unhealthy")
+            raise SandboxDatabaseError(
+                422, f"{engine_name} database server is unhealthy"
+            )
         time.sleep(0.5)
     raise SandboxDatabaseError(
         408,
@@ -1618,7 +1670,7 @@ def _provision_statements(
     escaped_password = password.replace("'", "''")
     if engine_name == "postgres":
         return [
-            f'CREATE ROLE "{db_name}" LOGIN PASSWORD \'{escaped_password}\'',
+            f"CREATE ROLE \"{db_name}\" LOGIN PASSWORD '{escaped_password}'",
             f'CREATE DATABASE "{db_name}" OWNER "{db_name}"',
         ]
     return [

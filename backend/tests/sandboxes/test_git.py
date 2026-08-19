@@ -103,7 +103,6 @@ class _SpyContainer:
         pass
 
 
-
 class _SpyImages:
     def __init__(self) -> None:
         self.get_calls: list[str] = []
@@ -171,7 +170,9 @@ def test_run_git_enables_network_only_with_the_explicit_mode() -> None:
 
 def test_run_git_preserves_the_container_error_contract() -> None:
     docker_client = _SpyDockerClient()
-    docker_client.containers = _SpyContainers(stderr=b"fatal: no remote\n", exit_code=128)
+    docker_client.containers = _SpyContainers(
+        stderr=b"fatal: no remote\n", exit_code=128
+    )
 
     with pytest.raises(ContainerError) as caught:
         run_git(
@@ -375,7 +376,9 @@ def test_write_credentials_extend_git_config_without_reenabling_hooks(
     assert "write-token" not in " ".join(call["command"])
     assert call["labels"] == {}
     secret_mount = next(
-        mount for mount in call["volumes"].values() if mount["bind"] == GITHUB_WRITE_TOKEN_PATH
+        mount
+        for mount in call["volumes"].values()
+        if mount["bind"] == GITHUB_WRITE_TOKEN_PATH
     )
     assert secret_mount["mode"] == "ro"
 
@@ -493,7 +496,10 @@ def test_credential_mount_check_reports_docker_desktop_empty_directory_failure(
     )
 
     script = docker_client.containers.calls[0]["command"][0]
-    assert f"[ ! -f {GITHUB_READ_TOKEN_PATH} ] || [ ! -s {GITHUB_READ_TOKEN_PATH} ]" in script
+    assert (
+        f"[ ! -f {GITHUB_READ_TOKEN_PATH} ] || [ ! -s {GITHUB_READ_TOKEN_PATH} ]"
+        in script
+    )
     assert "GitHub read credential mount failed" in script
 
 
@@ -523,7 +529,7 @@ def test_credential_file_is_readable_inside_fetch_container_and_not_in_environme
                     mirror_volume.name: {"bind": "/mirror", "mode": "rw"},
                     remote_volume.name: {"bind": "/remote", "mode": "rw"},
                 },
-            tmpfs={"/git": "rw,nosuid,size=1m"},
+                tmpfs={"/git": "rw,nosuid,size=1m"},
             )
 
             output = run_git(
@@ -559,9 +565,15 @@ def test_publish_pushes_a_reviewed_branch_through_the_mirror_to_a_local_remote(
     network = remote_volume = mirror_volume = workspace_volume = daemon = None
     try:
         network = client.networks.create(name=f"orchestrator-publish-net-{run_id}")
-        remote_volume = client.volumes.create(name=f"orchestrator-publish-remote-{run_id}")
-        mirror_volume = client.volumes.create(name=f"orchestrator-publish-mirror-{run_id}")
-        workspace_volume = client.volumes.create(name=f"orchestrator-publish-workspace-{run_id}")
+        remote_volume = client.volumes.create(
+            name=f"orchestrator-publish-remote-{run_id}"
+        )
+        mirror_volume = client.volumes.create(
+            name=f"orchestrator-publish-mirror-{run_id}"
+        )
+        workspace_volume = client.volumes.create(
+            name=f"orchestrator-publish-workspace-{run_id}"
+        )
         client.containers.run(
             "alpine/git:latest",
             entrypoint=["sh", "-c"],
@@ -602,7 +614,9 @@ def test_publish_pushes_a_reviewed_branch_through_the_mirror_to_a_local_remote(
             tmpfs={"/git": "rw,nosuid,size=1m"},
         )
         daemon.reload()
-        host_port = int(daemon.attrs["NetworkSettings"]["Ports"]["9418/tcp"][0]["HostPort"])
+        host_port = int(
+            daemon.attrs["NetworkSettings"]["Ports"]["9418/tcp"][0]["HostPort"]
+        )
         remote_url = f"git://host.docker.internal:{host_port}/repository.git"
         # Measured: `apk add git-daemon` needs roughly 30 of these probes
         # before the daemon accepts connections, and a budget of 30 sat exactly
@@ -612,7 +626,9 @@ def test_publish_pushes_a_reviewed_branch_through_the_mirror_to_a_local_remote(
             probe = client.containers.run(
                 "alpine/git:latest",
                 entrypoint=["sh", "-c"],
-                command=[f"git ls-remote {remote_url} >/dev/null 2>&1 && echo ready || echo waiting"],
+                command=[
+                    f"git ls-remote {remote_url} >/dev/null 2>&1 && echo ready || echo waiting"
+                ],
                 remove=True,
                 tmpfs={"/git": "rw,nosuid,size=1m"},
             )
@@ -625,7 +641,7 @@ def test_publish_pushes_a_reviewed_branch_through_the_mirror_to_a_local_remote(
             entrypoint=["sh", "-c"],
             command=[
                 "set -eu\n"
-                "git clone --mirror -q \"$ORCHESTRATOR_REMOTE\" /mirror\n"
+                'git clone --mirror -q "$ORCHESTRATOR_REMOTE" /mirror\n'
                 "git -C /mirror config --unset-all remote.origin.mirror || true\n"
             ],
             remove=True,
@@ -633,14 +649,18 @@ def test_publish_pushes_a_reviewed_branch_through_the_mirror_to_a_local_remote(
             volumes={mirror_volume.name: {"bind": "/mirror", "mode": "rw"}},
             tmpfs={"/git": "rw,nosuid,size=1m"},
         )
-        base_commit = client.containers.run(
-            "alpine/git:latest",
-            entrypoint=["sh", "-c"],
-            command=["git -C /mirror rev-parse refs/heads/main"],
-            remove=True,
-            volumes={mirror_volume.name: {"bind": "/mirror", "mode": "ro"}},
-            tmpfs={"/git": "rw,nosuid,size=1m"},
-        ).decode().strip()
+        base_commit = (
+            client.containers.run(
+                "alpine/git:latest",
+                entrypoint=["sh", "-c"],
+                command=["git -C /mirror rev-parse refs/heads/main"],
+                remove=True,
+                volumes={mirror_volume.name: {"bind": "/mirror", "mode": "ro"}},
+                tmpfs={"/git": "rw,nosuid,size=1m"},
+            )
+            .decode()
+            .strip()
+        )
         clone_mirror_to_workspace(
             client,
             image="alpine/git:latest",
@@ -650,22 +670,26 @@ def test_publish_pushes_a_reviewed_branch_through_the_mirror_to_a_local_remote(
             branch="feature/publish-test",
             ensure_image=True,
         )
-        reviewed_head = client.containers.run(
-            "alpine/git:latest",
-            entrypoint=["sh", "-c"],
-            command=[
-                "set -eu\n"
-                "git -C /workspace config user.name test\n"
-                "git -C /workspace config user.email test@example.invalid\n"
-                "printf reviewed > /workspace/reviewed.txt\n"
-                "git -C /workspace add reviewed.txt\n"
-                "git -C /workspace commit -qm reviewed\n"
-                "git -C /workspace rev-parse HEAD\n"
-            ],
-            remove=True,
-            volumes={workspace_volume.name: {"bind": "/workspace", "mode": "rw"}},
-            tmpfs={"/git": "rw,nosuid,size=1m"},
-        ).decode().strip()
+        reviewed_head = (
+            client.containers.run(
+                "alpine/git:latest",
+                entrypoint=["sh", "-c"],
+                command=[
+                    "set -eu\n"
+                    "git -C /workspace config user.name test\n"
+                    "git -C /workspace config user.email test@example.invalid\n"
+                    "printf reviewed > /workspace/reviewed.txt\n"
+                    "git -C /workspace add reviewed.txt\n"
+                    "git -C /workspace commit -qm reviewed\n"
+                    "git -C /workspace rev-parse HEAD\n"
+                ],
+                remove=True,
+                volumes={workspace_volume.name: {"bind": "/workspace", "mode": "rw"}},
+                tmpfs={"/git": "rw,nosuid,size=1m"},
+            )
+            .decode()
+            .strip()
+        )
         mirror_commit = push_workspace_to_mirror(
             client,
             image="alpine/git:latest",
@@ -689,14 +713,17 @@ def test_publish_pushes_a_reviewed_branch_through_the_mirror_to_a_local_remote(
                 credential_source=source,
                 ensure_image=True,
             )
-            assert remote_branch_sha(
-                client,
-                image="alpine/git:latest",
-                mirror_volume=mirror_volume.name,
-                remote_branch="feature/publish-test",
-                credential_source=source,
-                ensure_image=True,
-            ) == reviewed_head
+            assert (
+                remote_branch_sha(
+                    client,
+                    image="alpine/git:latest",
+                    mirror_volume=mirror_volume.name,
+                    remote_branch="feature/publish-test",
+                    credential_source=source,
+                    ensure_image=True,
+                )
+                == reviewed_head
+            )
         remotes = client.containers.run(
             "alpine/git:latest",
             entrypoint=["sh", "-c"],

@@ -48,7 +48,9 @@ def test_a_changed_lockfile_produces_a_different_digest() -> None:
 
 def test_missing_lockfile_digests_the_literal_string_none() -> None:
     assert _lockfile_digest({}) == hashlib.sha256(b"none").hexdigest()
-    assert _lockfile_digest({"README.md": b"docs"}) == hashlib.sha256(b"none").hexdigest()
+    assert (
+        _lockfile_digest({"README.md": b"docs"}) == hashlib.sha256(b"none").hexdigest()
+    )
 
 
 def test_lockfile_priority_prefers_package_lock_over_pnpm_lock() -> None:
@@ -57,7 +59,9 @@ def test_lockfile_priority_prefers_package_lock_over_pnpm_lock() -> None:
         "pnpm-lock.yaml": b"pnpm-lock",
     }
 
-    assert _lockfile_digest(files) == _lockfile_digest({"package-lock.json": b"npm-lock"})
+    assert _lockfile_digest(files) == _lockfile_digest(
+        {"package-lock.json": b"npm-lock"}
+    )
 
 
 def test_lockfile_digest_ignores_nested_lockfiles_outside_the_volume_root() -> None:
@@ -88,7 +92,9 @@ def test_dependency_volume_name_changes_with_the_sandbox() -> None:
     )
 
 
-def test_dependency_volume_name_truncates_sandbox_and_digest_to_twelve_characters() -> None:
+def test_dependency_volume_name_truncates_sandbox_and_digest_to_twelve_characters() -> (
+    None
+):
     name = _dependency_volume_name("s" * 40, "d" * 40)
 
     assert name == f"orchestrator-deps-{'s' * 12}-{'d' * 12}"
@@ -279,7 +285,9 @@ def test_agent_mounts_the_dependency_volume_read_only(
     create_agent(
         docker_client,
         SETTINGS,
-        CreateAgentRequest(project_name="Sample Project", provider=AgentProvider.CLAUDE),
+        CreateAgentRequest(
+            project_name="Sample Project", provider=AgentProvider.CLAUDE
+        ),
         controller_store,
     )
 
@@ -318,7 +326,9 @@ def test_agent_creates_an_empty_dependency_volume_when_no_preview_has_run(
     agent = create_agent(
         docker_client,
         SETTINGS,
-        CreateAgentRequest(project_name="Sample Project", provider=AgentProvider.CLAUDE),
+        CreateAgentRequest(
+            project_name="Sample Project", provider=AgentProvider.CLAUDE
+        ),
         controller_store,
     )
 

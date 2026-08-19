@@ -168,11 +168,15 @@ def feature_diff(
         and review.head_commit
         and review_is_current
     ):
-        target = FeatureTarget(review.base_branch, review.base_commit, review.head_commit)
+        target = FeatureTarget(
+            review.base_branch, review.base_commit, review.head_commit
+        )
         review_id: str | None = review.id
         sandbox = store.sandbox(delegation_view.delegation.sandbox_id)
         if sandbox is None:
-            raise service.DelegationOperationError(404, "Delegation sandbox was not found")
+            raise service.DelegationOperationError(
+                404, "Delegation sandbox was not found"
+            )
         state = _sandbox_state(
             docker_client,
             settings.git_image,
@@ -232,10 +236,14 @@ def feature_diff(
 
 def _task_chain(tasks: list[dict[str, Any]]) -> FeatureTarget:
     if not tasks:
-        raise service.DelegationOperationError(409, "Delegation has no accepted task commits")
+        raise service.DelegationOperationError(
+            409, "Delegation has no accepted task commits"
+        )
     branches = {str(task.get("base_branch") or "") for task in tasks}
     if len(branches) != 1:
-        raise service.DelegationOperationError(409, "Feature tasks used different base branches")
+        raise service.DelegationOperationError(
+            409, "Feature tasks used different base branches"
+        )
     branch = branches.pop()
     if not _BRANCH_PATTERN.fullmatch(branch):
         raise service.DelegationOperationError(409, "Feature base branch is unusable")
@@ -246,7 +254,9 @@ def _task_chain(tasks: list[dict[str, Any]]) -> FeatureTarget:
         base = str(task.get("base_commit") or "")
         head = str(task.get("head_commit") or "")
         if not _COMMIT_PATTERN.fullmatch(base) or not _COMMIT_PATTERN.fullmatch(head):
-            raise service.DelegationOperationError(409, "Feature task has no verified commit range")
+            raise service.DelegationOperationError(
+                409, "Feature task has no verified commit range"
+            )
         if base in by_base:
             raise service.DelegationOperationError(
                 409,
@@ -257,7 +267,9 @@ def _task_chain(tasks: list[dict[str, Any]]) -> FeatureTarget:
 
     starts = [base for base in by_base if base not in heads]
     if len(starts) != 1:
-        raise service.DelegationOperationError(409, "Feature task commits do not form one chain")
+        raise service.DelegationOperationError(
+            409, "Feature task commits do not form one chain"
+        )
     base_commit = starts[0]
     head_commit = base_commit
     visited = 0
@@ -266,7 +278,9 @@ def _task_chain(tasks: list[dict[str, Any]]) -> FeatureTarget:
         head_commit = str(task["head_commit"])
         visited += 1
     if visited != len(tasks):
-        raise service.DelegationOperationError(409, "Feature task commits do not form one chain")
+        raise service.DelegationOperationError(
+            409, "Feature task commits do not form one chain"
+        )
     return FeatureTarget(branch, base_commit, head_commit)
 
 
@@ -279,8 +293,7 @@ def _sandbox_state(
         "set -eu\n"
         "cd /project\n"
         'printf "branch %s\\n" "$(git symbolic-ref --quiet --short HEAD || true)"\n'
-        'printf "head %s\\n" "$(git rev-parse --verify HEAD)"\n'
-        + snapshot_shell()
+        'printf "head %s\\n" "$(git rev-parse --verify HEAD)"\n' + snapshot_shell()
     )
     output = run_git(
         docker_client,
@@ -372,7 +385,9 @@ def _seed_legacy_baseline(
             break
     recorded = recorded or []
 
-    outside = [entry for entry in current if not _covered_by_legacy(entry.path, recorded)]
+    outside = [
+        entry for entry in current if not _covered_by_legacy(entry.path, recorded)
+    ]
     missing = [
         path
         for path in recorded
@@ -428,7 +443,9 @@ def _dirty_blockers(
             continue
         changes: list[str] = []
         if original.status != present.status:
-            changes.append(f"Git status changed from {original.status!r} to {present.status!r}")
+            changes.append(
+                f"Git status changed from {original.status!r} to {present.status!r}"
+            )
         if original.file_type != present.file_type:
             changes.append(
                 f"file type changed from {original.file_type} to {present.file_type}"
@@ -501,7 +518,9 @@ def _validate_target(target: FeatureTarget) -> None:
         or not _COMMIT_PATTERN.fullmatch(target.base_commit)
         or not _COMMIT_PATTERN.fullmatch(target.head_commit)
     ):
-        raise service.DelegationOperationError(409, "Feature review has an invalid Git target")
+        raise service.DelegationOperationError(
+            409, "Feature review has an invalid Git target"
+        )
 
 
 def _fields(output: bytes) -> dict[str, str]:

@@ -57,9 +57,7 @@ def validate_work_items(
         criteria = item.get("acceptance_criteria")
         if not isinstance(criteria, list) or not criteria:
             errors.append(f"{label}.acceptance_criteria must be a non-empty list")
-        elif any(
-            not isinstance(entry, str) or not entry.strip() for entry in criteria
-        ):
+        elif any(not isinstance(entry, str) or not entry.strip() for entry in criteria):
             errors.append(
                 f"{label}.acceptance_criteria must contain only non-empty strings"
             )

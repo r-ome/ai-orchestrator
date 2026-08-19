@@ -3,7 +3,9 @@ from docker.errors import ContainerError
 from app.sandboxes.git import describe_git_failure
 
 
-def _container_error(*, exit_status: int = 128, stderr: bytes | str | None) -> ContainerError:
+def _container_error(
+    *, exit_status: int = 128, stderr: bytes | str | None
+) -> ContainerError:
     return ContainerError(
         container="git-push",
         exit_status=exit_status,

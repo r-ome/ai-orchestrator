@@ -45,14 +45,18 @@ def reasoning_effort_choices(settings: PlanningSettings) -> list[str]:
 @lru_cache
 def get_planning_settings() -> PlanningSettings:
     return PlanningSettings(
-        clarifier_provider=_provider("PLANNING_CLARIFIER_PROVIDER", AgentProvider.CLAUDE),
+        clarifier_provider=_provider(
+            "PLANNING_CLARIFIER_PROVIDER", AgentProvider.CLAUDE
+        ),
         planner_provider=_provider("PLANNING_PLANNER_PROVIDER", AgentProvider.CLAUDE),
         reviewer_provider=_provider("PLANNING_REVIEWER_PROVIDER", AgentProvider.CODEX),
         credential_profile=os.getenv("PLANNING_CREDENTIAL_PROFILE", "default"),
         max_review_turns=integer_setting("PLANNING_MAX_REVIEW_TURNS", 3),
         turn_timeout_seconds=integer_setting("PLANNING_TURN_TIMEOUT_SECONDS", 600),
         turn_retries=integer_setting("PLANNING_TURN_RETRIES", 2),
-        turn_retry_backoff_seconds=integer_setting("PLANNING_TURN_RETRY_BACKOFF_SECONDS", 5),
+        turn_retry_backoff_seconds=integer_setting(
+            "PLANNING_TURN_RETRY_BACKOFF_SECONDS", 5
+        ),
         planning_memory=os.getenv("PLANNING_MEMORY", "2g"),
         claude_model=os.getenv("PLANNING_CLAUDE_MODEL", "opus"),
         codex_model=os.getenv("PLANNING_CODEX_MODEL", "gpt-5.6-terra"),

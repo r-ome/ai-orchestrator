@@ -123,9 +123,7 @@ def _state(*entries: DirtyEntry, branch: str = "main", head: str = HEAD) -> byte
         status = base64.b64encode(entry.status.encode()).decode()
         path = base64.b64encode(entry.path.encode()).decode()
         fingerprint = entry.fingerprint or "-"
-        lines.append(
-            f"snapshot {status} {entry.file_type} {fingerprint} {path}"
-        )
+        lines.append(f"snapshot {status} {entry.file_type} {fingerprint} {path}")
     return ("\n".join(lines) + "\n").encode()
 
 
@@ -529,32 +527,40 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
             name=workspace,
             labels=ownership_labels(sandbox_id=sandbox_id, project_id=project_id),
         )
-        base = git(
-            "set -eu\n"
-            f"git init -q -b {branch} /target\n"
-            "git -C /target config user.name tester\n"
-            "git -C /target config user.email tester@example.invalid\n"
-            "printf base > /target/app.txt\n"
-            "git -C /target add app.txt\n"
-            "git -C /target commit -qm base\n"
-            "git -C /target rev-parse HEAD\n",
-            {target: {"bind": "/target", "mode": "rw"}},
-        ).decode().strip()
-        head = git(
-            "set -eu\n"
-            "git clone -q /target /workspace\n"
-            "git -C /workspace remote remove origin\n"
-            "git -C /workspace config user.name tester\n"
-            "git -C /workspace config user.email tester@example.invalid\n"
-            "printf feature >> /workspace/app.txt\n"
-            "git -C /workspace add app.txt\n"
-            "git -C /workspace commit -qm feature\n"
-            "git -C /workspace rev-parse HEAD\n",
-            {
-                target: {"bind": "/target", "mode": "ro"},
-                workspace: {"bind": "/workspace", "mode": "rw"},
-            },
-        ).decode().strip()
+        base = (
+            git(
+                "set -eu\n"
+                f"git init -q -b {branch} /target\n"
+                "git -C /target config user.name tester\n"
+                "git -C /target config user.email tester@example.invalid\n"
+                "printf base > /target/app.txt\n"
+                "git -C /target add app.txt\n"
+                "git -C /target commit -qm base\n"
+                "git -C /target rev-parse HEAD\n",
+                {target: {"bind": "/target", "mode": "rw"}},
+            )
+            .decode()
+            .strip()
+        )
+        head = (
+            git(
+                "set -eu\n"
+                "git clone -q /target /workspace\n"
+                "git -C /workspace remote remove origin\n"
+                "git -C /workspace config user.name tester\n"
+                "git -C /workspace config user.email tester@example.invalid\n"
+                "printf feature >> /workspace/app.txt\n"
+                "git -C /workspace add app.txt\n"
+                "git -C /workspace commit -qm feature\n"
+                "git -C /workspace rev-parse HEAD\n",
+                {
+                    target: {"bind": "/target", "mode": "ro"},
+                    workspace: {"bind": "/workspace", "mode": "rw"},
+                },
+            )
+            .decode()
+            .strip()
+        )
 
         store = get_controller_store()
         register_ready_v1_sandbox(
@@ -630,12 +636,15 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
             "id": "delegation-active",
         }
 
-        assert store.transition_delegation(
-            "delegation-active",
-            to_status="completed",
-            from_statuses=("ready",),
-            terminal=True,
-        ) is not None
+        assert (
+            store.transition_delegation(
+                "delegation-active",
+                to_status="completed",
+                from_statuses=("ready",),
+                terminal=True,
+            )
+            is not None
+        )
 
         def complete_sync(*_args: object, **_kwargs: object) -> None:
             manifest = read_manifest(store, sandbox_id)
@@ -650,10 +659,18 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
                 to_status=SandboxLifecycleStatus.READY,
             )
 
-        monkeypatch.setattr(sandbox_service, "fetch_canonical_mirror", lambda *_a, **_k: None)
-        monkeypatch.setattr(sandbox_service, "mirror_base_commit", lambda *_a, **_k: base)
-        monkeypatch.setattr(sandbox_service, "sync_workspace_from_mirror", lambda *_a, **_k: None)
-        monkeypatch.setattr(sandbox_service, "complete_database_provision", complete_sync)
+        monkeypatch.setattr(
+            sandbox_service, "fetch_canonical_mirror", lambda *_a, **_k: None
+        )
+        monkeypatch.setattr(
+            sandbox_service, "mirror_base_commit", lambda *_a, **_k: base
+        )
+        monkeypatch.setattr(
+            sandbox_service, "sync_workspace_from_mirror", lambda *_a, **_k: None
+        )
+        monkeypatch.setattr(
+            sandbox_service, "complete_database_provision", complete_sync
+        )
         monkeypatch.setattr(
             sandbox_service,
             "discover_engine",
@@ -691,10 +708,13 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
         # goes because delegations reference sandboxes without ON DELETE CASCADE.
         assert store.delegation("delegation-drained") is None
         assert client.volumes.list(filters={"name": f"sbx-{sandbox_id[:12]}"}) == []
-        assert client.containers.list(
-            all=True,
-            filters={"name": f"sbx-{sandbox_id[:12]}"},
-        ) == []
+        assert (
+            client.containers.list(
+                all=True,
+                filters={"name": f"sbx-{sandbox_id[:12]}"},
+            )
+            == []
+        )
     finally:
         if workspace_volume_handle is not None:
             try:

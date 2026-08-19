@@ -453,7 +453,9 @@ async def preview_events(
     session_key = f"{project_name}:{proposal_id}"
     async with _active_event_sessions_lock:
         if session_key in _active_event_sessions:
-            await websocket.close(code=4409, reason="Proposal already has an events stream")
+            await websocket.close(
+                code=4409, reason="Proposal already has an events stream"
+            )
             return
         _active_event_sessions.add(session_key)
 

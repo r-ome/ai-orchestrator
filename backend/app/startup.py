@@ -121,8 +121,10 @@ def reconcile_controller_state(store: ControllerStore) -> dict[str, int]:
         "mirror_locks": 0,
     }
     stale_before = (
-        datetime.now(UTC) - timedelta(seconds=LIFECYCLE_LEASE_STALE_SECONDS)
-    ).isoformat().replace("+00:00", "Z")
+        (datetime.now(UTC) - timedelta(seconds=LIFECYCLE_LEASE_STALE_SECONDS))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     counts["leases"] = store.reclaim_sandbox_leases(stale_before=stale_before)
     counts["mirror_locks"] = store.reclaim_project_mirror_locks(
         stale_before=stale_before
@@ -184,7 +186,11 @@ def reconcile_controller_state(store: ControllerStore) -> dict[str, int]:
                 store.update_preview_run(run_id, status="missing")
                 counts["missing"] += 1
                 continue
-            status = "running" if any(item.status == "running" for item in resources) else "failed"
+            status = (
+                "running"
+                if any(item.status == "running" for item in resources)
+                else "failed"
+            )
             store.update_preview_run(run_id, status=status)
             counts["previews"] += 1
 

@@ -454,4 +454,3 @@ _RUN_UPDATABLE_COLUMNS = frozenset(
 # for versions 1 through 17. Versions 2 through 17 stay reserved because a new
 # migration there would be silently skipped during their upgrade.
 FIRST_V1_MIGRATION = 18
-

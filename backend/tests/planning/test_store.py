@@ -93,7 +93,10 @@ def test_planning_session_model_columns_match_for_new_and_upgraded_databases(
 
     def session_columns(store: ControllerStore) -> set[str]:
         with sqlite3.connect(store.database_path) as connection:
-            return {str(row[1]) for row in connection.execute("PRAGMA table_info(planning_sessions)")}
+            return {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(planning_sessions)")
+            }
 
     assert columns <= session_columns(fresh)
     assert session_columns(fresh) == session_columns(legacy)
@@ -107,9 +110,7 @@ def test_initialize_twice_is_a_no_op(tmp_path: Path) -> None:
     with sqlite3.connect(store.database_path) as connection:
         versions = [
             int(row[0])
-            for row in connection.execute(
-                "SELECT version FROM schema_migrations"
-            )
+            for row in connection.execute("SELECT version FROM schema_migrations")
         ]
 
     assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
@@ -154,12 +155,18 @@ def test_append_planning_message_numbers_sequences_from_one(tmp_path: Path) -> N
     store = _store(tmp_path)
     _create_session(store)
 
-    assert store.append_planning_message(
-        session_id="session-1", role="user", text="First message"
-    ) == 1
-    assert store.append_planning_message(
-        session_id="session-1", role="clarifier", text="Second message"
-    ) == 2
+    assert (
+        store.append_planning_message(
+            session_id="session-1", role="user", text="First message"
+        )
+        == 1
+    )
+    assert (
+        store.append_planning_message(
+            session_id="session-1", role="clarifier", text="Second message"
+        )
+        == 2
+    )
     assert [row["sequence"] for row in store.planning_messages("session-1")] == [1, 2]
 
 

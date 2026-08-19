@@ -302,9 +302,7 @@ def test_accept_fast_forwards_the_sandbox_branch_and_deletes_the_task_branch(
     )
     assert _run(client, volume.name, "cd /project && cat contact.astro") == "contact"
     # A fast-forward keeps every commit: no merge commit was created.
-    assert _run(
-        client, volume.name, "cd /project && git rev-list --count main"
-    ) == "2"
+    assert _run(client, volume.name, "cd /project && git rev-list --count main") == "2"
 
 
 @requires_docker
@@ -465,9 +463,14 @@ def test_reject_leaves_the_sandbox_branch_untouched(
         "main"
     )
     # The rejected file never reached the sandbox branch.
-    assert _run(
-        client, volume.name, "cd /project && ls contact.astro 2>/dev/null || echo gone"
-    ) == "gone"
+    assert (
+        _run(
+            client,
+            volume.name,
+            "cd /project && ls contact.astro 2>/dev/null || echo gone",
+        )
+        == "gone"
+    )
 
 
 @requires_docker

@@ -23,9 +23,7 @@ def validate_feature_key(feature_key: str) -> str:
     if not isinstance(feature_key, str) or not feature_key:
         raise ValueError("feature_key is required")
     if not _FEATURE_KEY_PATTERN.fullmatch(feature_key):
-        raise ValueError(
-            "feature_key must match ^[a-z0-9][a-z0-9-]{1,63}$"
-        )
+        raise ValueError("feature_key must match ^[a-z0-9][a-z0-9-]{1,63}$")
     return feature_key
 
 
@@ -98,11 +96,15 @@ def validate_ownership(resource: Any, *, sandbox_id: str) -> None:
 
     labels = _resource_labels(resource)
     if labels.get(_OWNERSHIP_SANDBOX_ID) != sandbox_id:
-        raise ValueError("resource sandbox ownership label is missing or does not match")
+        raise ValueError(
+            "resource sandbox ownership label is missing or does not match"
+        )
     if not labels.get(_OWNERSHIP_PROJECT_ID):
         raise ValueError("resource project ownership label is missing")
     if labels.get(_OWNERSHIP_LIFECYCLE_VERSION) != "v1":
-        raise ValueError("resource lifecycle ownership label is missing or does not match")
+        raise ValueError(
+            "resource lifecycle ownership label is missing or does not match"
+        )
 
 
 def validate_mirror_ownership(resource: Any, *, project_id: str) -> None:
@@ -115,9 +117,13 @@ def validate_mirror_ownership(resource: Any, *, project_id: str) -> None:
         )
     labels = _resource_labels(resource)
     if labels.get(_OWNERSHIP_PROJECT_ID) != project_id:
-        raise ValueError("resource project ownership label is missing or does not match")
+        raise ValueError(
+            "resource project ownership label is missing or does not match"
+        )
     if labels.get(_OWNERSHIP_LIFECYCLE_VERSION) != "v1":
-        raise ValueError("resource lifecycle ownership label is missing or does not match")
+        raise ValueError(
+            "resource lifecycle ownership label is missing or does not match"
+        )
     if labels.get(_MIRROR_LABEL) != "true":
         raise ValueError("resource mirror ownership label is missing or does not match")
     if _OWNERSHIP_SANDBOX_ID in labels:
@@ -168,7 +174,9 @@ def _resource_labels(resource: Any) -> Mapping[str, Any]:
         labels = getattr(resource, "labels", None)
         if labels is None:
             attributes = getattr(resource, "attrs", {})
-            labels = attributes.get("Labels") if isinstance(attributes, Mapping) else None
+            labels = (
+                attributes.get("Labels") if isinstance(attributes, Mapping) else None
+            )
             if labels is None and isinstance(attributes, Mapping):
                 config = attributes.get("Config", {})
                 labels = config.get("Labels") if isinstance(config, Mapping) else None

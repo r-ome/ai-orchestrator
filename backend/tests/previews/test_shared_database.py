@@ -56,7 +56,9 @@ def _store(tmp_path: Path) -> ControllerStore:
     return store
 
 
-def _own_schema(store: ControllerStore, sandbox_id: str, image: str = "mysql:8.4") -> None:
+def _own_schema(
+    store: ControllerStore, sandbox_id: str, image: str = "mysql:8.4"
+) -> None:
     store.record_shared_schema(
         sandbox_id=sandbox_id,
         project_id=PROJECT_KEY,
@@ -125,13 +127,12 @@ class _FakeDocker:
             command = self.arguments.get("command")
             text = " ".join(command) if isinstance(command, list) else str(command)
             if "/credentials/mysql.json" in text:
-                return (
-                    b'{"username":"root","password":"p",'
-                    b'"root_password":"secret"}'
-                )
+                return b'{"username":"root","password":"p","root_password":"secret"}'
             if stdout:
                 self.outer.statements.append(
-                    str((self.arguments.get("environment") or {}).get("PREVIEW_SQL", ""))
+                    str(
+                        (self.arguments.get("environment") or {}).get("PREVIEW_SQL", "")
+                    )
                 )
             return b""
 
@@ -427,7 +428,9 @@ def test_shared_names_carry_the_engine() -> None:
 
     assert names["container"] == "orchestrator-shared-db-1f2e3d4c5b6a-mysql"
     assert names["data"] == "orchestrator-shared-db-1f2e3d4c5b6a-mysql-data"
-    assert names["credentials"] == "orchestrator-shared-db-1f2e3d4c5b6a-mysql-credentials"
+    assert (
+        names["credentials"] == "orchestrator-shared-db-1f2e3d4c5b6a-mysql-credentials"
+    )
     assert names["network"] == "orchestrator-shared-db-1f2e3d4c5b6a-mysql-net"
 
 

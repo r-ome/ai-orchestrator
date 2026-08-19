@@ -314,6 +314,9 @@ def test_completed_items_are_reported_even_when_the_graph_stalls(
     assert set(outcome.completed) == {"b", "c"}
     assert outcome.failed == ["a"]
     assert outcome.blocked == []
-    states = {entry.item.key: entry.state for entry in _view(store, delegation.delegation.id).items}
+    states = {
+        entry.item.key: entry.state
+        for entry in _view(store, delegation.delegation.id).items
+    }
     assert states["a"] is WorkItemState.FAILED
     assert states["b"] is WorkItemState.COMPLETED

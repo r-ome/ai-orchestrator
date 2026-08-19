@@ -27,6 +27,7 @@ PROJECT = ProjectRegistration(
 def client(monkeypatch: pytest.MonkeyPatch):
     docker_client = object()
     monkeypatch.setattr(service, "schedule_turn", lambda *_: None)
+
     def ensure(_: object, store: Any, __: str):
         project_key = managed_project_key(PROJECT.source_path)
         register_ready_v1_sandbox(
@@ -60,7 +61,9 @@ def _create(client: TestClient) -> dict[str, Any]:
     return response.json()
 
 
-def test_defaults_returns_planning_settings_and_provider_catalogues(client: TestClient) -> None:
+def test_defaults_returns_planning_settings_and_provider_catalogues(
+    client: TestClient,
+) -> None:
     response = client.get("/projects/Sample%20Project/planning/defaults")
 
     assert response.status_code == 200
@@ -78,7 +81,9 @@ def test_defaults_returns_planning_settings_and_provider_catalogues(client: Test
     assert body["reasoning_efforts"] == ["low", "medium", "high"]
 
 
-def test_planning_endpoints_return_the_specified_statuses_and_models(client: TestClient) -> None:
+def test_planning_endpoints_return_the_specified_statuses_and_models(
+    client: TestClient,
+) -> None:
     session = _create(client)
     session_id = session["id"]
     assert session["status"] == "clarifying"
@@ -137,7 +142,9 @@ def test_planning_endpoints_return_the_specified_statuses_and_models(client: Tes
 def test_session_id_from_another_project_is_not_reachable(client: TestClient) -> None:
     session = _create(client)
 
-    response = client.get(f"/projects/Other%20Project/planning/sessions/{session['id']}")
+    response = client.get(
+        f"/projects/Other%20Project/planning/sessions/{session['id']}"
+    )
 
     assert response.status_code == 404
 
@@ -167,7 +174,9 @@ def test_raw_output_endpoint_serves_one_turn_log(client: TestClient) -> None:
     }
 
 
-def test_session_payload_flags_raw_output_without_carrying_it(client: TestClient) -> None:
+def test_session_payload_flags_raw_output_without_carrying_it(
+    client: TestClient,
+) -> None:
     """The page polls the session every two seconds, so logs stay out of it."""
     session = _create(client)
     session_id = session["id"]
@@ -179,7 +188,9 @@ def test_session_payload_flags_raw_output_without_carrying_it(client: TestClient
         raw_output="x" * 5000,
     )
 
-    body = client.get(f"/projects/Sample%20Project/planning/sessions/{session_id}").json()
+    body = client.get(
+        f"/projects/Sample%20Project/planning/sessions/{session_id}"
+    ).json()
 
     # The opening request carries no log; the clarifier turn has one to fetch.
     assert [message["has_raw_output"] for message in body["messages"]] == [False, True]
@@ -196,7 +207,9 @@ def test_raw_output_of_an_unknown_sequence_is_not_found(client: TestClient) -> N
     assert response.status_code == 404
 
 
-def test_raw_output_is_not_reachable_through_another_project(client: TestClient) -> None:
+def test_raw_output_is_not_reachable_through_another_project(
+    client: TestClient,
+) -> None:
     session = _create(client)
 
     response = client.get(

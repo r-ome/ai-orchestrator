@@ -176,7 +176,9 @@ def claim_generation(
 
     plan = json_object(session.get("plan_spec_json"))
     if plan is None:
-        raise DelegationOperationError(409, "Planning session has no plan specification")
+        raise DelegationOperationError(
+            409, "Planning session has no plan specification"
+        )
     context = ready_context(store, session_id)
     if context is None:
         raise DelegationOperationError(
@@ -310,8 +312,7 @@ def execute_generation(
             claim.job_id,
             claim.sandbox_id,
             step="settled",
-            message="; ".join(turn.errors)
-            or "Decomposition produced no usable output",
+            message="; ".join(turn.errors) or "Decomposition produced no usable output",
             level="error",
         )
         return GenerateDelegationOutcome(
@@ -463,9 +464,7 @@ def view(
         delegation=_delegation(row),
         items=item_views,
         waves=computed,
-        ready=sorted(
-            item.key for item in items if states[item.key].value == "ready"
-        ),
+        ready=sorted(item.key for item in items if states[item.key].value == "ready"),
         review=review,
         changes=changes,
         review_superseded=review_superseded,
@@ -615,8 +614,7 @@ def _routing(
         override_model=override.get("model"),
         warning=decision.warning,
         models_by_provider={
-            provider: list(models)
-            for provider, models in settings.catalogue().items()
+            provider: list(models) for provider, models in settings.catalogue().items()
         },
         recommended_by_provider={
             provider.value: settings.for_provider(provider).for_complexity(

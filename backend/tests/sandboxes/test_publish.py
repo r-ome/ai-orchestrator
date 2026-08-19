@@ -25,11 +25,17 @@ class _StaticGitHubWriteCredentialSource:
 
 
 class _Store:
-    def __init__(self, review: dict[str, object] | None, publication: dict[str, object] | None = None) -> None:
+    def __init__(
+        self,
+        review: dict[str, object] | None,
+        publication: dict[str, object] | None = None,
+    ) -> None:
         self.review = review
         self.publication = publication
 
-    def latest_completed_delegation_review_for_sandbox(self, _sandbox_id: str) -> dict[str, object] | None:
+    def latest_completed_delegation_review_for_sandbox(
+        self, _sandbox_id: str
+    ) -> dict[str, object] | None:
         return self.review
 
     def sandbox_publication(self, _sandbox_id: str) -> dict[str, object] | None:
@@ -101,7 +107,9 @@ def test_publish_refuses_an_unreviewed_head_before_any_network_call(
     monkeypatch.setattr(
         publish,
         "remote_branch_sha",
-        lambda *_args, **_kwargs: pytest.fail("publish queried the network before review"),
+        lambda *_args, **_kwargs: pytest.fail(
+            "publish queried the network before review"
+        ),
     )
 
     with pytest.raises(publish.PublishError, match="approved feature review"):
@@ -121,7 +129,9 @@ def test_publish_refuses_a_moved_head_before_any_network_call(
     monkeypatch.setattr(
         publish,
         "remote_branch_sha",
-        lambda *_args, **_kwargs: pytest.fail("publish queried the network after a moved HEAD"),
+        lambda *_args, **_kwargs: pytest.fail(
+            "publish queried the network after a moved HEAD"
+        ),
     )
 
     with pytest.raises(publish.PublishError, match="Sandbox HEAD changed after review"):
@@ -132,7 +142,9 @@ def test_publish_retry_converges_when_the_remote_already_has_the_reviewed_commit
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
-    monkeypatch.setattr(publish, "ensure_target_unchanged", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        publish, "ensure_target_unchanged", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(publish, "remote_branch_sha", lambda *_args, **_kwargs: HEAD)
     monkeypatch.setattr(
         publish,
@@ -160,7 +172,9 @@ def test_publish_retry_converges_when_the_remote_already_has_the_reviewed_commit
 def test_force_with_lease_extension_refuses_after_an_observed_pr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(publish, "ensure_target_unchanged", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        publish, "ensure_target_unchanged", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         publish,
         "remote_branch_sha",
@@ -193,8 +207,22 @@ def test_pr_discovery_creates_once_then_requeries_the_new_pr(
     responses = iter(
         [
             _Response(200, []),
-            _Response(201, {"number": 42, "html_url": "https://github.com/owner/repo/pull/42", "state": "open"}),
-            _Response(200, {"number": 42, "html_url": "https://github.com/owner/repo/pull/42", "state": "open"}),
+            _Response(
+                201,
+                {
+                    "number": 42,
+                    "html_url": "https://github.com/owner/repo/pull/42",
+                    "state": "open",
+                },
+            ),
+            _Response(
+                200,
+                {
+                    "number": 42,
+                    "html_url": "https://github.com/owner/repo/pull/42",
+                    "state": "open",
+                },
+            ),
         ]
     )
 
@@ -208,12 +236,22 @@ def test_pr_discovery_creates_once_then_requeries_the_new_pr(
         remote_branch="feature/publish-test",
         base_branch="main",
         title="Publish test",
-        client=publish.GitHubPullRequestClient(_StaticGitHubWriteCredentialSource("write-token")),
+        client=publish.GitHubPullRequestClient(
+            _StaticGitHubWriteCredentialSource("write-token")
+        ),
     )
 
     assert pull_request.number == 42
-    assert [call["json"] for call in calls] == [None, {"head": "feature/publish-test", "base": "main", "title": "Publish test"}, None]
-    assert calls[0]["params"] == {"state": "all", "head": "owner:feature/publish-test", "per_page": "100"}
+    assert [call["json"] for call in calls] == [
+        None,
+        {"head": "feature/publish-test", "base": "main", "title": "Publish test"},
+        None,
+    ]
+    assert calls[0]["params"] == {
+        "state": "all",
+        "head": "owner:feature/publish-test",
+        "per_page": "100",
+    }
     assert calls[1]["headers"] == calls[0]["headers"]
 
 
@@ -223,8 +261,24 @@ def test_pr_discovery_reuses_an_existing_head_branch_without_creation(
     calls: list[str] = []
     responses = iter(
         [
-            _Response(200, [{"number": 42, "html_url": "https://github.com/owner/repo/pull/42", "state": "open"}]),
-            _Response(200, {"number": 42, "html_url": "https://github.com/owner/repo/pull/42", "state": "open"}),
+            _Response(
+                200,
+                [
+                    {
+                        "number": 42,
+                        "html_url": "https://github.com/owner/repo/pull/42",
+                        "state": "open",
+                    }
+                ],
+            ),
+            _Response(
+                200,
+                {
+                    "number": 42,
+                    "html_url": "https://github.com/owner/repo/pull/42",
+                    "state": "open",
+                },
+            ),
         ]
     )
 
@@ -238,7 +292,9 @@ def test_pr_discovery_reuses_an_existing_head_branch_without_creation(
         remote_branch="feature/publish-test",
         base_branch="main",
         title="Publish test",
-        client=publish.GitHubPullRequestClient(_StaticGitHubWriteCredentialSource("write-token")),
+        client=publish.GitHubPullRequestClient(
+            _StaticGitHubWriteCredentialSource("write-token")
+        ),
     )
 
     assert pull_request.number == 42
@@ -254,8 +310,22 @@ def test_pr_creation_failure_retries_discovery_then_creates_exactly_one_pr(
             _Response(200, []),
             _Response(500, {"message": "temporary failure"}),
             _Response(200, []),
-            _Response(201, {"number": 42, "html_url": "https://github.com/owner/repo/pull/42", "state": "open"}),
-            _Response(200, {"number": 42, "html_url": "https://github.com/owner/repo/pull/42", "state": "open"}),
+            _Response(
+                201,
+                {
+                    "number": 42,
+                    "html_url": "https://github.com/owner/repo/pull/42",
+                    "state": "open",
+                },
+            ),
+            _Response(
+                200,
+                {
+                    "number": 42,
+                    "html_url": "https://github.com/owner/repo/pull/42",
+                    "state": "open",
+                },
+            ),
         ]
     )
 
@@ -264,7 +334,9 @@ def test_pr_creation_failure_retries_discovery_then_creates_exactly_one_pr(
         return next(responses)
 
     monkeypatch.setattr(publish.requests, "request", request)
-    client = publish.GitHubPullRequestClient(_StaticGitHubWriteCredentialSource("write-token"))
+    client = publish.GitHubPullRequestClient(
+        _StaticGitHubWriteCredentialSource("write-token")
+    )
     request_kwargs = {
         "remote_url": "https://github.com/owner/repo",
         "remote_branch": "feature/publish-test",
@@ -298,7 +370,9 @@ def test_github_api_errors_never_include_the_write_token(
             remote_branch="feature/publish-test",
             base_branch="main",
             title="Publish test",
-            client=publish.GitHubPullRequestClient(_StaticGitHubWriteCredentialSource(token)),
+            client=publish.GitHubPullRequestClient(
+                _StaticGitHubWriteCredentialSource(token)
+            ),
         )
 
     assert token not in str(raised.value)

@@ -28,7 +28,7 @@ def snapshot_shell() -> str:
         "while IFS= read -r -d '' entry; do\n"
         '  status="$(printf "%.2s" "$entry")"\n'
         '  path="${entry#???}"\n'
-        '  case "$status" in R*|C*) IFS= read -r -d \'\' _source || true;; esac\n'
+        "  case \"$status\" in R*|C*) IFS= read -r -d '' _source || true;; esac\n"
         '  display="./$path"\n'
         '  fingerprint="-"\n'
         '  if [ -L "$display" ]; then\n'
@@ -41,12 +41,12 @@ def snapshot_shell() -> str:
         '      "regular file")\n'
         '        file_type="file"\n'
         '        fingerprint="sha256:$(sha256sum "$display" | awk \'{print $1}\')"\n'
-        '        ;;\n'
+        "        ;;\n"
         '      *) file_type="other";;\n'
-        '    esac\n'
-        '  else\n'
+        "    esac\n"
+        "  else\n"
         '    file_type="missing"\n'
-        '  fi\n'
+        "  fi\n"
         '  status64="$(printf "%s" "$status" | base64 | tr -d "\\n")"\n'
         '  path64="$(printf "%s" "$path" | base64 | tr -d "\\n")"\n'
         '  printf "snapshot %s %s %s %s\\n" "$status64" "$file_type" '

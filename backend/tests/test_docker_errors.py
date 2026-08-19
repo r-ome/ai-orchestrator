@@ -68,7 +68,9 @@ def test_container_error_uses_configured_detail() -> None:
     assert str(raised.value.detail).startswith("Helper container failed")
 
 
-def test_container_error_without_detail_uses_the_pinned_daemon_unavailable_path() -> None:
+def test_container_error_without_detail_uses_the_pinned_daemon_unavailable_path() -> (
+    None
+):
     with pytest.raises(HTTPException) as raised:
         docker_response(lambda: _raise(_container_error()), _policy())
 

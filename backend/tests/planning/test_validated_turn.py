@@ -67,7 +67,9 @@ def test_repair_prompt_lists_every_validation_error() -> None:
     run_validated_turn(
         run,
         prompt="original",
-        validate=lambda payload: [] if payload.get("valid") else ["first error", "second error"],
+        validate=lambda payload: (
+            [] if payload.get("valid") else ["first error", "second error"]
+        ),
     )
 
     assert "- first error" in prompts[1]

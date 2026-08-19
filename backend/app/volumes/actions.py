@@ -34,10 +34,7 @@ class VolumeOperationError(OperationError):
 def list_managed_volumes(docker_client: DockerClient) -> ManagedVolumesResponse:
     volumes = docker_client.volumes.list()
     containers = docker_client.containers.list(all=True)
-    response = [
-        _managed_volume(volume, containers)
-        for volume in volumes
-    ]
+    response = [_managed_volume(volume, containers) for volume in volumes]
     response.sort(key=lambda volume: volume.name)
     return ManagedVolumesResponse(count=len(response), volumes=response)
 
@@ -219,8 +216,7 @@ def _reader_container(
 
     if container_id:
         detail = (
-            f"Running container '{container_id}' does not use volume "
-            f"'{volume_name}'"
+            f"Running container '{container_id}' does not use volume '{volume_name}'"
         )
     else:
         detail = f"Volume '{volume_name}' has no running container for file access"
@@ -243,7 +239,9 @@ def _extract_file(chunks: Any, max_bytes: int) -> bytes:
     try:
         for chunk in chunks:
             if archive_data.tell() + len(chunk) > archive_limit:
-                raise VolumeOperationError(413, "File archive exceeds the response limit")
+                raise VolumeOperationError(
+                    413, "File archive exceeds the response limit"
+                )
             archive_data.write(chunk)
     finally:
         _close_stream(chunks)
@@ -265,7 +263,9 @@ def _extract_file(chunks: Any, max_bytes: int) -> bytes:
                 raise VolumeOperationError(502, "Docker returned no readable file")
             content = extracted.read(max_bytes + 1)
     except tarfile.TarError as error:
-        raise VolumeOperationError(502, "Docker returned an invalid file archive") from error
+        raise VolumeOperationError(
+            502, "Docker returned an invalid file archive"
+        ) from error
 
     if len(content) > max_bytes:
         raise VolumeOperationError(413, "File exceeds the response limit")

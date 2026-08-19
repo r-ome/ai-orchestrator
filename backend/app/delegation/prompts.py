@@ -72,7 +72,7 @@ Return exactly one JSON object. Do not add prose or a markdown fence.
       "write_scope": ["src/..."],
       "acceptance_criteria": ["..."],
       "verification": [
-        {{"command_kind": "{command_kinds[0] if command_kinds else 'build'}", "reason": "..."}}
+        {{"command_kind": "{command_kinds[0] if command_kinds else "build"}", "reason": "..."}}
       ],
       "complexity": "low",
       "architecture": ["..."],

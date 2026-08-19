@@ -79,9 +79,11 @@ def _settings() -> PreviewSettings:
 
 def _shell(client, volume: str, script: str, *, image: str = "alpine:latest") -> str:
     """Runs a throwaway shell against the sandbox volume, mounted at /project."""
-    keywords = {"entrypoint": ["sh", "-c"], "command": [script]} if image == GIT_IMAGE else {
-        "command": ["sh", "-c", script]
-    }
+    keywords = (
+        {"entrypoint": ["sh", "-c"], "command": [script]}
+        if image == GIT_IMAGE
+        else {"command": ["sh", "-c", script]}
+    )
     output = client.containers.run(
         image=image,
         remove=True,
@@ -254,7 +256,9 @@ def test_failed_task_preview_returns_the_task_to_review(
     # This test covers task-state recovery. Environment masking has its own
     # integration coverage and Docker Desktop cannot mount pytest's private
     # temporary directory into a container on macOS.
-    monkeypatch.setattr("app.previews.runtimes.native._environment_masks", lambda *_: [])
+    monkeypatch.setattr(
+        "app.previews.runtimes.native._environment_masks", lambda *_: []
+    )
     client = docker.from_env()
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
@@ -273,9 +277,7 @@ def test_failed_task_preview_returns_the_task_to_review(
         _commit(
             client,
             volume.name,
-            "printf task > task.txt\n"
-            "git add -A\n"
-            'git commit -q -m "add task"\n',
+            'printf task > task.txt\ngit add -A\ngit commit -q -m "add task"\n',
         )
         task = report_task_complete(client, store, task.id, ReportTaskRequest())
         proposal = propose_preview(client, store, settings, project_name)
@@ -424,7 +426,10 @@ def test_live_preview_build_output_stays_out_of_the_sandbox_worktree() -> None:
         )
         application = resources["containers"][0]
         assert _fetch(f"http://127.0.0.1:{port}") == "built"
-        assert application.exec_run(["cat", "/workspace/.astro/cache.txt"]).output == b"cached"
+        assert (
+            application.exec_run(["cat", "/workspace/.astro/cache.txt"]).output
+            == b"cached"
+        )
 
         # Phase 2's dirty-tree rule rejects a completion report on any untracked
         # path, so neither the build output nor the env masks may appear here.
@@ -435,11 +440,14 @@ def test_live_preview_build_output_stays_out_of_the_sandbox_worktree() -> None:
             image=GIT_IMAGE,
         )
         assert status.strip() == "", status
-        assert "no such file" in _shell(
-            client,
-            volume.name,
-            "cat /project/dist/out.txt 2>&1 || true",
-        ).casefold()
+        assert (
+            "no such file"
+            in _shell(
+                client,
+                volume.name,
+                "cat /project/dist/out.txt 2>&1 || true",
+            ).casefold()
+        )
     finally:
         _remove_resources(resources, remove_data_volumes=True)
         for stale in client.volumes.list(

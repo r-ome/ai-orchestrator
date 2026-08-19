@@ -179,7 +179,10 @@ class EngineConfirmationRequest(BaseModel):
     @classmethod
     def validate_command_sources(cls, value: dict[str, str]) -> dict[str, str]:
         allowed = {"prisma", "package_json", "makefile", "manual"}
-        if any(key not in {"migrate", "seed"} or source not in allowed for key, source in value.items()):
+        if any(
+            key not in {"migrate", "seed"} or source not in allowed
+            for key, source in value.items()
+        ):
             raise ValueError("commands_source uses migrate or seed with a known source")
         return value
 
@@ -505,7 +508,6 @@ def delete_sandbox(
     return _tombstone_response(tombstone)
 
 
-
 def _tombstone_response(tombstone: dict[str, object]) -> DestroySandboxResponse:
     return DestroySandboxResponse(
         sandbox_id=str(tombstone["sandbox_id"]),
@@ -538,7 +540,9 @@ def _sandbox_response(
         db_name=_value(manifest, "db_name"),
         db_data_volume=_value(manifest, "db_data_volume"),
         schema_baseline_hash=_value(manifest, "schema_baseline_hash"),
-        remote_url=str(project["remote_url"]) if project and project.get("remote_url") else None,
+        remote_url=str(project["remote_url"])
+        if project and project.get("remote_url")
+        else None,
     )
 
 
@@ -585,21 +589,26 @@ def _value(manifest: SandboxManifest, field: str) -> str | None:
     return str(value) if value is not None else None
 
 
-
 def _engine_detection_response(detection: dict[str, object]) -> EngineDetectionResponse:
     return EngineDetectionResponse(
         sandbox_id=str(detection["sandbox_id"]),
         signals=_json_list(detection["signals_json"]),
         proposed_engine=_optional_string(detection.get("proposed_engine")),
         confirmed_engine=_optional_string(detection.get("confirmed_engine")),
-        migrate_commands=[str(value) for value in _json_value(detection["migrate_commands_json"], [])],
-        seed_commands=[str(value) for value in _json_value(detection["seed_commands_json"], [])],
-        commands_source={str(key): str(value) for key, value in _json_value(detection["commands_source"], {}).items()},
+        migrate_commands=[
+            str(value) for value in _json_value(detection["migrate_commands_json"], [])
+        ],
+        seed_commands=[
+            str(value) for value in _json_value(detection["seed_commands_json"], [])
+        ],
+        commands_source={
+            str(key): str(value)
+            for key, value in _json_value(detection["commands_source"], {}).items()
+        },
         detected_at_commit=str(detection["detected_at_commit"]),
         actor=_optional_string(detection.get("actor")),
         confirmed_at=_optional_string(detection.get("confirmed_at")),
     )
-
 
 
 def _engine_confirmation(request: EngineConfirmationRequest) -> EngineConfirmation:
@@ -614,4 +623,8 @@ def _engine_confirmation(request: EngineConfirmationRequest) -> EngineConfirmati
 
 def _json_list(value: object) -> list[dict[str, object]]:
     parsed = _json_value(value, [])
-    return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+    return (
+        [item for item in parsed if isinstance(item, dict)]
+        if isinstance(parsed, list)
+        else []
+    )

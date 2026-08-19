@@ -232,7 +232,11 @@ def run_task(
 
     if not result.succeeded:
         return _run_response(
-            controller_store, task.id, result, committed=False, detail=result.error or ""
+            controller_store,
+            task.id,
+            result,
+            committed=False,
+            detail=result.error or "",
         )
 
     # The turn says it is done. The branch decides whether it is.
@@ -865,7 +869,7 @@ def _accept_script(
         # print for that same path today.
         f"baseline={shlex.quote(chr(10).join(baseline_dirty))}\n"
         'new_dirty=""\n'
-        'git status --porcelain | while IFS= read -r entry; do\n'
+        "git status --porcelain | while IFS= read -r entry; do\n"
         '  [ -n "$entry" ] || continue\n'
         '  path="${entry#???}"\n'
         '  case "$path" in *" -> "*) path="${path##* -> }";; esac\n'
@@ -874,10 +878,10 @@ def _accept_script(
         '  if ! printf "%s\\n" "$baseline" | grep -qxF -- "$path"; then\n'
         '    printf "%s\\n" "$entry"\n'
         "  fi\n"
-        'done > /tmp/new_dirty\n'
-        'if [ -s /tmp/new_dirty ]; then\n'
+        "done > /tmp/new_dirty\n"
+        "if [ -s /tmp/new_dirty ]; then\n"
         '  printf "result dirty\\n"\n'
-        '  while IFS= read -r entry; do\n'
+        "  while IFS= read -r entry; do\n"
         '    printf "detail %s\\n" "$entry"\n'
         "  done < /tmp/new_dirty\n"
         "  exit 0\n"

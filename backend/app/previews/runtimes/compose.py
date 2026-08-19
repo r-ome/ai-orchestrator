@@ -84,7 +84,9 @@ def _start_compose(
     try:
         for service_name, raw_service in services.items():
             if not isinstance(raw_service, dict):
-                raise PreviewOperationError(422, f"Compose service '{service_name}' is invalid")
+                raise PreviewOperationError(
+                    422, f"Compose service '{service_name}' is invalid"
+                )
             _validate_compose_service(str(service_name), raw_service)
             action = "Building" if raw_service.get("build") is not None else "Checking"
             report("compose-image", f"{action} image for service {service_name}")
@@ -121,34 +123,37 @@ def _start_compose(
                 else None
             )
             report("compose-container", f"Creating service container {service_name}")
-            container = create_hardened(docker_client, HardenedContainerSpec(
-                image=image,
-                command=_command(raw_service.get("command")),
-                entrypoint=_command(raw_service.get("entrypoint")),
-                name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-{_slug(str(service_name))}",
-                rootfs=(
-                    Rootfs.READ_ONLY
-                    if bool(raw_service.get("read_only", False))
-                    else Rootfs.WRITABLE
+            container = create_hardened(
+                docker_client,
+                HardenedContainerSpec(
+                    image=image,
+                    command=_command(raw_service.get("command")),
+                    entrypoint=_command(raw_service.get("entrypoint")),
+                    name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-{_slug(str(service_name))}",
+                    rootfs=(
+                        Rootfs.READ_ONLY
+                        if bool(raw_service.get("read_only", False))
+                        else Rootfs.WRITABLE
+                    ),
+                    working_dir=raw_service.get("working_dir"),
+                    user=raw_service.get("user"),
+                    environment=_compose_service_environment(
+                        raw_service.get("environment"),
+                        application_environment,
+                        selected=service_name == config.selected_service,
+                    ),
+                    labels=service_labels,
+                    volumes=mounts,
+                    tmpfs_size="256m",
+                    network=network.name,
+                    egress=_preview_egress(config.network_access),
+                    ports=ports,
+                    restart_policy={"Name": "no"},
+                    mem_limit=settings.preview_memory,
+                    nano_cpus=1_000_000_000,
+                    pids_limit=256,
                 ),
-                working_dir=raw_service.get("working_dir"),
-                user=raw_service.get("user"),
-                environment=_compose_service_environment(
-                    raw_service.get("environment"),
-                    application_environment,
-                    selected=service_name == config.selected_service,
-                ),
-                labels=service_labels,
-                volumes=mounts,
-                tmpfs_size="256m",
-                network=network.name,
-                egress=_preview_egress(config.network_access),
-                ports=ports,
-                restart_policy={"Name": "no"},
-                mem_limit=settings.preview_memory,
-                nano_cpus=1_000_000_000,
-                pids_limit=256,
-            ))
+            )
             network.disconnect(container)
             network.connect(container, aliases=[str(service_name)])
             if (
@@ -276,8 +281,12 @@ def _compose_image(
                     f"Compose service '{service_name}' requests blocked build privileges",
                 )
         else:
-            raise PreviewOperationError(422, f"Compose service '{service_name}' has invalid build")
-        context_path = _safe_relative_path(context, field="build context", allow_dot=True)
+            raise PreviewOperationError(
+                422, f"Compose service '{service_name}' has invalid build"
+            )
+        context_path = _safe_relative_path(
+            context, field="build context", allow_dot=True
+        )
         dockerfile_path = _safe_relative_path(dockerfile, field="dockerfile")
         archive = _volume_context_tar(
             docker_client,
@@ -311,7 +320,9 @@ def _compose_image(
             f"Compose service '{service_name}' requires image or build",
         )
     if "${" in image:
-        raise PreviewOperationError(422, "Compose environment interpolation is disabled")
+        raise PreviewOperationError(
+            422, "Compose environment interpolation is disabled"
+        )
     _ensure_preview_image(docker_client, image)
     return image
 
@@ -386,7 +397,9 @@ def _compose_environment(value: Any) -> dict[str, str]:
     if value is None:
         return {}
     if isinstance(value, dict):
-        environment = {str(key): "" if item is None else str(item) for key, item in value.items()}
+        environment = {
+            str(key): "" if item is None else str(item) for key, item in value.items()
+        }
     elif isinstance(value, list):
         environment = {}
         for entry in value:
@@ -400,7 +413,9 @@ def _compose_environment(value: Any) -> dict[str, str]:
     else:
         raise PreviewOperationError(422, "Compose environment is invalid")
     if any("${" in item for item in environment.values()):
-        raise PreviewOperationError(422, "Compose environment interpolation is disabled")
+        raise PreviewOperationError(
+            422, "Compose environment interpolation is disabled"
+        )
     return environment
 
 
@@ -417,7 +432,9 @@ def _service_order(services: dict[str, Any]) -> list[str]:
         visiting.add(name)
         service = services.get(name) or {}
         dependencies = service.get("depends_on") or []
-        dependency_names = dependencies if isinstance(dependencies, list) else dependencies.keys()
+        dependency_names = (
+            dependencies if isinstance(dependencies, list) else dependencies.keys()
+        )
         for dependency in dependency_names:
             dependency_name = str(dependency)
             if dependency_name not in services:
@@ -440,6 +457,8 @@ def _command(value: Any) -> str | list[str] | None:
         return None
     if isinstance(value, str):
         return value
-    if isinstance(value, list) and all(isinstance(item, (str, int, float)) for item in value):
+    if isinstance(value, list) and all(
+        isinstance(item, (str, int, float)) for item in value
+    ):
         return [str(item) for item in value]
     raise PreviewOperationError(422, "Compose command or entrypoint is invalid")

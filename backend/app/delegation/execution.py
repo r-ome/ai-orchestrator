@@ -288,8 +288,7 @@ def claim_run(
         delegation_view.delegation.sandbox_id,
         step="claimed",
         message=(
-            f"Work item '{key}' reserved for "
-            f"{decision.provider.value}/{decision.model}"
+            f"Work item '{key}' reserved for {decision.provider.value}/{decision.model}"
         ),
     )
     return RunClaim(
@@ -427,7 +426,9 @@ def _execute_run(
     if isinstance(merged, Settlement):
         return _settle(docker_client, store, claim, merged)
 
-    return _settle(docker_client, store, claim, _merge(docker_client, store, claim, merged))
+    return _settle(
+        docker_client, store, claim, _merge(docker_client, store, claim, merged)
+    )
 
 
 def _run_coding_turn(
@@ -474,8 +475,7 @@ def _run_coding_turn(
             responses.append(response)
     except (TaskOperationError, CodingTurnError) as error:
         first_response_was_provider_failure = (
-            bool(responses)
-            and _failure_kind(responses[0]) is FailureKind.PROVIDER
+            bool(responses) and _failure_kind(responses[0]) is FailureKind.PROVIDER
         )
         return Settlement(
             failure_detail=error.detail,
@@ -734,11 +734,14 @@ def _merge(
             halt_uses_reported_detail=True,
         )
 
-    if store.settle_work_item_run(
-        claim.run_id,
-        to_status=RunStatus.SUCCEEDED.value,
-        changes=coding.changes,
-    ) is None:
+    if (
+        store.settle_work_item_run(
+            claim.run_id,
+            to_status=RunStatus.SUCCEEDED.value,
+            changes=coding.changes,
+        )
+        is None
+    ):
         # Another request owns this run after it has settled it.
         return Settlement(
             failure_detail="Run was settled by another request",
@@ -879,7 +882,9 @@ def accept_run(
         ) from error
 
     if store.settle_work_item_run(run_id, to_status=RunStatus.SUCCEEDED.value) is None:
-        raise service.DelegationOperationError(409, "Run was settled by another request")
+        raise service.DelegationOperationError(
+            409, "Run was settled by another request"
+        )
     _complete_if_finished(
         store,
         delegation_id,
@@ -923,15 +928,20 @@ def reject_run(
                 error.status_code,
                 error.detail,
             ) from error
-    if store.settle_work_item_run(
-        run_id,
-        to_status=RunStatus.FAILED.value,
-        changes={
-            "failure_kind": FailureKind.IMPLEMENTATION.value,
-            "error": reason or "rejected by a person",
-        },
-    ) is None:
-        raise service.DelegationOperationError(409, "Run was settled by another request")
+    if (
+        store.settle_work_item_run(
+            run_id,
+            to_status=RunStatus.FAILED.value,
+            changes={
+                "failure_kind": FailureKind.IMPLEMENTATION.value,
+                "error": reason or "rejected by a person",
+            },
+        )
+        is None
+    ):
+        raise service.DelegationOperationError(
+            409, "Run was settled by another request"
+        )
     return _outcome(
         store,
         delegation_id,
@@ -1002,12 +1012,8 @@ def _metrics(responses: list[TaskRunResponse]) -> dict[str, Any]:
     response = responses[-1]
     return {
         "model": response.model,
-        "input_tokens": _sum(
-            [entry.usage.input_tokens for entry in responses]
-        ),
-        "output_tokens": _sum(
-            [entry.usage.output_tokens for entry in responses]
-        ),
+        "input_tokens": _sum([entry.usage.input_tokens for entry in responses]),
+        "output_tokens": _sum([entry.usage.output_tokens for entry in responses]),
         "cache_read_tokens": _sum(
             [entry.usage.cache_read_tokens for entry in responses]
         ),
@@ -1230,10 +1236,7 @@ def _verification_failure(verification: dict[str, Any]) -> str:
         None,
     )
     if failed:
-        return (
-            f"Verification failed: {failed.get('command')} "
-            f"({failed.get('detail')})"
-        )
+        return f"Verification failed: {failed.get('command')} ({failed.get('detail')})"
     return "Verification failed without command detail"
 
 

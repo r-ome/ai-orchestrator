@@ -115,9 +115,9 @@ def test_verification_must_use_a_confirmed_command_kind() -> None:
 
 
 def test_verification_is_not_checked_without_an_inventory() -> None:
-    assert validate_work_items(
-        [_item("a", verification=[{"command_kind": "e2e"}])]
-    ) == []
+    assert (
+        validate_work_items([_item("a", verification=[{"command_kind": "e2e"}])]) == []
+    )
 
 
 def test_no_confirmed_commands_rejects_every_verification_kind() -> None:

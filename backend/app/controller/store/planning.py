@@ -87,7 +87,9 @@ class PlanningMixin:
             ).fetchall()
         return [_row(row) for row in rows if row is not None]
 
-    def planning_session_with_feature_facts(self, session_id: str) -> dict[str, Any] | None:
+    def planning_session_with_feature_facts(
+        self, session_id: str
+    ) -> dict[str, Any] | None:
         """Return one planning session with facts used for its feature status."""
         with self._connection() as connection:
             row = connection.execute(

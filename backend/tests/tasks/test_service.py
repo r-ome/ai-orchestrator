@@ -247,9 +247,7 @@ def test_a_settled_task_frees_the_sandbox_for_the_next_one(
     controller_store: ControllerStore,
 ) -> None:
     first = _start(docker_client, controller_store)
-    docker_client.containers.report_output = _report_output(
-        NEXT_COMMIT, first.branch
-    )
+    docker_client.containers.report_output = _report_output(NEXT_COMMIT, first.branch)
     report_task_complete(
         docker_client,
         controller_store,
@@ -352,8 +350,9 @@ def test_a_verified_commit_moves_the_task_to_reported(
     assert reported.status is TaskStatus.REPORTED
     assert reported.head_commit == NEXT_COMMIT
     # The head came from rev-parse against the ref, not from the agent.
-    assert f'git rev-parse --verify "refs/heads/{task.branch}"' in (
-        docker_client.containers.scripts[-1]
+    assert (
+        f'git rev-parse --verify "refs/heads/{task.branch}"'
+        in (docker_client.containers.scripts[-1])
     )
 
 
@@ -435,9 +434,7 @@ def test_settling_a_task_stamps_settled_at(
     task = _start(docker_client, controller_store)
     docker_client.containers.report_output = _report_output(NEXT_COMMIT, task.branch)
     report_task_complete(docker_client, controller_store, task.id, ReportTaskRequest())
-    transition_task(
-        controller_store, task_id=task.id, to_status=TaskStatus.PREVIEWING
-    )
+    transition_task(controller_store, task_id=task.id, to_status=TaskStatus.PREVIEWING)
     transition_task(controller_store, task_id=task.id, to_status=TaskStatus.REVIEW)
 
     assert controller_store.task(task.id)["settled_at"] is None
@@ -604,9 +601,9 @@ def test_accept_refuses_a_task_branch_that_moved_since_review(
     controller_store: ControllerStore,
 ) -> None:
     task = _to_review(docker_client, controller_store)
-    docker_client.containers.accept_output = b"result branch-moved\ntask " + (
-        b"c" * 40
-    ) + b"\n"
+    docker_client.containers.accept_output = (
+        b"result branch-moved\ntask " + (b"c" * 40) + b"\n"
+    )
 
     with pytest.raises(TaskOperationError) as error:
         accept_task(docker_client, controller_store, task.id)
@@ -773,10 +770,7 @@ def test_a_failed_preview_stop_does_not_unsettle_an_accepted_task(
     accepted = accept_task(docker_client, controller_store, task.id)
 
     assert accepted.status is TaskStatus.ACCEPTED
-    kinds = [
-        event["kind"]
-        for event in controller_store.events_for_run(task.id)
-    ]
+    kinds = [event["kind"] for event in controller_store.events_for_run(task.id)]
     assert "task.preview_stop_failed" in kinds
 
 
@@ -825,7 +819,7 @@ def test_reject_deletes_only_the_task_branch(
     script = _settle_script(docker_client)
     assert f'git branch -D "{task.branch}"' in script
     # Nothing in the reject script can move or delete the sandbox branch.
-    assert "branch -D \"main\"" not in script
+    assert 'branch -D "main"' not in script
     assert "reset" not in script
     assert "merge" not in script
 
@@ -1117,7 +1111,10 @@ def test_the_run_records_cost_model_and_tool_outcomes(
     _set_turn(monkeypatch, _turn())
 
     response = run_task(
-        docker_client, controller_store, _settings(), task.id,
+        docker_client,
+        controller_store,
+        _settings(),
+        task.id,
         RunTaskRequest(prompt="p"),
     )
 
@@ -1146,7 +1143,10 @@ def test_a_turn_that_claims_success_without_committing_leaves_the_task_open(
     _set_turn(monkeypatch, _turn())
 
     response = run_task(
-        docker_client, controller_store, _settings(), task.id,
+        docker_client,
+        controller_store,
+        _settings(),
+        task.id,
         RunTaskRequest(prompt="p"),
     )
 
@@ -1171,7 +1171,10 @@ def test_a_failed_turn_leaves_the_task_open_and_reports_why(
     )
 
     response = run_task(
-        docker_client, controller_store, _settings(), task.id,
+        docker_client,
+        controller_store,
+        _settings(),
+        task.id,
         RunTaskRequest(prompt="p"),
     )
 
@@ -1194,11 +1197,20 @@ def test_a_task_that_is_not_open_refuses_to_run(
     task = _open(docker_client, controller_store)
     docker_client.containers.report_output = _report_output(NEXT_COMMIT, task.branch)
     _set_turn(monkeypatch, _turn())
-    run_task(docker_client, controller_store, _settings(), task.id, RunTaskRequest(prompt="p"))
+    run_task(
+        docker_client,
+        controller_store,
+        _settings(),
+        task.id,
+        RunTaskRequest(prompt="p"),
+    )
 
     with pytest.raises(TaskOperationError) as error:
         run_task(
-            docker_client, controller_store, _settings(), task.id,
+            docker_client,
+            controller_store,
+            _settings(),
+            task.id,
             RunTaskRequest(prompt="p"),
         )
 
@@ -1218,7 +1230,13 @@ def test_verify_moves_a_reported_task_to_review_without_a_preview(
     task = _open(docker_client, controller_store)
     docker_client.containers.report_output = _report_output(NEXT_COMMIT, task.branch)
     _set_turn(monkeypatch, _turn())
-    run_task(docker_client, controller_store, _settings(), task.id, RunTaskRequest(prompt="p"))
+    run_task(
+        docker_client,
+        controller_store,
+        _settings(),
+        task.id,
+        RunTaskRequest(prompt="p"),
+    )
 
     verified = verify_task(controller_store, task.id)
 
@@ -1236,7 +1254,13 @@ def test_a_verified_task_can_then_be_accepted(
     task = _open(docker_client, controller_store)
     docker_client.containers.report_output = _report_output(NEXT_COMMIT, task.branch)
     _set_turn(monkeypatch, _turn())
-    run_task(docker_client, controller_store, _settings(), task.id, RunTaskRequest(prompt="p"))
+    run_task(
+        docker_client,
+        controller_store,
+        _settings(),
+        task.id,
+        RunTaskRequest(prompt="p"),
+    )
     verify_task(controller_store, task.id)
 
     accepted = accept_task(docker_client, controller_store, task.id)
@@ -1269,7 +1293,13 @@ def test_verify_refuses_when_verification_did_not_pass(
     task = _open(docker_client, controller_store)
     docker_client.containers.report_output = _report_output(NEXT_COMMIT, task.branch)
     _set_turn(monkeypatch, _turn())
-    run_task(docker_client, controller_store, _settings(), task.id, RunTaskRequest(prompt="p"))
+    run_task(
+        docker_client,
+        controller_store,
+        _settings(),
+        task.id,
+        RunTaskRequest(prompt="p"),
+    )
 
     with pytest.raises(TaskOperationError) as error:
         verify_task(

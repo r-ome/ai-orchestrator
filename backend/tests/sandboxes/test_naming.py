@@ -23,9 +23,7 @@ FEATURE_KEY = "add-sandbox-manifest"
 def test_sandbox_id_uses_uuid_hex_and_is_deterministic() -> None:
     sandbox_id = sandbox_id_for(PROJECT_ID, FEATURE_KEY)
 
-    assert sandbox_id == uuid5(
-        NAMESPACE_URL, f"{PROJECT_ID}:{FEATURE_KEY}"
-    ).hex
+    assert sandbox_id == uuid5(NAMESPACE_URL, f"{PROJECT_ID}:{FEATURE_KEY}").hex
     assert len(sandbox_id) == 32
     assert sandbox_id == sandbox_id_for(PROJECT_ID, FEATURE_KEY)
     assert sandbox_id != sandbox_id_for(PROJECT_ID, "add-sandbox-naming")

@@ -71,7 +71,9 @@ def parse_orphan_resource_key(resource: str) -> OrphanResource:
     """Parse the route's stable ``kind:name`` resource key."""
     kind, separator, name = resource.partition(":")
     if separator != ":" or kind not in RESOURCE_KINDS or not name:
-        raise ValueError("resource must use volume:, container:, or network: followed by its name")
+        raise ValueError(
+            "resource must use volume:, container:, or network: followed by its name"
+        )
     return OrphanResource(kind=kind, name=name)
 
 

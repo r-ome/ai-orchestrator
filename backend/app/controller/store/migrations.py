@@ -231,7 +231,6 @@ def _create_phase_5c_5d_tables(connection: sqlite3.Connection) -> None:
         """
     )
 
-
     connection.execute(
         "CREATE INDEX IF NOT EXISTS project_mirror_locks_by_heartbeat "
         "ON project_mirror_locks(heartbeat_at)"
@@ -395,7 +394,9 @@ MIGRATIONS: Mapping[int, Callable[[sqlite3.Connection], None]] = {
 def _apply_migrations(connection: sqlite3.Connection) -> None:
     applied = {
         int(row["version"])
-        for row in connection.execute("SELECT version FROM schema_migrations").fetchall()
+        for row in connection.execute(
+            "SELECT version FROM schema_migrations"
+        ).fetchall()
     }
     for version in sorted(MIGRATIONS):
         if version in applied:

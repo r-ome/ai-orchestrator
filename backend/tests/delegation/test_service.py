@@ -435,7 +435,9 @@ def test_waves_readiness_and_parallel_candidates_are_derived(
     assert by_key["a"].can_run_in_parallel_with == ["b"]
 
 
-def test_run_attempts_drive_item_state_and_retain_metrics(store: ControllerStore) -> None:
+def test_run_attempts_drive_item_state_and_retain_metrics(
+    store: ControllerStore,
+) -> None:
     result = service.create_revision(
         store,
         "session-1",
@@ -474,17 +476,20 @@ def test_run_attempts_drive_item_state_and_retain_metrics(store: ControllerStore
 def test_attempts_append_and_one_run_can_be_active(store: ControllerStore) -> None:
     result = service.create_revision(store, "session-1", [_item("a"), _item("b")])
     first, second = [entry.item for entry in result.items]
-    assert store.claim_work_item_run(
-        {
-            "id": "run-a",
-            "work_item_id": first.id,
-            "delegation_id": result.delegation.id,
-            "status": "running",
-            "provider": "claude",
-            "model": "model",
-            "task_id": None,
-        }
-    ) == 1
+    assert (
+        store.claim_work_item_run(
+            {
+                "id": "run-a",
+                "work_item_id": first.id,
+                "delegation_id": result.delegation.id,
+                "status": "running",
+                "provider": "claude",
+                "model": "model",
+                "task_id": None,
+            }
+        )
+        == 1
+    )
 
     with pytest.raises(RunActive):
         store.claim_work_item_run(
@@ -501,17 +506,20 @@ def test_attempts_append_and_one_run_can_be_active(store: ControllerStore) -> No
 
     assert store.settle_work_item_run("run-a", to_status="failed")
     assert store.settle_work_item_run("run-a", to_status="succeeded") is None
-    assert store.claim_work_item_run(
-        {
-            "id": "run-c",
-            "work_item_id": first.id,
-            "delegation_id": result.delegation.id,
-            "status": "running",
-            "provider": "claude",
-            "model": "model",
-            "task_id": None,
-        }
-    ) == 2
+    assert (
+        store.claim_work_item_run(
+            {
+                "id": "run-c",
+                "work_item_id": first.id,
+                "delegation_id": result.delegation.id,
+                "status": "running",
+                "provider": "claude",
+                "model": "model",
+                "task_id": None,
+            }
+        )
+        == 2
+    )
 
 
 def test_work_item_key_integrity_error_stays_raw(store: ControllerStore) -> None:
@@ -533,10 +541,15 @@ def test_work_item_key_integrity_error_stays_raw(store: ControllerStore) -> None
             ],
         )
 
-    assert str(caught.value) == "UNIQUE constraint failed: work_items.delegation_id, work_items.key"
+    assert (
+        str(caught.value)
+        == "UNIQUE constraint failed: work_items.delegation_id, work_items.key"
+    )
 
 
-def test_active_delegation_blocks_revision_until_settled(store: ControllerStore) -> None:
+def test_active_delegation_blocks_revision_until_settled(
+    store: ControllerStore,
+) -> None:
     first = service.create_revision(store, "session-1", [_item("a")])
 
     with pytest.raises(DelegationActive):
@@ -633,7 +646,11 @@ def test_routing_override_is_separate_revisable_state(
         "get_routing_settings",
         lambda: RoutingSettings(
             claude=ProviderModels(
-                "small", "standard", "strong", "standard", ("strong", "standard", "small")
+                "small",
+                "standard",
+                "strong",
+                "standard",
+                ("strong", "standard", "small"),
             ),
             codex=ProviderModels(
                 "gpt-small",
@@ -644,7 +661,9 @@ def test_routing_override_is_separate_revisable_state(
             ),
         ),
     )
-    created = service.create_revision(store, "session-1", [_item("a", complexity="high")])
+    created = service.create_revision(
+        store, "session-1", [_item("a", complexity="high")]
+    )
 
     overridden = service.set_routing(
         store,

@@ -104,7 +104,9 @@ def create_agent(
         raise AgentOperationError(error.status_code, error.detail) from error
     # Reconcile a stale row or reject a live environment before claiming the
     # one active-agent slot for this attempt.
-    _reject_active_agent(docker_client, controller_store, project.volume_name, sandbox_id)
+    _reject_active_agent(
+        docker_client, controller_store, project.volume_name, sandbox_id
+    )
 
     provider = settings.provider(request.provider)
     agent_token = uuid4().hex[:12]

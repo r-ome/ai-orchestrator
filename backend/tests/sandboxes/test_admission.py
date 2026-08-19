@@ -588,7 +588,10 @@ def test_writer_and_lease_admission_cannot_both_win(tmp_path: Path) -> None:
         with result_lock:
             results.append(result)
 
-    threads = [threading.Thread(target=claim_lease), threading.Thread(target=start_writer)]
+    threads = [
+        threading.Thread(target=claim_lease),
+        threading.Thread(target=start_writer),
+    ]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -694,11 +697,14 @@ def test_destroy_claims_with_writer_and_blocks_new_writers(tmp_path: Path) -> No
                 title="sample",
                 status="preparing",
             )
-        assert sandbox_lifecycle.drain_sandbox_writers(
-            object(),
-            store,
-            "sandbox-1",
-        ) == 1
+        assert (
+            sandbox_lifecycle.drain_sandbox_writers(
+                object(),
+                store,
+                "sandbox-1",
+            )
+            == 1
+        )
         assert store.active_writers("sandbox-1") == []
 
     assert store.sandbox_lease("sandbox-1") is None

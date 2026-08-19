@@ -39,9 +39,7 @@ def docker_response(
     policy: DockerErrorPolicy,
 ) -> ResponseType:
     container_error_detail = policy.container_error_detail
-    container_errors = (
-        (ContainerError,) if container_error_detail is not None else ()
-    )
+    container_errors = (ContainerError,) if container_error_detail is not None else ()
     try:
         return function()
     except policy.domain_errors as error:

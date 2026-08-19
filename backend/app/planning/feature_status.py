@@ -70,7 +70,10 @@ def derive_feature_status(
         return FeatureStatus.IN_REVIEW
 
     # A delegation can run before its optional context row exists.
-    if context_status in {"generating", "ready"} or delegation_status in {"ready", "running"}:
+    if context_status in {"generating", "ready"} or delegation_status in {
+        "ready",
+        "running",
+    }:
         return FeatureStatus.BUILDING
 
     if all(

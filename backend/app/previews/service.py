@@ -332,8 +332,8 @@ def start_preview(
                 _move_task(controller_store, task_id, TaskStatus.REVIEW)
             raise
 
-        progress = (
-            lambda step, message, duration_ms=None, started_at=None: _record_preview_progress(
+        progress = lambda step, message, duration_ms=None, started_at=None: (
+            _record_preview_progress(
                 controller_store,
                 sandbox_id=project.sandbox_id,
                 proposal_id=request.proposal_id,
@@ -414,9 +414,7 @@ def start_preview(
                     controller_store=controller_store,
                     project_key=_project_key(project),
                     source_path=project.source_path,
-                    secrets=controller_store.project_secrets(
-                        _project_key(project)
-                    ),
+                    secrets=controller_store.project_secrets(_project_key(project)),
                     kind=kind,
                     commit_sha=commit_sha,
                 )
@@ -430,9 +428,7 @@ def start_preview(
                     run_id,
                     host_port,
                     progress=progress,
-                    secrets=controller_store.project_secrets(
-                        _project_key(project)
-                    ),
+                    secrets=controller_store.project_secrets(_project_key(project)),
                     controller_store=controller_store,
                 )
             elif request.config.mode is PreviewMode.COMPOSE:
@@ -446,9 +442,7 @@ def start_preview(
                     run_id,
                     host_port,
                     progress=progress,
-                    secrets=controller_store.project_secrets(
-                        _project_key(project)
-                    ),
+                    secrets=controller_store.project_secrets(_project_key(project)),
                     controller_store=controller_store,
                 )
             else:
@@ -547,7 +541,9 @@ def get_current_preview(
         raise PreviewOperationError(404, "Sandbox has no active preview")
     if touch:
         if expiry_minutes is None:
-            config = PreviewConfiguration.model_validate_json(str(record["config_json"]))
+            config = PreviewConfiguration.model_validate_json(
+                str(record["config_json"])
+            )
             expiry_minutes = config.expiry_minutes
         controller_store.touch_preview(
             str(record["id"]),
@@ -586,7 +582,9 @@ def restart_preview(
     kind = PreviewKind(str(record.get("kind") or PreviewKind.LIVE.value))
     commit_sha = str(record.get("commit_sha") or "")
     if kind is PreviewKind.TASK:
-        if proposal_digest(config, {"commit": commit_sha}) != record.get("config_digest"):
+        if proposal_digest(config, {"commit": commit_sha}) != record.get(
+            "config_digest"
+        ):
             raise PreviewOperationError(
                 409,
                 "Task preview approval does not match its commit; rebuild it",
@@ -623,8 +621,7 @@ def restart_preview(
             project.sandbox_id,
         )
         shared = (
-            database is not None
-            and database.sharing is not PreviewSharing.ISOLATED
+            database is not None and database.sharing is not PreviewSharing.ISOLATED
         )
         if managed_database is not None:
             for container in containers:
@@ -782,7 +779,9 @@ def require_preview_proposal(
     return review
 
 
-def preview_running_containers(docker_client: DockerClient, preview_id: str) -> list[Container]:
+def preview_running_containers(
+    docker_client: DockerClient, preview_id: str
+) -> list[Container]:
     return _preview_containers(docker_client, preview_id, all=False)
 
 
@@ -835,9 +834,7 @@ def _preview_log_response(
 ) -> PreviewLogs:
     logs: dict[str, str] = {}
     containers = (
-        _preview_containers(docker_client, preview_id, all=True)
-        if preview_id
-        else []
+        _preview_containers(docker_client, preview_id, all=True) if preview_id else []
     )
     for container in containers:
         try:
@@ -911,60 +908,6 @@ def expire_previews(
         )
         count += 1
     return count
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def _run_from_record(

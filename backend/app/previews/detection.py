@@ -190,11 +190,15 @@ def detect_preview(
     environment_names: list[str] | None = None,
 ) -> DetectionResult:
     result = _detect_preview(files, default_expiry_minutes)
-    required = sorted(set(environment_names or []) | set(schema_environment_names(files)))
+    required = sorted(
+        set(environment_names or []) | set(schema_environment_names(files))
+    )
     return replace(result, required_environment=required)
 
 
-def _detect_preview(files: dict[str, bytes], default_expiry_minutes: int) -> DetectionResult:
+def _detect_preview(
+    files: dict[str, bytes], default_expiry_minutes: int
+) -> DetectionResult:
     manual = _manual_configuration(files, default_expiry_minutes)
     if manual is not None:
         return manual
@@ -203,7 +207,9 @@ def _detect_preview(files: dict[str, bytes], default_expiry_minutes: int) -> Det
     if compose_file:
         return _detect_compose(files, compose_file, default_expiry_minutes)
 
-    dockerfiles = sorted(path for path in files if PurePosixPath(path).name.startswith("Dockerfile"))
+    dockerfiles = sorted(
+        path for path in files if PurePosixPath(path).name.startswith("Dockerfile")
+    )
     if dockerfiles:
         dockerfile = "Dockerfile" if "Dockerfile" in dockerfiles else dockerfiles[0]
         port = _dockerfile_port(files[dockerfile]) or 8000
@@ -245,7 +251,7 @@ def _detect_preview(files: dict[str, bytes], default_expiry_minutes: int) -> Det
         return _native(
             PreviewRuntime.VITE,
             "high",
-            [vite_files[0], *( ["package.json"] if "package.json" in paths else [])],
+            [vite_files[0], *(["package.json"] if "package.json" in paths else [])],
             "node:22-alpine",
             _node_install_command(paths),
             "npm run dev -- --host 0.0.0.0",
@@ -257,7 +263,7 @@ def _detect_preview(files: dict[str, bytes], default_expiry_minutes: int) -> Det
         return _native(
             PreviewRuntime.NEXTJS,
             "high",
-            [next_files[0], *( ["package.json"] if "package.json" in paths else [])],
+            [next_files[0], *(["package.json"] if "package.json" in paths else [])],
             "node:22-alpine",
             _node_install_command(paths),
             "npm run dev -- --hostname 0.0.0.0",
@@ -322,7 +328,9 @@ def _detect_preview(files: dict[str, bytes], default_expiry_minutes: int) -> Det
     )
 
 
-def proposal_digest(config: PreviewConfiguration, protected_hashes: dict[str, str]) -> str:
+def proposal_digest(
+    config: PreviewConfiguration, protected_hashes: dict[str, str]
+) -> str:
     payload = {
         "config": config.model_dump(mode="json"),
         "protected_files": protected_hashes,
@@ -380,7 +388,7 @@ def _parse_dotenv_pairs(content: bytes) -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
         if line.startswith("export "):
-            line = line[len("export "):].strip()
+            line = line[len("export ") :].strip()
         key, separator, value = line.partition("=")
         if not separator:
             continue
@@ -437,7 +445,8 @@ def _detect_compose(
         (
             str(name)
             for name, service in services.items()
-            if isinstance(service, dict) and (service.get("ports") or service.get("expose"))
+            if isinstance(service, dict)
+            and (service.get("ports") or service.get("expose"))
         ),
         available[0] if available else "app",
     )
@@ -446,7 +455,9 @@ def _detect_compose(
     evidence = [compose_file]
     build = selected_config.get("build") if isinstance(selected_config, dict) else None
     if isinstance(build, dict) and isinstance(build.get("dockerfile"), str):
-        evidence.append(str(PurePosixPath(str(build.get("context", "."))) / build["dockerfile"]))
+        evidence.append(
+            str(PurePosixPath(str(build.get("context", "."))) / build["dockerfile"])
+        )
     elif build:
         evidence.append("Dockerfile")
     return DetectionResult(
@@ -533,11 +544,7 @@ def _native_dependencies(
             )
         },
         PreviewInitialization(commands=commands),
-        {
-            "DATABASE_URL": PreviewEnvironmentSource(
-                from_service="database"
-            )
-        },
+        {"DATABASE_URL": PreviewEnvironmentSource(from_service="database")},
     )
 
 
@@ -601,12 +608,8 @@ def _has_package_dependency(files: dict[str, bytes], name: str) -> bool:
 
 
 def _framework_config_files(paths: set[str], framework: str) -> list[str]:
-    pattern = re.compile(
-        rf"{re.escape(framework)}\.config\.(?:js|mjs|cjs|ts|mts|cts)"
-    )
-    return sorted(
-        path for path in paths if pattern.fullmatch(PurePosixPath(path).name)
-    )
+    pattern = re.compile(rf"{re.escape(framework)}\.config\.(?:js|mjs|cjs|ts|mts|cts)")
+    return sorted(path for path in paths if pattern.fullmatch(PurePosixPath(path).name))
 
 
 def _node_install_command(paths: set[str]) -> str:

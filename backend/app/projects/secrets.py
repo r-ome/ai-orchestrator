@@ -80,9 +80,10 @@ def import_project_secrets(
     skipped: list[str] = []
     values: dict[str, str] = {}
     for name, value in pairs.items():
-        if not ENVIRONMENT_VARIABLE_PATTERN.fullmatch(name) or len(
-            value.encode("utf-8")
-        ) > 8_192:
+        if (
+            not ENVIRONMENT_VARIABLE_PATTERN.fullmatch(name)
+            or len(value.encode("utf-8")) > 8_192
+        ):
             skipped.append(name)
             continue
         values[name] = value

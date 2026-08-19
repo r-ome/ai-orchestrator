@@ -211,9 +211,7 @@ def test_read_file_rejects_parent_path() -> None:
         app.dependency_overrides.clear()
 
     assert response.status_code == 400
-    assert response.json() == {
-        "detail": "File path must be relative to the volume"
-    }
+    assert response.json() == {"detail": "File path must be relative to the volume"}
 
 
 def test_remove_volume_requires_confirmation() -> None:

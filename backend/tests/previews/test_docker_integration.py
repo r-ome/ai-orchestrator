@@ -93,7 +93,7 @@ def test_native_preview_publishes_only_to_loopback() -> None:
             image="alpine:latest",
             start_command=(
                 "sh -c 'while true; do printf \"HTTP/1.1 200 OK\\r\\n"
-                "Content-Length: 13\\r\\n\\r\\npreview-ready\" | "
+                'Content-Length: 13\\r\\n\\r\\npreview-ready" | '
                 "nc -l -p 8000; done'"
             ),
             container_port=8000,
@@ -190,7 +190,7 @@ def test_native_mysql_waits_for_initialization_and_hides_environment_files() -> 
         response_command = (
             "sh -c 'test -f /workspace/initialized; "
             "echo application-ready; "
-            "while true; do printf \"HTTP/1.1 200 OK\\r\\nContent-Length: 11"
+            'while true; do printf "HTTP/1.1 200 OK\\r\\nContent-Length: 11'
             "\\r\\n\\r\\nmysql-ready\" | nc -l -p 8000; done'"
         )
         config = PreviewConfiguration.model_validate(
@@ -222,9 +222,7 @@ def test_native_mysql_waits_for_initialization_and_hides_environment_files() -> 
                         "echo initialization-ready",
                     ]
                 },
-                "environment": {
-                    "DATABASE_URL": {"from_service": "database"}
-                },
+                "environment": {"DATABASE_URL": {"from_service": "database"}},
             }
         )
         settings = PreviewSettings(
@@ -284,16 +282,19 @@ def test_native_mysql_waits_for_initialization_and_hides_environment_files() -> 
             and "@database:3306/atc_preview" in value
             for value in application_environment
         )
-        assert application.exec_run(["test", "!", "-s", "/workspace/.env"]).exit_code == 0
         assert (
-            application.exec_run(
-                ["test", "!", "-s", "/workspace/.env.local"]
-            ).exit_code
+            application.exec_run(["test", "!", "-s", "/workspace/.env"]).exit_code == 0
+        )
+        assert (
+            application.exec_run(["test", "!", "-s", "/workspace/.env.local"]).exit_code
             == 0
         )
-        assert b"secret" not in application.exec_run(
-            ["cat", "/workspace/.env", "/workspace/.env.local"]
-        ).output
+        assert (
+            b"secret"
+            not in application.exec_run(
+                ["cat", "/workspace/.env", "/workspace/.env.local"]
+            ).output
+        )
         assert resources["networks"][0].attrs["Internal"] is True
     finally:
         _remove_resources(resources, remove_data_volumes=True)
@@ -529,7 +530,7 @@ def test_approved_proposal_starts_and_stops_through_the_full_service(
         port = _available_host_port()
         response_command = (
             "sh -c 'while true; do printf \"HTTP/1.1 200 OK\\r\\n"
-            "Content-Length: 14\\r\\n\\r\\nworkflow-ready\" | "
+            'Content-Length: 14\\r\\n\\r\\nworkflow-ready" | '
             "nc -l -p 8000; echo backend-request >&2; done'"
         )
         config = PreviewConfiguration(
@@ -635,7 +636,7 @@ def test_native_preview_reports_real_container_and_dependency_durations() -> Non
             install_command="mkdir -p node_modules && sleep 0.3",
             start_command=(
                 "sh -c 'while true; do printf \"HTTP/1.1 200 OK\\r\\n"
-                "Content-Length: 12\\r\\n\\r\\ntiming-ready\" | "
+                'Content-Length: 12\\r\\n\\r\\ntiming-ready" | '
                 "nc -l -p 8000; done'"
             ),
             container_port=8000,
@@ -672,7 +673,9 @@ def test_native_preview_reports_real_container_and_dependency_durations() -> Non
 
         container_events = [event for event in events if event[0] == "container"]
         assert len(container_events) == 2
-        (start_step, start_message, start_duration, start_started_at) = container_events[0]
+        (start_step, start_message, start_duration, start_started_at) = (
+            container_events[0]
+        )
         (done_step, done_message, done_duration, done_started_at) = container_events[1]
         assert start_duration is None
         assert start_started_at is not None
@@ -705,7 +708,9 @@ def test_reused_dependency_volume_still_reports_zero_duration(
     # This test covers dependency reuse. Environment masking has separate
     # integration coverage and Docker Desktop cannot mount pytest's private
     # temporary directory into a container on macOS.
-    monkeypatch.setattr("app.previews.runtimes.native._environment_masks", lambda *_: [])
+    monkeypatch.setattr(
+        "app.previews.runtimes.native._environment_masks", lambda *_: []
+    )
     client = docker.from_env()
     # `_dependency_volume_name` truncates to the first 12 characters of the
     # sandbox id, so the random part has to lead or two runs collide on the
@@ -773,9 +778,7 @@ def test_reused_dependency_volume_still_reports_zero_duration(
             progress=progress,
         )
 
-        dependency_messages = [
-            event for event in events if event[0] == "dependencies"
-        ]
+        dependency_messages = [event for event in events if event[0] == "dependencies"]
         # First run: two events (running the install). Second run: one event
         # (skipped, zero duration) because the dependency volume from the
         # first run already has content under the same lockfile digest.

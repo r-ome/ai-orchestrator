@@ -80,19 +80,22 @@ def _gateway_proxy(
     )
     gateway: Container | None = None
     try:
-        gateway = create_hardened(docker_client, HardenedContainerSpec(
-            image=image,
-            command=["nc", "-lk", "-p", "8080", "-e", "/proxy/forward"],
-            name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-gateway",
-            labels={**labels, LABEL_SERVICE: "gateway"},
-            volumes={gateway_volume.name: {"bind": "/proxy", "mode": "ro"}},
-            network=gateway_network.name,
-            ports={"8080/tcp": ("127.0.0.1", host_port)},
-            restart_policy={"Name": "no"},
-            mem_limit="128m",
-            nano_cpus=250_000_000,
-            pids_limit=32,
-        ))
+        gateway = create_hardened(
+            docker_client,
+            HardenedContainerSpec(
+                image=image,
+                command=["nc", "-lk", "-p", "8080", "-e", "/proxy/forward"],
+                name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-gateway",
+                labels={**labels, LABEL_SERVICE: "gateway"},
+                volumes={gateway_volume.name: {"bind": "/proxy", "mode": "ro"}},
+                network=gateway_network.name,
+                ports={"8080/tcp": ("127.0.0.1", host_port)},
+                restart_policy={"Name": "no"},
+                mem_limit="128m",
+                nano_cpus=250_000_000,
+                pids_limit=32,
+            ),
+        )
         service_network.connect(gateway, aliases=["preview-gateway"])
         gateway.start()
     except Exception:

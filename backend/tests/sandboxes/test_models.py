@@ -35,9 +35,11 @@ def test_destroy_and_resume_recovery_edges_are_explicit() -> None:
     assert source_statuses(SandboxLifecycleStatus.DESTROYING) == frozenset(
         SandboxLifecycleStatus
     ).difference({SandboxLifecycleStatus.DESTROYING})
-    assert SandboxLifecycleStatus.CREATING in SANDBOX_LIFECYCLE_TRANSITIONS[
-        SandboxLifecycleStatus.DEGRADED
-    ]
-    assert SandboxLifecycleStatus.READY in SANDBOX_LIFECYCLE_TRANSITIONS[
-        SandboxLifecycleStatus.DEGRADED
-    ]
+    assert (
+        SandboxLifecycleStatus.CREATING
+        in SANDBOX_LIFECYCLE_TRANSITIONS[SandboxLifecycleStatus.DEGRADED]
+    )
+    assert (
+        SandboxLifecycleStatus.READY
+        in SANDBOX_LIFECYCLE_TRANSITIONS[SandboxLifecycleStatus.DEGRADED]
+    )

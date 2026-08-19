@@ -125,9 +125,9 @@ def _exclude_preview_masks(
     lines = "\\n".join((marker, *_MASKED_ENVIRONMENT_NAMES))
     script = (
         "set -eu\n"
-        'exclude=/project/.git/info/exclude\n'
-        '[ -d /project/.git ] || exit 0\n'
-        'mkdir -p /project/.git/info\n'
+        "exclude=/project/.git/info/exclude\n"
+        "[ -d /project/.git ] || exit 0\n"
+        "mkdir -p /project/.git/info\n"
         '[ -f "$exclude" ] || : > "$exclude"\n'
         f'if grep -qxF {shlex.quote(marker)} "$exclude"; then exit 0; fi\n'
         f'printf "{lines}\\n" >> "$exclude"\n'

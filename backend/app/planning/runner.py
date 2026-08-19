@@ -199,13 +199,17 @@ def extract_payload(raw: str, *, provider: AgentProvider) -> dict[str, Any]:
     span = _last_object_span(text)
     if span is None:
         if "{" in text:
-            raise PlanningTurnError(422, "Unterminated JSON object in model output", raw)
+            raise PlanningTurnError(
+                422, "Unterminated JSON object in model output", raw
+            )
         raise PlanningTurnError(422, "No JSON object found in model output", raw)
     start, end = span
     try:
         payload = json.loads(text[start : end + 1])
     except json.JSONDecodeError as error:
-        raise PlanningTurnError(422, f"Invalid JSON payload: {error.msg}", raw) from error
+        raise PlanningTurnError(
+            422, f"Invalid JSON payload: {error.msg}", raw
+        ) from error
     if not isinstance(payload, dict):
         raise PlanningTurnError(422, "JSON payload must be an object", raw)
     return payload

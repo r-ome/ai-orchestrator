@@ -53,7 +53,11 @@ def get_docker_storage_status(
         ),
         fallback_size=clamped_integer(data.get("LayersSize")),
         fallback_reclaimable=sum(
-            max(clamped_integer(item.get("Size")) - clamped_integer(item.get("SharedSize")), 0)
+            max(
+                clamped_integer(item.get("Size"))
+                - clamped_integer(item.get("SharedSize")),
+                0,
+            )
             for item in images
             if clamped_integer(item.get("Containers")) == 0
         ),
@@ -102,9 +106,7 @@ def get_docker_storage_status(
 
     categories = (image_usage, container_usage, volume_usage, build_cache_usage)
     total_size_bytes = sum(category.size_bytes for category in categories)
-    total_reclaimable_bytes = sum(
-        category.reclaimable_bytes for category in categories
-    )
+    total_reclaimable_bytes = sum(category.reclaimable_bytes for category in categories)
 
     return DockerStorageStatusResponse(
         total_size_bytes=total_size_bytes,

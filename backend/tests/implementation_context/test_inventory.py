@@ -151,7 +151,9 @@ def test_ci_run_steps_are_collected_including_block_scalars() -> None:
 
 
 def test_ci_parsing_survives_broken_yaml_and_ignores_other_files() -> None:
-    assert parse_inventory({".github/workflows/ci.yml": "\tnot: [yaml"}).ci_commands == ()
+    assert (
+        parse_inventory({".github/workflows/ci.yml": "\tnot: [yaml"}).ci_commands == ()
+    )
     assert parse_inventory({"docs/ci.yml": WORKFLOW}).ci_commands == ()
 
 

@@ -12,7 +12,9 @@ MAX_EXCERPT = 2000
 
 def validate_context_payload(payload: Mapping[str, Any]) -> list[str]:
     errors: list[str] = []
-    errors += _objects(payload, "modules", ("path", "purpose"), MAX_MODULES, required=True)
+    errors += _objects(
+        payload, "modules", ("path", "purpose"), MAX_MODULES, required=True
+    )
     errors += _objects(
         payload,
         "symbols",
@@ -40,7 +42,9 @@ def validate_context_payload(payload: Mapping[str, Any]) -> list[str]:
         if not isinstance(command, str) or not command.strip():
             errors.append(f"commands.{kind} must be a non-empty string or omitted")
         elif "\n" in command:
-            errors.append(f"commands.{kind} must be a single command, not several lines")
+            errors.append(
+                f"commands.{kind} must be a single command, not several lines"
+            )
 
     errors += _excerpts(payload)
     return errors
@@ -71,7 +75,9 @@ def _objects(
 ) -> list[str]:
     value = payload.get(field)
     if value is None:
-        return [f"'{field}' is required and must be a non-empty list"] if required else []
+        return (
+            [f"'{field}' is required and must be a non-empty list"] if required else []
+        )
     if not isinstance(value, list):
         return [f"'{field}' must be a list of objects"]
     if required and not value:

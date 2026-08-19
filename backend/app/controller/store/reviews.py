@@ -54,8 +54,7 @@ class ReviewsMixin:
                 (sandbox_id,),
             ).fetchall()
         return {
-            row["path"]: (bytes(row["content"]), row["content_hash"])
-            for row in rows
+            row["path"]: (bytes(row["content"]), row["content_hash"]) for row in rows
         }
 
     def create_review(
@@ -191,4 +190,3 @@ class ReviewsMixin:
                 payload={"approval_id": approval_id, "actor": actor},
             )
         return approval_id
-

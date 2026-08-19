@@ -54,7 +54,11 @@ class FakeDockerResource:
         self.id = resource_id or name
         self.labels = dict(labels or {})
         self.removed = False
-        self.attrs: dict[str, Any] = {"Name": name, "Id": self.id, "Labels": self.labels}
+        self.attrs: dict[str, Any] = {
+            "Name": name,
+            "Id": self.id,
+            "Labels": self.labels,
+        }
 
     def remove(self, **_: Any) -> None:
         self._client._raise_if_failed(f"{self._kind[:-1]}.remove")
@@ -185,7 +189,9 @@ class _FakeDockerCollection:
     def _active(self) -> list[FakeDockerResource]:
         return [resource for resource in self.items if not resource.removed]
 
-    def _matches(self, resource: FakeDockerResource, filters: dict[str, Any] | None) -> bool:
+    def _matches(
+        self, resource: FakeDockerResource, filters: dict[str, Any] | None
+    ) -> bool:
         if not filters:
             return True
         requested_labels = filters.get("label", [])
@@ -202,9 +208,13 @@ class _FakeDockerCollection:
             names = [names]
         return not names or resource.name in names or resource.id in names
 
-    def list(self, *, filters: dict[str, Any] | None = None, **_: Any) -> list[FakeDockerResource]:
+    def list(
+        self, *, filters: dict[str, Any] | None = None, **_: Any
+    ) -> list[FakeDockerResource]:
         self.client._raise_if_failed(f"{self.kind}.list")
-        return [resource for resource in self._active() if self._matches(resource, filters)]
+        return [
+            resource for resource in self._active() if self._matches(resource, filters)
+        ]
 
     def get(self, identifier: str) -> FakeDockerResource:
         self.client._raise_if_failed(f"{self.kind}.get")
@@ -247,18 +257,20 @@ class _FakeDockerContainers(_FakeDockerCollection):
         containers = [
             resource
             for resource in self._active()
-            if all or isinstance(resource, FakeDockerContainer) and resource.status == "running"
+            if all
+            or isinstance(resource, FakeDockerContainer)
+            and resource.status == "running"
         ]
-        return [
-            resource
-            for resource in containers
-            if self._matches(resource, filters)
-        ]  # type: ignore[return-value]
+        return [resource for resource in containers if self._matches(resource, filters)]  # type: ignore[return-value]
 
     def get(self, identifier: str) -> FakeDockerContainer:
         self.client._raise_if_failed("containers.get")
         for container in self._active():
-            if identifier in {container.name, container.id, getattr(container, "short_id", "")}:
+            if identifier in {
+                container.name,
+                container.id,
+                getattr(container, "short_id", ""),
+            }:
                 return container  # type: ignore[return-value]
         raise NotFound(f"container '{identifier}' was not found")
 
@@ -266,7 +278,10 @@ class _FakeDockerContainers(_FakeDockerCollection):
         self.client._raise_if_failed("containers.prune")
         removed = []
         for container in self._active():
-            if isinstance(container, FakeDockerContainer) and container.status != "running":
+            if (
+                isinstance(container, FakeDockerContainer)
+                and container.status != "running"
+            ):
                 container.remove(force=True)
                 removed.append(container.id)
         return {"ContainersDeleted": removed}
@@ -356,7 +371,9 @@ class _FakeDockerAPI:
         self.client = client
         self.exec_calls: list[tuple[str, list[str], dict[str, Any]]] = []
 
-    def exec_create(self, container_id: str, command: list[str], **kwargs: Any) -> dict[str, str]:
+    def exec_create(
+        self, container_id: str, command: list[str], **kwargs: Any
+    ) -> dict[str, str]:
         self.client._raise_if_failed("api.exec_create")
         self.exec_calls.append((container_id, command, kwargs))
         return {"Id": f"exec-{len(self.exec_calls):04d}"}

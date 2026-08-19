@@ -26,7 +26,12 @@ MAX_FILE_BYTES = 200_000
 MAX_LOG_BYTES = 16 * 1_048_576
 _SECTION = "@@@ENGINE_FILE:"
 _TRACKED_DATABASE_SECTION = "@@@ENGINE_TRACKED_DATABASE:"
-_COMPOSE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
+_COMPOSE_NAMES = (
+    "compose.yaml",
+    "compose.yml",
+    "docker-compose.yaml",
+    "docker-compose.yml",
+)
 _KNOWN_ENGINES = frozenset({"mysql", "postgres", "sqlite"})
 NO_DATABASE = "none"
 _EXPLICIT_PRECEDENCE_MAX = 3
@@ -126,7 +131,10 @@ def detect_engine(
             _append_signal(signals, engine, "package_dependency", path, dependency, 5)
 
     ordered = tuple(
-        sorted(signals, key=lambda item: (item.precedence, item.path, item.source, item.detail))
+        sorted(
+            signals,
+            key=lambda item: (item.precedence, item.path, item.source, item.detail),
+        )
     )
     explicit_signals = tuple(
         signal for signal in ordered if signal.precedence <= _EXPLICIT_PRECEDENCE_MAX
@@ -236,7 +244,10 @@ def _backend_matches(content: bytes, pattern: str) -> list[str]:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
         return []
-    return [match.group(1) if match.lastindex else match.group(0) for match in re.finditer(pattern, text, re.IGNORECASE)]
+    return [
+        match.group(1) if match.lastindex else match.group(0)
+        for match in re.finditer(pattern, text, re.IGNORECASE)
+    ]
 
 
 def _rails_engines(content: bytes) -> list[str]:
@@ -293,7 +304,12 @@ def _dependency_engines(path: str, content: bytes) -> list[tuple[str, str]]:
                 dependencies = document.get(group)
                 if isinstance(dependencies, dict):
                     names.update(str(name).lower() for name in dependencies)
-    elif path.rsplit("/", 1)[-1] in {"pyproject.toml", "requirements.txt", "requirements-dev.txt", "Pipfile"}:
+    elif path.rsplit("/", 1)[-1] in {
+        "pyproject.toml",
+        "requirements.txt",
+        "requirements-dev.txt",
+        "Pipfile",
+    }:
         try:
             text = content.decode("utf-8")
         except UnicodeDecodeError:
@@ -312,7 +328,9 @@ def _dependency_engines(path: str, content: bytes) -> list[tuple[str, str]]:
     return [(mapping[name], name) for name in sorted(names) if name in mapping]
 
 
-def _prisma_commands(files: dict[str, bytes]) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, str]]:
+def _prisma_commands(
+    files: dict[str, bytes],
+) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, str]]:
     if not prisma_schema_providers(files):
         return (), (), {}
     migrate = ("npx prisma migrate deploy",)
@@ -324,7 +342,9 @@ def _prisma_commands(files: dict[str, bytes]) -> tuple[tuple[str, ...], tuple[st
             scripts = json.loads(package).get("scripts", {})
         except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
             scripts = {}
-        if isinstance(scripts, dict) and isinstance(scripts.get("db:seed:preview"), str):
+        if isinstance(scripts, dict) and isinstance(
+            scripts.get("db:seed:preview"), str
+        ):
             seed = ("npm run db:seed:preview",)
             source["seed"] = "package_json"
     return migrate, seed, source
@@ -407,9 +427,19 @@ def _read_project_files(
     # This command only lists and reads controller-selected files. It does not
     # source environment files, call package managers, or execute project code.
     predicates = " -o ".join(
-        f"-name '{name}'" for name in (
-        "schema.prisma", ".env", ".env.example", "package.json", "pyproject.toml",
-            "requirements.txt", "requirements-dev.txt", "Pipfile", "database.yml", "alembic.ini", "*.py",
+        f"-name '{name}'"
+        for name in (
+            "schema.prisma",
+            ".env",
+            ".env.example",
+            "package.json",
+            "pyproject.toml",
+            "requirements.txt",
+            "requirements-dev.txt",
+            "Pipfile",
+            "database.yml",
+            "alembic.ini",
+            "*.py",
             *_COMPOSE_NAMES,
         )
     )
@@ -417,12 +447,14 @@ def _read_project_files(
     script = (
         "cd /workspace\n"
         "if [ -d .git ]; then git ls-files -- '*.db' '*.sqlite' '*.sqlite3' '*.db3' "
-        "| while IFS= read -r file; do printf '" + _TRACKED_DATABASE_SECTION + "%s\\n' \"$file\"; done; fi\n"
+        "| while IFS= read -r file; do printf '"
+        + _TRACKED_DATABASE_SECTION
+        + '%s\\n\' "$file"; done; fi\n'
         "find . -type f \\( " + predicates + " \\) "
         "-not -path './.git/*' -not -path './node_modules/*' -not -path './.agent/*' "
         "| while IFS= read -r file; do "
-        "case \"$file\" in */config/database.yml|*.py|*/alembic.ini|*/schema.prisma|*/.env|*/.env.example|*/package.json|*/pyproject.toml|*/requirements.txt|*/requirements-dev.txt|*/Pipfile|*/compose.yaml|*/compose.yml|*/docker-compose.yaml|*/docker-compose.yml) ;; *) continue ;; esac; "
-        "path=${file#./}; printf '" + _SECTION + "%s\\n' \"$path\"; "
+        'case "$file" in */config/database.yml|*.py|*/alembic.ini|*/schema.prisma|*/.env|*/.env.example|*/package.json|*/pyproject.toml|*/requirements.txt|*/requirements-dev.txt|*/Pipfile|*/compose.yaml|*/compose.yml|*/docker-compose.yaml|*/docker-compose.yml) ;; *) continue ;; esac; '
+        "path=${file#./}; printf '" + _SECTION + '%s\\n\' "$path"; '
         f"head -c {MAX_FILE_BYTES} \"$file\"; printf '\\n'; "
         "done\n"
     )
@@ -436,7 +468,10 @@ def _read_project_files(
                 egress=Egress.DENIED,
                 working_dir="/workspace",
                 environment={"HOME": "/tmp/home"},
-                labels={"orchestrator.managed": "true", "orchestrator.kind": "engine-detection"},
+                labels={
+                    "orchestrator.managed": "true",
+                    "orchestrator.kind": "engine-detection",
+                },
                 volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
                 tmpfs_size="16m",
                 timeout_seconds=timeout_seconds,
@@ -475,7 +510,7 @@ def _tracked_database_paths(stdout: bytes) -> tuple[str, ...]:
     header, _, _ = stdout.partition(_SECTION.encode())
     for line in header.splitlines():
         if line.startswith(marker):
-            path = line[len(marker):].decode("utf-8", errors="replace").strip()
+            path = line[len(marker) :].decode("utf-8", errors="replace").strip()
             if path:
                 paths.append(path)
     return tuple(paths)

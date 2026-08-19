@@ -95,19 +95,22 @@ def test_render_includes_upstream_results() -> None:
 
 
 def test_valid_result_payload_passes() -> None:
-    assert validate_result_payload(
-        {
-            "changed": ["added collectTags"],
-            "decisions": ["counted case-insensitively"],
-            "interfaces": ["collectTags(posts)"],
-            "verification": {
-                "ran": ["npm run build"],
-                "outcome": "passed",
-                "detail": "clean",
-            },
-            "notes_for_downstream": ["tags are lowercased"],
-        }
-    ) == []
+    assert (
+        validate_result_payload(
+            {
+                "changed": ["added collectTags"],
+                "decisions": ["counted case-insensitively"],
+                "interfaces": ["collectTags(posts)"],
+                "verification": {
+                    "ran": ["npm run build"],
+                    "outcome": "passed",
+                    "detail": "clean",
+                },
+                "notes_for_downstream": ["tags are lowercased"],
+            }
+        )
+        == []
+    )
 
 
 def test_result_requires_changes_and_verification() -> None:
@@ -126,6 +129,9 @@ def test_passed_result_names_commands() -> None:
 
 
 def test_not_run_result_needs_no_commands() -> None:
-    assert validate_result_payload(
-        {"changed": ["x"], "verification": {"outcome": "not_run", "ran": []}}
-    ) == []
+    assert (
+        validate_result_payload(
+            {"changed": ["x"], "verification": {"outcome": "not_run", "ran": []}}
+        )
+        == []
+    )

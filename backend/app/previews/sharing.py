@@ -99,7 +99,9 @@ def _shared_database_labels(
     }
 
 
-def _shared_volume(docker_client: DockerClient, name: str, labels: dict[str, str]) -> Any:
+def _shared_volume(
+    docker_client: DockerClient, name: str, labels: dict[str, str]
+) -> Any:
     try:
         return docker_client.volumes.get(name)
     except NotFound:
@@ -110,7 +112,9 @@ def _shared_volume(docker_client: DockerClient, name: str, labels: dict[str, str
         return docker_client.volumes.get(name)
 
 
-def _shared_network(docker_client: DockerClient, name: str, labels: dict[str, str]) -> Any:
+def _shared_network(
+    docker_client: DockerClient, name: str, labels: dict[str, str]
+) -> Any:
     existing = docker_client.networks.list(names=[name])
     for network in existing:
         if network.name == name:
@@ -153,7 +157,11 @@ def _shared_database_server(
         credentials_volume = _shared_volume(
             docker_client,
             names["credentials"],
-            {**labels, LABEL_DATA_MANAGED: "true", LABEL_SERVICE: "database-credentials"},
+            {
+                **labels,
+                LABEL_DATA_MANAGED: "true",
+                LABEL_SERVICE: "database-credentials",
+            },
         )
         container = _existing_shared_server(docker_client, names["container"])
         created = container is None
@@ -427,7 +435,11 @@ def _release_shared_database(
         "kept_for_attached_sandboxes": len(siblings) if owner and ephemeral else 0,
     }
     applied = False
-    if server is not None and server.status == "running" and credentials_volume is not None:
+    if (
+        server is not None
+        and server.status == "running"
+        and credentials_volume is not None
+    ):
         statements = [f"DROP USER IF EXISTS '{user_name}'@'%'"]
         if drop_schema:
             statements.append(f"DROP DATABASE IF EXISTS `{schema_name}`")

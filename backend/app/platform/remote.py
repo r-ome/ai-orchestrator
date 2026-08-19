@@ -4,9 +4,7 @@ import re
 from urllib.parse import urlsplit
 from uuid import NAMESPACE_URL, uuid5
 
-_SCP_REMOTE = re.compile(
-    r"^(?:[^@/:]+@)?(?P<host>[^/:]+):(?P<path>.+)$"
-)
+_SCP_REMOTE = re.compile(r"^(?:[^@/:]+@)?(?P<host>[^/:]+):(?P<path>.+)$")
 
 
 def normalize_remote_url(raw: str) -> str:

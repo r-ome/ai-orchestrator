@@ -98,10 +98,14 @@ class SandboxesMixin:
         )
         unknown_fields = set(values).difference(fields)
         if unknown_fields:
-            raise ValueError(f"unknown sandbox manifest fields: {sorted(unknown_fields)!r}")
+            raise ValueError(
+                f"unknown sandbox manifest fields: {sorted(unknown_fields)!r}"
+            )
         missing_fields = set(fields).difference(values)
         if missing_fields:
-            raise ValueError(f"missing sandbox manifest fields: {sorted(missing_fields)!r}")
+            raise ValueError(
+                f"missing sandbox manifest fields: {sorted(missing_fields)!r}"
+            )
 
         with self._connection() as connection:
             current = connection.execute(

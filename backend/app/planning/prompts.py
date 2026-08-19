@@ -9,6 +9,7 @@ CLARIFIER_SCHEMA = """{
   \"understanding_summary\": \"\"
 }"""
 
+
 def _render_prose(value: Any) -> str:
     text = str(value or "").strip()
     return text or "(none)"
@@ -38,7 +39,9 @@ def _render_risks(value: Any) -> str:
 
 def _render_questions(value: Any) -> str:
     items = value if isinstance(value, list) else []
-    lines = [f"{index}. {str(item).strip()}" for index, item in enumerate(items, start=1)]
+    lines = [
+        f"{index}. {str(item).strip()}" for index, item in enumerate(items, start=1)
+    ]
     return "\n".join(lines) or "(none)"
 
 
@@ -62,7 +65,12 @@ _PLAN_FIELDS: tuple[tuple[str, str, str, Any], ...] = (
         "Components",
         _render_components,
     ),
-    ("risks", '[{"severity": "high|medium|low", "text": "..."}]', "Risks", _render_risks),
+    (
+        "risks",
+        '[{"severity": "high|medium|low", "text": "..."}]',
+        "Risks",
+        _render_risks,
+    ),
     ("open_questions", '["..."]', "Open questions", _render_questions),
 )
 
@@ -82,6 +90,7 @@ def render_plan(plan: Mapping[str, Any]) -> str:
         f"## {heading}\n{render(plan.get(name))}"
         for name, _, heading, render in _PLAN_FIELDS
     )
+
 
 # Round one has no review ledger, so the planner has nothing to respond to.
 # Showing it the `finding_responses` field anyway invites it to invent findings
@@ -178,7 +187,10 @@ def planner_prompt(
     ]
     first_round = round_number < 2
     if not first_round:
-        sections.append("Your previous planning turns, oldest first:\n" + _render_messages(previous_turns))
+        sections.append(
+            "Your previous planning turns, oldest first:\n"
+            + _render_messages(previous_turns)
+        )
         sections.append("Review ledger:\n" + _render_json(ledger))
         sections.append(
             "Respond to every finding in the review ledger, and to no other finding. "
@@ -247,7 +259,9 @@ def feature_brief(
     messages: Sequence[Mapping[str, Any]],
     confirmed: bool,
 ) -> str:
-    confirmation = "confirmed" if confirmed else "not confirmed; the human proceeded anyway"
+    confirmation = (
+        "confirmed" if confirmed else "not confirmed; the human proceeded anyway"
+    )
     return "\n\n".join(
         [
             f"# Feature brief: {title}",

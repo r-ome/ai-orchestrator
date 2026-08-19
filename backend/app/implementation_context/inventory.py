@@ -109,7 +109,10 @@ def confirm_command(command: str, inventory: CommandInventory) -> tuple[bool, st
 
     if program in _NODE_RUNNERS:
         if not inventory.node_project:
-            return False, f"'{program}' needs a package.json, which this project has none of"
+            return (
+                False,
+                f"'{program}' needs a package.json, which this project has none of",
+            )
         proven = inventory.package_manager
         if proven in _NODE_MANAGERS and program != proven:
             return (
@@ -295,8 +298,7 @@ def _dependencies(files: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
                 declared = package.get(section)
                 if isinstance(declared, dict):
                     found.extend(
-                        (str(name), str(version))
-                        for name, version in declared.items()
+                        (str(name), str(version)) for name, version in declared.items()
                     )
     if "pyproject.toml" in files:
         try:
@@ -348,7 +350,7 @@ def _read_manifests(
     )
     script += "".join(
         f"for f in {pattern}; do "
-        f"[ -f \"$f\" ] || continue; printf '{_SECTION}%s\\n' \"$f\"; "
+        f'[ -f "$f" ] || continue; printf \'{_SECTION}%s\\n\' "$f"; '
         f"head -c {MAX_FILE_BYTES} \"$f\"; printf '\\n'; done\n"
         for pattern in CI_GLOBS
     )

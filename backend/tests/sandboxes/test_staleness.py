@@ -61,7 +61,9 @@ def _register_v1_staleness_sandbox() -> None:
 
 
 def _stub_staleness_commands(monkeypatch: pytest.MonkeyPatch, *, count: int) -> None:
-    monkeypatch.setattr(sandbox_service, "fetch_canonical_mirror", lambda *_args, **_kwargs: b"")
+    monkeypatch.setattr(
+        sandbox_service, "fetch_canonical_mirror", lambda *_args, **_kwargs: b""
+    )
     monkeypatch.setattr(
         sandbox_service,
         "count_mirror_staleness",
@@ -117,7 +119,9 @@ def test_staleness_fetch_failure_uses_last_known_mirror_state_without_claiming_z
     monkeypatch.setattr(
         sandbox_service,
         "fetch_canonical_mirror",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("remote unreachable")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("remote unreachable")
+        ),
     )
     monkeypatch.setattr(
         sandbox_service,
@@ -162,7 +166,9 @@ def test_staleness_does_not_take_a_lifecycle_lease_or_block_an_open_writer(
     monkeypatch.setattr(
         sandbox_lifecycle,
         "lifecycle_lease",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not take lease")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("must not take lease")
+        ),
     )
 
     response = client.get(f"/sandboxes/{SANDBOX_ID}/staleness")
@@ -209,32 +215,40 @@ def test_staleness_endpoint_counts_commits_after_a_local_remote_advances(
     daemon = None
     previous_override = app.dependency_overrides.get(get_docker_client)
     try:
-        network = docker_client.networks.create(name=f"orchestrator-staleness-net-{run_id}")
+        network = docker_client.networks.create(
+            name=f"orchestrator-staleness-net-{run_id}"
+        )
         remote_volume = docker_client.volumes.create(
             name=f"orchestrator-staleness-remote-{run_id}"
         )
-        mirror = docker_client.volumes.create(name=f"orchestrator-staleness-mirror-{run_id}")
-        base_commit = docker_client.containers.run(
-            "alpine/git:latest",
-            entrypoint=["sh", "-c"],
-            command=[
-                "set -eu\n"
-                "git init --bare -q /remote/repository.git\n"
-                "git init -q -b main /tmp/seed\n"
-                "git -C /tmp/seed config user.name test\n"
-                "git -C /tmp/seed config user.email test@example.invalid\n"
-                "printf initial > /tmp/seed/source.txt\n"
-                "git -C /tmp/seed add source.txt\n"
-                "git -C /tmp/seed commit -qm initial\n"
-                "git -C /tmp/seed remote add origin /remote/repository.git\n"
-                "git -C /tmp/seed push -q origin main\n"
-                "git -C /remote/repository.git symbolic-ref HEAD refs/heads/main\n"
-                "git -C /remote/repository.git rev-parse refs/heads/main\n"
-            ],
-            remove=True,
-            volumes={remote_volume.name: {"bind": "/remote", "mode": "rw"}},
-            tmpfs={"/git": "rw,nosuid,size=1m"},
-        ).decode().strip()
+        mirror = docker_client.volumes.create(
+            name=f"orchestrator-staleness-mirror-{run_id}"
+        )
+        base_commit = (
+            docker_client.containers.run(
+                "alpine/git:latest",
+                entrypoint=["sh", "-c"],
+                command=[
+                    "set -eu\n"
+                    "git init --bare -q /remote/repository.git\n"
+                    "git init -q -b main /tmp/seed\n"
+                    "git -C /tmp/seed config user.name test\n"
+                    "git -C /tmp/seed config user.email test@example.invalid\n"
+                    "printf initial > /tmp/seed/source.txt\n"
+                    "git -C /tmp/seed add source.txt\n"
+                    "git -C /tmp/seed commit -qm initial\n"
+                    "git -C /tmp/seed remote add origin /remote/repository.git\n"
+                    "git -C /tmp/seed push -q origin main\n"
+                    "git -C /remote/repository.git symbolic-ref HEAD refs/heads/main\n"
+                    "git -C /remote/repository.git rev-parse refs/heads/main\n"
+                ],
+                remove=True,
+                volumes={remote_volume.name: {"bind": "/remote", "mode": "rw"}},
+                tmpfs={"/git": "rw,nosuid,size=1m"},
+            )
+            .decode()
+            .strip()
+        )
         daemon = docker_client.containers.run(
             "alpine/git:latest",
             entrypoint=["sh", "-c"],
@@ -254,7 +268,9 @@ def test_staleness_endpoint_counts_commits_after_a_local_remote_advances(
             tmpfs={"/git": "rw,nosuid,size=1m"},
         )
         daemon.reload()
-        host_port = int(daemon.attrs["NetworkSettings"]["Ports"]["9418/tcp"][0]["HostPort"])
+        host_port = int(
+            daemon.attrs["NetworkSettings"]["Ports"]["9418/tcp"][0]["HostPort"]
+        )
         remote_url = f"git://host.docker.internal:{host_port}/repository.git"
         # The daemon installs its package before listening, so the port is
         # published a second or two before it accepts connections. Without this
@@ -268,7 +284,9 @@ def test_staleness_endpoint_counts_commits_after_a_local_remote_advances(
             probe = docker_client.containers.run(
                 "alpine/git:latest",
                 entrypoint=["sh", "-c"],
-                command=[f"git ls-remote {remote_url} >/dev/null 2>&1 && echo ready || echo waiting"],
+                command=[
+                    f"git ls-remote {remote_url} >/dev/null 2>&1 && echo ready || echo waiting"
+                ],
                 remove=True,
                 tmpfs={"/git": "rw,nosuid,size=1m"},
             )
@@ -282,7 +300,7 @@ def test_staleness_endpoint_counts_commits_after_a_local_remote_advances(
             command=[
                 "set -eu\n"
                 "git init --bare -q /mirror\n"
-                "git -C /mirror remote add origin \"$ORCHESTRATOR_REMOTE\"\n"
+                'git -C /mirror remote add origin "$ORCHESTRATOR_REMOTE"\n'
                 "git -C /mirror config --replace-all remote.origin.fetch '+refs/*:refs/*'\n"
                 "git -C /mirror symbolic-ref HEAD refs/heads/main\n"
             ],
@@ -326,9 +344,9 @@ def test_staleness_endpoint_counts_commits_after_a_local_remote_advances(
                 "git -C /tmp/work config user.name test\n"
                 "git -C /tmp/work config user.email test@example.invalid\n"
                 "for number in 1 2 3; do\n"
-                "  printf '%s' \"$number\" > /tmp/work/\"$number\".txt\n"
-                "  git -C /tmp/work add \"$number\".txt\n"
-                "  git -C /tmp/work commit -qm \"advance $number\"\n"
+                '  printf \'%s\' "$number" > /tmp/work/"$number".txt\n'
+                '  git -C /tmp/work add "$number".txt\n'
+                '  git -C /tmp/work commit -qm "advance $number"\n'
                 "done\n"
                 "git -C /tmp/work push -q origin main\n"
             ],

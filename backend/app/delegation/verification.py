@@ -112,7 +112,8 @@ def _run_command(
                 egress=Egress.DENIED,
                 network=(
                     database_runtime.network_name
-                    if database_runtime is not None and database_runtime.engine != "sqlite"
+                    if database_runtime is not None
+                    and database_runtime.engine != "sqlite"
                     else None
                 ),
                 capture=Capture.COMBINED,

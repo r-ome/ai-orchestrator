@@ -118,7 +118,9 @@ def validate_workspace_import(
     try:
         volume = docker_client.volumes.get(volume_name)
     except NotFound as error:
-        raise WorkspaceMissing("sandbox workspace is missing; use lifecycle resume when available") from error
+        raise WorkspaceMissing(
+            "sandbox workspace is missing; use lifecycle resume when available"
+        ) from error
     validate_ownership(volume, sandbox_id=sandbox_id)
     return volume_name
 
@@ -139,8 +141,8 @@ def verify_workspace_identity(
         script=(
             "set -eu\n"
             "git -C /workspace rev-parse --is-inside-work-tree | grep -qx true\n"
-            "test -z \"$(git -C /workspace remote)\"\n"
-            f"test \"$(git -C /workspace branch --show-current)\" = {feature_branch!r}\n"
+            'test -z "$(git -C /workspace remote)"\n'
+            f'test "$(git -C /workspace branch --show-current)" = {feature_branch!r}\n'
         ),
     )
 
@@ -155,6 +157,8 @@ def validate_project_mirror(
     try:
         volume = docker_client.volumes.get(volume_name)
     except NotFound as error:
-        raise RuntimeError("project mirror is missing; use lifecycle resume when available") from error
+        raise RuntimeError(
+            "project mirror is missing; use lifecycle resume when available"
+        ) from error
     validate_mirror_ownership(volume, project_id=project_id)
     return volume_name

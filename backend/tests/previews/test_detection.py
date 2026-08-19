@@ -122,12 +122,12 @@ def test_prisma_mysql_is_an_approved_native_database_suggestion() -> None:
         "package.json": b'{"scripts":{"db:seed:preview":"node seed.js"}}',
         "package-lock.json": b"{}",
         "vite.config.ts": b"export default {}",
-        "prisma/schema.prisma": b'''
+        "prisma/schema.prisma": b"""
 datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
 }
-''',
+""",
     }
 
     result = detect_preview(files, default_expiry_minutes=30)
@@ -149,12 +149,12 @@ def test_prisma_postgresql_does_not_suggest_mysql() -> None:
     files = {
         "package.json": b"{}",
         "vite.config.ts": b"export default {}",
-        "prisma/schema.prisma": b'''
+        "prisma/schema.prisma": b"""
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
-''',
+""",
     }
 
     result = detect_preview(files, default_expiry_minutes=30)
@@ -167,12 +167,12 @@ datasource db {
 def test_prisma_mysql_suggestion_does_not_require_a_known_app_runtime() -> None:
     result = detect_preview(
         {
-            "prisma/schema.prisma": b'''
+            "prisma/schema.prisma": b"""
 datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
 }
-'''
+"""
         },
         default_expiry_minutes=30,
     )
@@ -499,12 +499,12 @@ model User {
 
 def test_detect_preview_required_environment_merges_dotenv_and_prisma() -> None:
     files = {
-        "prisma/schema.prisma": b'''
+        "prisma/schema.prisma": b"""
 datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
 }
-''',
+""",
     }
 
     result = detect_preview(
@@ -513,7 +513,11 @@ datasource db {
         environment_names=["NEXTAUTH_SECRET", "AWS_REGION"],
     )
 
-    assert result.required_environment == ["AWS_REGION", "DATABASE_URL", "NEXTAUTH_SECRET"]
+    assert result.required_environment == [
+        "AWS_REGION",
+        "DATABASE_URL",
+        "NEXTAUTH_SECRET",
+    ]
 
 
 def test_detect_preview_defaults_environment_names_to_empty() -> None:

@@ -36,6 +36,8 @@ def test_v1_registration_strips_userinfo_before_persistence(tmp_path: Path) -> N
         stored_remote = connection.execute(
             "SELECT remote_url FROM projects WHERE id = ?", (project["id"],)
         ).fetchone()[0]
-        event_payloads = connection.execute("SELECT payload_json FROM events").fetchall()
+        event_payloads = connection.execute(
+            "SELECT payload_json FROM events"
+        ).fetchall()
     assert "token-value" not in stored_remote
     assert all("token-value" not in str(payload[0]) for payload in event_payloads)

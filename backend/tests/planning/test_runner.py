@@ -105,8 +105,12 @@ def stub_agent_settings(monkeypatch: pytest.MonkeyPatch) -> None:
             credential_environment_variable="CODEX_HOME",
         )
 
-    monkeypatch.setattr(runner, "get_agent_settings", lambda: SimpleNamespace(provider=provider))
-    monkeypatch.setattr(runner, "credential_volume", lambda *_: SimpleNamespace(name="auth-volume"))
+    monkeypatch.setattr(
+        runner, "get_agent_settings", lambda: SimpleNamespace(provider=provider)
+    )
+    monkeypatch.setattr(
+        runner, "credential_volume", lambda *_: SimpleNamespace(name="auth-volume")
+    )
 
 
 def _request(provider: AgentProvider = AgentProvider.CODEX) -> TurnRequest:
@@ -119,8 +123,12 @@ def _request(provider: AgentProvider = AgentProvider.CODEX) -> TurnRequest:
     )
 
 
-def test_claude_command_has_read_only_planning_flags(settings: PlanningSettings) -> None:
-    docker_client = _StubDockerClient([_StubContainer(output=b'{"result": "{\\"message\\": \\"ok\\"}"}')])
+def test_claude_command_has_read_only_planning_flags(
+    settings: PlanningSettings,
+) -> None:
+    docker_client = _StubDockerClient(
+        [_StubContainer(output=b'{"result": "{\\"message\\": \\"ok\\"}"}')]
+    )
 
     run_planning_turn(docker_client, settings, _request(AgentProvider.CLAUDE))
 
@@ -143,7 +151,9 @@ def test_codex_command_ends_exec_with_closed_stdin(settings: PlanningSettings) -
     assert "< /dev/null && cat /tmp/planning-output.json" in command
 
 
-def test_container_mounts_are_read_only_for_the_project(settings: PlanningSettings) -> None:
+def test_container_mounts_are_read_only_for_the_project(
+    settings: PlanningSettings,
+) -> None:
     docker_client = _StubDockerClient([_StubContainer()])
 
     run_planning_turn(docker_client, settings, _request())
@@ -156,7 +166,9 @@ def test_container_mounts_are_read_only_for_the_project(settings: PlanningSettin
     assert "network_disabled" not in create_call
 
 
-def test_prompt_is_in_the_environment_not_the_command(settings: PlanningSettings) -> None:
+def test_prompt_is_in_the_environment_not_the_command(
+    settings: PlanningSettings,
+) -> None:
     docker_client = _StubDockerClient([_StubContainer()])
     request = _request()
 
@@ -169,7 +181,7 @@ def test_prompt_is_in_the_environment_not_the_command(settings: PlanningSettings
 
 def test_extract_payload_accepts_prose_around_json() -> None:
     payload = extract_payload(
-        "Here is the reply. {\"message\": \"ok\", \"questions\": []} Thank you.",
+        'Here is the reply. {"message": "ok", "questions": []} Thank you.',
         provider=AgentProvider.CODEX,
     )
 
@@ -178,7 +190,7 @@ def test_extract_payload_accepts_prose_around_json() -> None:
 
 def test_extract_payload_ignores_braces_and_escapes_inside_strings() -> None:
     expected = {
-        "plan_markdown": "Use {value} and the literal \\\"}\\\" without ending JSON.",
+        "plan_markdown": 'Use {value} and the literal \\"}\\" without ending JSON.',
         "scope": "Includes {braces}",
     }
     raw = "Model preamble: " + json.dumps(expected) + " trailing prose"
@@ -212,7 +224,9 @@ def test_extract_payload_skips_the_schema_echoed_in_the_codex_transcript() -> No
     assert extract_payload(raw, provider=AgentProvider.CODEX) == reply
 
 
-def test_extract_payload_prefers_the_last_complete_object_over_a_truncated_tail() -> None:
+def test_extract_payload_prefers_the_last_complete_object_over_a_truncated_tail() -> (
+    None
+):
     reply = {"message": "complete"}
     raw = json.dumps(reply) + '\n{"message": "cut off'
 
@@ -238,7 +252,9 @@ def test_extract_payload_skips_a_lone_brace_in_the_transcript() -> None:
     assert extract_payload(raw, provider=AgentProvider.CODEX) == reply
 
 
-def test_malformed_output_runs_exactly_one_repair_turn(settings: PlanningSettings) -> None:
+def test_malformed_output_runs_exactly_one_repair_turn(
+    settings: PlanningSettings,
+) -> None:
     first = _StubContainer(output=b"not JSON")
     second = _StubContainer(output=b'{"message": "repaired"}')
     docker_client = _StubDockerClient([first, second])
@@ -258,12 +274,16 @@ def test_malformed_output_runs_exactly_one_repair_turn(settings: PlanningSetting
     assert result.result is not None
     assert result.result.payload == {"message": "repaired"}
     assert len(docker_client.containers.create_calls) == 2
-    repair_prompt = docker_client.containers.create_calls[1]["environment"][PROMPT_VARIABLE]
+    repair_prompt = docker_client.containers.create_calls[1]["environment"][
+        PROMPT_VARIABLE
+    ]
     assert "Your previous reply was rejected:" in repair_prompt
 
 
 def test_second_malformed_output_raises(settings: PlanningSettings) -> None:
-    docker_client = _StubDockerClient([_StubContainer(output=b"bad"), _StubContainer(output=b"still bad")])
+    docker_client = _StubDockerClient(
+        [_StubContainer(output=b"bad"), _StubContainer(output=b"still bad")]
+    )
 
     request = _request()
     outcome = run_validated_turn(
@@ -349,7 +369,9 @@ def test_log_is_capped_to_max_log_bytes(settings: PlanningSettings) -> None:
     assert result.raw_output == payload.decode()
 
 
-def test_container_is_removed_when_payload_parsing_raises(settings: PlanningSettings) -> None:
+def test_container_is_removed_when_payload_parsing_raises(
+    settings: PlanningSettings,
+) -> None:
     container = _StubContainer(output=b"not JSON")
     docker_client = _StubDockerClient([container])
 

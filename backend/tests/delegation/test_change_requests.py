@@ -89,7 +89,7 @@ def _store(tmp_path: Path) -> tuple[ControllerStore, str]:
                         "reason": "defined",
                     }
                 ]
-            )
+            ),
         },
     )
     view = service.create_revision(
@@ -228,7 +228,9 @@ def _task_stubs(
                 {
                     "command": "npm test",
                     "passed": verification_passes,
-                    "detail": "Passed" if verification_passes else "Exited with status 1",
+                    "detail": "Passed"
+                    if verification_passes
+                    else "Exited with status 1",
                 }
             ],
         },
@@ -291,7 +293,10 @@ def test_requested_changes_wait_for_whole_feature_review_after_verification(
     assert stored is not None
     assert "src/components/EmptyState.tsx" in stored["prompt"]
     assert store.task(claim.task_id)["status"] == TaskStatus.ACCEPTED.value
-    assert service.view(store, delegation_id).changes[0].instructions == "Tighten the empty state"
+    assert (
+        service.view(store, delegation_id).changes[0].instructions
+        == "Tighten the empty state"
+    )
 
 
 def test_missing_behavior_evidence_is_retained_for_whole_feature_review(

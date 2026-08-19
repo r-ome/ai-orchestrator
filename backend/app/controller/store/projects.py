@@ -90,7 +90,9 @@ class ProjectsMixin:
             ).fetchone()
         result = _row(row)
         if result is None:
-            raise RuntimeError("v1 project mirror fetch update did not persist a project")
+            raise RuntimeError(
+                "v1 project mirror fetch update did not persist a project"
+            )
         return result
 
     def project(self, project_id: str) -> dict[str, Any] | None:
@@ -234,7 +236,8 @@ class ProjectsMixin:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             cursor = connection.execute(
-                "DELETE FROM project_mirror_locks WHERE heartbeat_at <= ?", (stale_before,)
+                "DELETE FROM project_mirror_locks WHERE heartbeat_at <= ?",
+                (stale_before,),
             )
         return cursor.rowcount
 
@@ -277,7 +280,10 @@ class ProjectsMixin:
                 """,
                 (project_id,),
             ).fetchall()
-        return [{"name": str(row["name"]), "updated_at": str(row["updated_at"])} for row in rows]
+        return [
+            {"name": str(row["name"]), "updated_at": str(row["updated_at"])}
+            for row in rows
+        ]
 
     def project_secrets(self, project_id: str) -> dict[str, str]:
         with self._connection() as connection:

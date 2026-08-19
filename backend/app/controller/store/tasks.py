@@ -225,4 +225,3 @@ class TasksMixin:
         open_statuses: Iterable[str],
     ) -> dict[str, Any] | None:
         return self._active_run("tasks", sandbox_id, tuple(open_statuses))
-

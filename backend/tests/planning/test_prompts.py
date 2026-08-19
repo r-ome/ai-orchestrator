@@ -98,7 +98,9 @@ def test_every_planner_schema_field_reaches_the_reviewer() -> None:
     """Adding a planner field without rendering it recreates the side channel."""
     rendered = render_plan({})
     for name, _, heading, _ in _PLAN_FIELDS:
-        assert f'"{name}"' in PLANNER_SCHEMA, f"{name} is missing from the planner schema"
+        assert f'"{name}"' in PLANNER_SCHEMA, (
+            f"{name} is missing from the planner schema"
+        )
         assert f"## {heading}" in rendered, f"{name} never reaches the reviewer"
 
 

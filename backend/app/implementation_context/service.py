@@ -336,7 +336,9 @@ def _settle(
             context_id,
             to_status=ContextStatus.FAILED.value,
             changes={
-                "error": ("; ".join(turn.errors) or "Turn produced no JSON object")[:900]
+                "error": ("; ".join(turn.errors) or "Turn produced no JSON object")[
+                    :900
+                ]
             },
         )
         return _outcome(store, context_id, turn, accepted=False)
@@ -356,9 +358,7 @@ def _settle(
         to_status=ContextStatus.READY.value,
         changes={
             "manifest_json": json.dumps(result.payload),
-            "commands_json": json.dumps(
-                [command.model_dump() for command in commands]
-            ),
+            "commands_json": json.dumps([command.model_dump() for command in commands]),
             "inventory_json": json.dumps(inventory.as_dict()),
             "model": result.model,
         },

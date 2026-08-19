@@ -200,10 +200,17 @@ def sync(
 ) -> SyncOutcome:
     """Explicitly bring one clean v1 workspace forward from its local mirror."""
     sandbox = controller_store.sandbox(sandbox_id)
-    require_v1(sandbox, sandbox_id, "has no canonical mirror or usable base commit; recreate it explicitly to use v1 sync.")
+    require_v1(
+        sandbox,
+        sandbox_id,
+        "has no canonical mirror or usable base commit; recreate it explicitly to use v1 sync.",
+    )
     assert sandbox is not None
     manifest = read_manifest(controller_store, sandbox_id)
-    if manifest is None or manifest.lifecycle_status is not SandboxLifecycleStatus.READY:
+    if (
+        manifest is None
+        or manifest.lifecycle_status is not SandboxLifecycleStatus.READY
+    ):
         raise SandboxConflict("Sandbox can sync only from ready")
     project = controller_store.project(str(sandbox["project_id"]))
     if project is None or not project.get("mirror_volume"):
@@ -379,17 +386,26 @@ def publish(
 ) -> PublishOutcome:
     """Push one reviewed branch, then discover or create and verify its PR."""
     sandbox = controller_store.sandbox(sandbox_id)
-    require_v1(sandbox, sandbox_id, "cannot publish to a remote; recreate it explicitly as v1.")
+    require_v1(
+        sandbox, sandbox_id, "cannot publish to a remote; recreate it explicitly as v1."
+    )
     assert sandbox is not None
     manifest = read_manifest(controller_store, sandbox_id)
-    if manifest is None or manifest.lifecycle_status is not SandboxLifecycleStatus.READY:
+    if (
+        manifest is None
+        or manifest.lifecycle_status is not SandboxLifecycleStatus.READY
+    ):
         raise SandboxConflict("Sandbox can publish only from ready")
     if not manifest.feature_branch:
         raise SandboxConflict(
             f"Sandbox '{sandbox_id}' has no feature branch; recreate it explicitly to publish."
         )
     project = controller_store.project(str(sandbox["project_id"]))
-    if project is None or not project.get("remote_url") or not project.get("mirror_volume"):
+    if (
+        project is None
+        or not project.get("remote_url")
+        or not project.get("mirror_volume")
+    ):
         raise SandboxConflict(
             f"Sandbox '{sandbox_id}' has no project mirror or remote; recreate it explicitly to publish."
         )
@@ -457,7 +473,9 @@ def publish(
                 controller_store.record_sandbox_publication(
                     sandbox_id=sandbox_id,
                     remote_branch=remote_branch,
-                    last_pushed_commit=_optional_string(prior.get("last_pushed_commit")),
+                    last_pushed_commit=_optional_string(
+                        prior.get("last_pushed_commit")
+                    ),
                     remote_branch_sha=_optional_string(prior.get("remote_branch_sha")),
                     last_error=failure_message,
                 )
@@ -495,7 +513,9 @@ def publish(
                     remote_url=str(project["remote_url"]),
                     remote_branch=outcome.remote_branch,
                     base_branch=_base_branch(base_ref),
-                    title=manifest.feature_title or manifest.feature_key or outcome.remote_branch,
+                    title=manifest.feature_title
+                    or manifest.feature_key
+                    or outcome.remote_branch,
                 )
             except (GitHubApiError, PublishError) as error:
                 # Git and GitHub are independent systems. The successful push
@@ -601,7 +621,9 @@ def staleness(
                 )
             except Exception as error:
                 fetch_failure_reason = str(error)
-                project = controller_store.project(str(sandbox["project_id"])) or project
+                project = (
+                    controller_store.project(str(sandbox["project_id"])) or project
+                )
     except SandboxAdmissionError as error:
         raise SandboxConflict(lifecycle_conflict_detail(error)) from error
     if fetch_failure_reason is None:
@@ -621,7 +643,9 @@ def staleness(
     except Exception as error:
         if fetch_failure_reason is None:
             raise SandboxInternalFailure(str(error)) from error
-        fetch_failure_reason = f"{fetch_failure_reason}; last known mirror state is unavailable: {error}"
+        fetch_failure_reason = (
+            f"{fetch_failure_reason}; last known mirror state is unavailable: {error}"
+        )
         behind_count = None
 
     return StalenessOutcome(
@@ -688,7 +712,8 @@ def complete_database_provision(
                 db_engine=engine,
                 db_name=None,
                 db_data_volume=None,
-                current_base_commit=manifest.pending_base_commit or manifest.current_base_commit,
+                current_base_commit=manifest.pending_base_commit
+                or manifest.current_base_commit,
                 pending_base_commit=None,
                 last_error=None,
             ),
@@ -696,12 +721,10 @@ def complete_database_provision(
         )
         return
     migrate = [
-        str(value)
-        for value in _json_value(detection.get("migrate_commands_json"), [])
+        str(value) for value in _json_value(detection.get("migrate_commands_json"), [])
     ]
     seed = [
-        str(value)
-        for value in _json_value(detection.get("seed_commands_json"), [])
+        str(value) for value in _json_value(detection.get("seed_commands_json"), [])
     ]
     data_volume = db_data_volume(sandbox_id) if engine == "sqlite" else None
     if operation == "sync":
@@ -792,7 +815,9 @@ def complete_database_provision(
                 )
         if isinstance(error, SandboxDatabaseError):
             raise
-        raise SandboxDatabaseError(503, f"Sandbox database provisioning failed: {error}") from error
+        raise SandboxDatabaseError(
+            503, f"Sandbox database provisioning failed: {error}"
+        ) from error
     ready = read_manifest(controller_store, sandbox_id)
     if ready is None:
         raise RuntimeError("sandbox manifest disappeared after database provisioning")
@@ -818,9 +843,7 @@ def require_v1(
     if sandbox is None:
         raise SandboxNotFound("Sandbox not found")
     if sandbox.get("lifecycle_version") != "v1":
-        raise SandboxConflict(
-            f"Legacy sandbox '{sandbox_id}' {refusal}"
-        )
+        raise SandboxConflict(f"Legacy sandbox '{sandbox_id}' {refusal}")
 
 
 def _required_sync_value(
@@ -860,7 +883,9 @@ def _sync_strategy(store: ControllerStore, sandbox_id: str) -> str:
 def _base_branch(base_ref: str) -> str:
     prefix = "refs/heads/"
     if not base_ref.startswith(prefix) or not base_ref[len(prefix) :]:
-        raise PublishError(409, "Sandbox has an invalid base branch for pull request publishing")
+        raise PublishError(
+            409, "Sandbox has an invalid base branch for pull request publishing"
+        )
     return base_ref[len(prefix) :]
 
 
@@ -891,9 +916,7 @@ def sync_engine_report(
     return EngineSyncReport(
         confirmed_engine=confirmed,
         detected_engine=detected_engine,
-        mismatch=bool(
-            confirmed and detected_engine and detected_engine != confirmed
-        ),
+        mismatch=bool(confirmed and detected_engine and detected_engine != confirmed),
     )
 
 
@@ -1085,7 +1108,9 @@ def confirm_engine(
     try:
         # This is intentionally a fresh lifecycle lease. The create lease was
         # released before the human received the proposal.
-        with lifecycle_lease(controller_store, sandbox_id, "confirm-engine", docker_client=docker_client):
+        with lifecycle_lease(
+            controller_store, sandbox_id, "confirm-engine", docker_client=docker_client
+        ):
             _confirm_engine_snapshot(
                 controller_store,
                 sandbox_id=sandbox_id,
@@ -1094,7 +1119,9 @@ def confirm_engine(
             )
             current = read_manifest(controller_store, sandbox_id)
             if current is None:
-                raise RuntimeError("v1 sandbox manifest disappeared during engine confirmation")
+                raise RuntimeError(
+                    "v1 sandbox manifest disappeared during engine confirmation"
+                )
             transition_sandbox_lifecycle(
                 controller_store,
                 replace(
@@ -1179,7 +1206,9 @@ def resume(
     if sandbox.get("desired_state") != "active":
         raise SandboxConflict("Destroyed sandboxes cannot resume")
     try:
-        with lifecycle_lease(controller_store, sandbox_id, "resume", docker_client=docker_client):
+        with lifecycle_lease(
+            controller_store, sandbox_id, "resume", docker_client=docker_client
+        ):
             manifest = read_manifest(controller_store, sandbox_id)
             project = controller_store.project(str(sandbox["project_id"]))
             if manifest is None or project is None:
@@ -1187,14 +1216,22 @@ def resume(
             # The mirror is shared. Validate it under the project lock, but do
             # not retain that lock while inspecting or repairing the workspace.
             try:
-                with project_mirror_lock(controller_store, str(project["id"]), "resume"):
-                    validate_project_mirror(docker_client, project_id=str(project["id"]))
+                with project_mirror_lock(
+                    controller_store, str(project["id"]), "resume"
+                ):
+                    validate_project_mirror(
+                        docker_client, project_id=str(project["id"])
+                    )
             except ValueError as error:
-                raise RuntimeError(f"unsafe mirror ownership inconsistency: {error}") from error
+                raise RuntimeError(
+                    f"unsafe mirror ownership inconsistency: {error}"
+                ) from error
             try:
                 validate_workspace_import(docker_client, sandbox_id=sandbox_id)
                 if not manifest.feature_branch:
-                    raise RuntimeError("workspace feature branch is missing from the manifest")
+                    raise RuntimeError(
+                        "workspace feature branch is missing from the manifest"
+                    )
                 verify_workspace_identity(
                     docker_client,
                     image=get_preview_settings().git_image,
@@ -1202,7 +1239,9 @@ def resume(
                     feature_branch=manifest.feature_branch,
                 )
             except ValueError as error:
-                raise RuntimeError(f"unsafe workspace ownership inconsistency: {error}") from error
+                raise RuntimeError(
+                    f"unsafe workspace ownership inconsistency: {error}"
+                ) from error
             except WorkspaceMissing:
                 # A missing workspace is safe to recreate.  It has no worktree
                 # to preserve.  We use the immutable original base, never the
@@ -1210,7 +1249,9 @@ def resume(
                 from app.sandboxes.mirror import MirrorPin
 
                 if not manifest.created_base_commit or not manifest.feature_branch:
-                    raise RuntimeError("workspace is missing and the immutable clone identity is absent")
+                    raise RuntimeError(
+                        "workspace is missing and the immutable clone identity is absent"
+                    )
                 controller_store.record_sandbox_resource(
                     sandbox_id, kind="volume", name=workspace_volume(sandbox_id)
                 )
@@ -1290,7 +1331,9 @@ def resume(
             else:
                 database_row = controller_store.sandbox_database(sandbox_id)
                 if database_row is not None and database_row.get("status") == "ready":
-                    sandbox_database_runtime(docker_client, controller_store, sandbox_id)
+                    sandbox_database_runtime(
+                        docker_client, controller_store, sandbox_id
+                    )
                     refreshed = read_manifest(controller_store, sandbox_id) or manifest
                     ready = replace(
                         refreshed,
@@ -1315,7 +1358,9 @@ def resume(
             return sandbox
     except (SandboxAdmissionError, ValueError) as error:
         raise SandboxConflict(
-            lifecycle_conflict_detail(error) if isinstance(error, SandboxAdmissionError) else str(error)
+            lifecycle_conflict_detail(error)
+            if isinstance(error, SandboxAdmissionError)
+            else str(error)
         ) from error
     except RuntimeError as error:
         manifest = read_manifest(controller_store, sandbox_id)
@@ -1380,7 +1425,10 @@ def destroy(
             tombstone = controller_store.write_sandbox_tombstone(
                 sandbox_id,
                 reason="destroyed",
-                manifest={**sandbox, "resources": controller_store.sandbox_resources(sandbox_id)},
+                manifest={
+                    **sandbox,
+                    "resources": controller_store.sandbox_resources(sandbox_id),
+                },
             )
             controller_store.delete_v1_sandbox_manifest(sandbox_id)
     except SandboxAdmissionError as error:
@@ -1413,7 +1461,9 @@ def _sweep_manifest_resources(
     sandbox_id = str(sandbox["id"])
     entries = controller_store.sandbox_resources(sandbox_id)
     workspace = str(sandbox["volume_name"])
-    if not any(entry["kind"] == "volume" and entry["name"] == workspace for entry in entries):
+    if not any(
+        entry["kind"] == "volume" and entry["name"] == workspace for entry in entries
+    ):
         entries.append({"kind": "volume", "name": workspace})
     for entry in entries:
         collection = _docker_collection(docker_client, entry["kind"])
@@ -1464,8 +1514,12 @@ def _confirm_engine_snapshot(
     confirmation: EngineConfirmation,
     detection: dict[str, object],
 ) -> None:
-    proposed_migrate = [str(value) for value in _json_value(detection["migrate_commands_json"], [])]
-    proposed_seed = [str(value) for value in _json_value(detection["seed_commands_json"], [])]
+    proposed_migrate = [
+        str(value) for value in _json_value(detection["migrate_commands_json"], [])
+    ]
+    proposed_seed = [
+        str(value) for value in _json_value(detection["seed_commands_json"], [])
+    ]
     migrate = confirmation.migrate_commands or proposed_migrate
     seed = confirmation.seed_commands or proposed_seed
     if confirmation.engine != NO_DATABASE and not migrate and not seed:
@@ -1476,7 +1530,9 @@ def _confirm_engine_snapshot(
         str(key): str(value)
         for key, value in _json_value(detection["commands_source"], {}).items()
     }
-    required_sources = ({"migrate"} if migrate else set()) | ({"seed"} if seed else set())
+    required_sources = ({"migrate"} if migrate else set()) | (
+        {"seed"} if seed else set()
+    )
     if required_sources.difference(sources):
         raise SandboxValidationError(
             "commands_source must identify the source for every approved command set"

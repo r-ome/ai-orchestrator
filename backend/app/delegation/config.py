@@ -94,7 +94,9 @@ def _catalogue(variable: str, fallback: tuple[str, ...]) -> tuple[str, ...]:
     raw = os.getenv(variable)
     if raw is None:
         return fallback
-    models = tuple(dict.fromkeys(part.strip() for part in raw.split(",") if part.strip()))
+    models = tuple(
+        dict.fromkeys(part.strip() for part in raw.split(",") if part.strip())
+    )
     return models or fallback
 
 

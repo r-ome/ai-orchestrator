@@ -32,9 +32,7 @@ VOLUME = "orchestrator-headless-tests"
 PROVIDER = AgentProvider(os.getenv("HEADLESS_TEST_PROVIDER", "claude"))
 GIT_IMAGE = f"orchestrator-agent-{PROVIDER.value}:latest"
 DEFAULT_MODEL = (
-    "claude-haiku-4-5-20251001"
-    if PROVIDER is AgentProvider.CLAUDE
-    else "gpt-5.6-terra"
+    "claude-haiku-4-5-20251001" if PROVIDER is AgentProvider.CLAUDE else "gpt-5.6-terra"
 )
 MODEL = os.getenv("HEADLESS_TEST_MODEL", DEFAULT_MODEL)
 
@@ -172,7 +170,9 @@ def test_a_headless_turn_commits_verifies_and_accepts(sandbox) -> None:
     print(f"detail:    {response.detail}")
     print(f"model:     {response.model}")
     print(f"cost:      ${response.usage.cost_usd}")
-    print(f"tokens:    in={response.usage.input_tokens} out={response.usage.output_tokens}")
+    print(
+        f"tokens:    in={response.usage.input_tokens} out={response.usage.output_tokens}"
+    )
     print(f"duration:  {response.duration_ms} ms")
     print(f"tools:     {response.tool_calls} ({response.failed_tool_calls} failed)")
     print(f"result:    {response.result}")

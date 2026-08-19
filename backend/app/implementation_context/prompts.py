@@ -112,4 +112,6 @@ def _evidence(inventory: CommandInventory | None) -> str:
 
     if not sections:
         return ""
-    return "\nWhat the controller already established:\n\n" + "\n\n".join(sections) + "\n"
+    return (
+        "\nWhat the controller already established:\n\n" + "\n\n".join(sections) + "\n"
+    )

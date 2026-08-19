@@ -76,10 +76,12 @@ def _seed_database_at_versions(database_path: Path, versions: list[int]) -> None
 def _database_ids(database_path: Path) -> tuple[list[str], list[str]]:
     with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True) as connection:
         project_ids = [
-            str(row[0]) for row in connection.execute("SELECT id FROM projects ORDER BY id")
+            str(row[0])
+            for row in connection.execute("SELECT id FROM projects ORDER BY id")
         ]
         sandbox_ids = [
-            str(row[0]) for row in connection.execute("SELECT id FROM sandboxes ORDER BY id")
+            str(row[0])
+            for row in connection.execute("SELECT id FROM sandboxes ORDER BY id")
         ]
     return project_ids, sandbox_ids
 
@@ -90,7 +92,9 @@ def _assert_database_is_consistent(database_path: Path) -> None:
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
-def _sandbox_column_schema(database_path: Path) -> dict[str, tuple[str, int, str | None]]:
+def _sandbox_column_schema(
+    database_path: Path,
+) -> dict[str, tuple[str, int, str | None]]:
     with sqlite3.connect(database_path) as connection:
         return {
             str(row[1]): (str(row[2]), int(row[3]), row[4])
@@ -291,7 +295,9 @@ def _seed_planning_delegation_tree(
         )
 
 
-def test_planning_sessions_for_project_includes_latest_feature_facts(tmp_path: Path) -> None:
+def test_planning_sessions_for_project_includes_latest_feature_facts(
+    tmp_path: Path,
+) -> None:
     store = _store_with_sandbox(
         tmp_path,
         sandbox_id="sandbox-feature-status",
@@ -308,7 +314,13 @@ def test_planning_sessions_for_project_includes_latest_feature_facts(tmp_path: P
             ) VALUES (?, ?, ?, 'Feature status', 'Plan', 'plan_ready', 'test', 'test',
                       'test', 'default', 1, ?, ?)
             """,
-            ("session-feature-status", "project-feature-status", "sandbox-feature-status", now, now),
+            (
+                "session-feature-status",
+                "project-feature-status",
+                "sandbox-feature-status",
+                now,
+                now,
+            ),
         )
         connection.execute(
             """
@@ -568,7 +580,23 @@ def test_fresh_database_applies_sandbox_migrations(tmp_path: Path) -> None:
 
     store.initialize()
 
-    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+    assert store.applied_versions() == [
+        1,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+    ]
 
 
 def test_migration_21_applies_when_22_and_23_are_already_stamped(
@@ -582,14 +610,33 @@ def test_migration_21_applies_when_22_and_23_are_already_stamped(
 
     store.initialize()
 
-    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+    assert store.applied_versions() == [
+        1,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+    ]
     with store._connection() as connection:
-        assert connection.execute(
-            """
+        assert (
+            connection.execute(
+                """
             SELECT name FROM sqlite_master
             WHERE type = 'table' AND name = 'sandbox_leases'
             """
-        ).fetchone() is not None
+            ).fetchone()
+            is not None
+        )
     schema = _sandbox_column_schema(store.database_path)
     assert {column: schema[column] for column in SANDBOX_LIFECYCLE_COLUMNS} == (
         SANDBOX_LIFECYCLE_COLUMNS
@@ -640,7 +687,12 @@ def test_projects_partial_unique_indexes_allow_nulls_and_reject_duplicates(
                 ("null-source-1", None, None, "2026-08-11T00:00:00+00:00"),
                 ("null-source-2", None, None, "2026-08-11T00:00:00+00:00"),
                 ("source-1", "/projects/one", None, "2026-08-11T00:00:00+00:00"),
-                ("remote-1", None, "https://example.test/one", "2026-08-11T00:00:00+00:00"),
+                (
+                    "remote-1",
+                    None,
+                    "https://example.test/one",
+                    "2026-08-11T00:00:00+00:00",
+                ),
             ],
         )
         with pytest.raises(sqlite3.IntegrityError):
@@ -790,14 +842,17 @@ def test_migration_can_rebuild_parent_table_with_foreign_key_children(
 
     with store._connection() as connection:
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert connection.execute(
-            """
+        assert (
+            connection.execute(
+                """
             SELECT migration_projects.id
             FROM migration_sandboxes
             JOIN migration_projects ON migration_projects.id = migration_sandboxes.project_id
             WHERE migration_sandboxes.id = 'sandbox-1'
             """
-        ).fetchone()[0] == "project-1"
+            ).fetchone()[0]
+            == "project-1"
+        )
 
 
 def test_failed_migration_preserves_earlier_stamps_and_retries_only_failure(
@@ -868,6 +923,7 @@ def test_upgrade_preserves_data_and_reruns_no_applied_migration(
 
     rerun_calls: list[int] = []
     if initial_versions[-1] == 17:
+
         def old_migration(version: int):
             def apply(connection: sqlite3.Connection) -> None:
                 rerun_calls.append(version)
@@ -900,14 +956,17 @@ def test_upgrade_preserves_data_and_reruns_no_applied_migration(
     )
     assert _project_schema(database_path) == PROJECT_COLUMNS
     with sqlite3.connect(database_path) as connection:
-        assert connection.execute(
-            """
+        assert (
+            connection.execute(
+                """
             SELECT s.project_id
             FROM sandboxes AS s
             LEFT JOIN projects AS p ON p.id = s.project_id
             WHERE p.id IS NULL
             """
-        ).fetchall() == []
+            ).fetchall()
+            == []
+        )
     _assert_database_is_consistent(database_path)
 
 
@@ -922,7 +981,9 @@ def test_existing_sandbox_is_backfilled_as_legacy(tmp_path: Path) -> None:
     assert sandbox["lifecycle_status"] is None
 
 
-def test_initialize_is_idempotent_and_legacy_backfill_is_guarded(tmp_path: Path) -> None:
+def test_initialize_is_idempotent_and_legacy_backfill_is_guarded(
+    tmp_path: Path,
+) -> None:
     store = _create_legacy_sandbox_database(tmp_path / "controller.sqlite3")
     store.initialize()
     with store._connection() as connection:
@@ -941,10 +1002,28 @@ def test_initialize_is_idempotent_and_legacy_backfill_is_guarded(tmp_path: Path)
     sandbox = store.sandboxes()[0]
     assert sandbox["lifecycle_version"] == "v1"
     assert sandbox["desired_state"] == "destroyed"
-    assert store.applied_versions() == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+    assert store.applied_versions() == [
+        1,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+    ]
 
 
-def test_projects_rebuild_keeps_sandbox_foreign_key_schema_and_data(tmp_path: Path) -> None:
+def test_projects_rebuild_keeps_sandbox_foreign_key_schema_and_data(
+    tmp_path: Path,
+) -> None:
     store = _create_legacy_sandbox_database(tmp_path / "controller.sqlite3")
 
     store.initialize()
@@ -1027,15 +1106,15 @@ def test_initial_migration_creates_the_current_schema_once(tmp_path: Path) -> No
 
         def columns(table: str) -> set[str]:
             return {
-                str(row[1])
-                for row in connection.execute(f"PRAGMA table_info({table})")
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
             }
 
             assert {
-            "baseline_commit",
-            "dirty_baseline_json",
-            *SANDBOX_LIFECYCLE_COLUMNS,
-        } <= columns("sandboxes")
+                "baseline_commit",
+                "dirty_baseline_json",
+                *SANDBOX_LIFECYCLE_COLUMNS,
+            } <= columns("sandboxes")
+
         assert {"kind", "task_id", "commit_sha"} <= columns("preview_runs")
         assert {"base_branch", "baseline_dirty_json"} <= columns("tasks")
         assert "model" in columns("planning_messages")

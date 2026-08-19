@@ -57,9 +57,7 @@ def test_mysql_engine_builds_the_existing_database_url() -> None:
                 image="mysql:8.4",
             )
         },
-        environment={
-            "DATABASE_URL": PreviewEnvironmentSource(from_service="database")
-        },
+        environment={"DATABASE_URL": PreviewEnvironmentSource(from_service="database")},
     )
 
     environment = MYSQL_DATABASE.connection_url(
@@ -84,7 +82,9 @@ def _config(service_type: PreviewServiceType) -> PreviewConfiguration:
         start_command="npm run start",
         container_port=3000,
         services={
-            "database": PreviewDependencyService(type=service_type, image="database:latest")
+            "database": PreviewDependencyService(
+                type=service_type, image="database:latest"
+            )
         },
         environment={"DATABASE_URL": PreviewEnvironmentSource(from_service="database")},
     )
@@ -258,12 +258,13 @@ def test_server_credentials_use_one_atomic_file_across_concurrent_callers(
     assert all("umask 077" in script for script in docker.write_scripts)
     assert all("mktemp /credentials/" in script for script in docker.write_scripts)
     assert all(
-        'ln "$temporary" "$destination"' in script
-        for script in docker.write_scripts
+        'ln "$temporary" "$destination"' in script for script in docker.write_scripts
     )
 
 
-def test_shared_server_locks_allow_different_projects_to_provision_in_parallel() -> None:
+def test_shared_server_locks_allow_different_projects_to_provision_in_parallel() -> (
+    None
+):
     barrier = threading.Barrier(2)
 
     def provision(server_name: str) -> None:
@@ -390,8 +391,7 @@ def test_sandbox_shared_server_refuses_an_existing_container_with_another_image(
 
     assert error.value.status_code == 409
     assert error.value.detail == (
-        "This project's shared database runs mysql:8.0; "
-        "the sandbox asks for mysql:8.4"
+        "This project's shared database runs mysql:8.0; the sandbox asks for mysql:8.4"
     )
 
 
@@ -419,7 +419,7 @@ def test_postgres_engine_uses_a_root_only_client_on_the_shared_network() -> None
     assert admin_call["network"] == "project-postgres-net"
     assert "psql" in " ".join(admin_call["command"])  # type: ignore[arg-type]
     assert admin_call["environment"] == {
-        "PREVIEW_SQL": 'CREATE ROLE "sbx_aaaaaaaaaaaaaaaa" LOGIN PASSWORD \'app-password\';\n'
+        "PREVIEW_SQL": "CREATE ROLE \"sbx_aaaaaaaaaaaaaaaa\" LOGIN PASSWORD 'app-password';\n"
         'CREATE DATABASE "sbx_aaaaaaaaaaaaaaaa" OWNER "sbx_aaaaaaaaaaaaaaaa";',
         "PREVIEW_HOST": "project-postgres",
         "PGPASSWORD": "root-password",
@@ -438,8 +438,14 @@ def test_postgres_engine_uses_a_root_only_client_on_the_shared_network() -> None
         )
     )
     assert "pg_terminate_backend" in docker.calls[-1]["environment"]["PREVIEW_SQL"]  # type: ignore[index]
-    assert 'DROP DATABASE IF EXISTS "sbx_aaaaaaaaaaaaaaaa"' in docker.calls[-1]["environment"]["PREVIEW_SQL"]  # type: ignore[index]
-    assert 'DROP ROLE IF EXISTS "sbx_aaaaaaaaaaaaaaaa"' in docker.calls[-1]["environment"]["PREVIEW_SQL"]  # type: ignore[index]
+    assert (
+        'DROP DATABASE IF EXISTS "sbx_aaaaaaaaaaaaaaaa"'
+        in docker.calls[-1]["environment"]["PREVIEW_SQL"]
+    )  # type: ignore[index]
+    assert (
+        'DROP ROLE IF EXISTS "sbx_aaaaaaaaaaaaaaaa"'
+        in docker.calls[-1]["environment"]["PREVIEW_SQL"]
+    )  # type: ignore[index]
 
 
 def test_postgres_engine_builds_a_postgres_connection_url() -> None:
@@ -456,7 +462,8 @@ def test_postgres_engine_builds_a_postgres_connection_url() -> None:
 
 
 def test_sqlite_uses_a_sandbox_volume_without_a_server_network_or_credentials(
-    fake_docker_client, monkeypatch: pytest.MonkeyPatch,
+    fake_docker_client,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert isinstance(SQLITE_DATABASE, DatabaseEngine)
     assert SQLITE_DATABASE.supports_template is True
@@ -495,7 +502,9 @@ def test_sqlite_uses_a_sandbox_volume_without_a_server_network_or_credentials(
     assert helper.removed is True
     assert helper.attrs["Config"]["Image"] == "alpine:3.21"
     assert calls[-1]["network_mode"] == "none"
-    assert calls[-1]["volumes"] == {"sbx-aaaaaaaaaaaa-db": {"bind": "/database", "mode": "rw"}}
+    assert calls[-1]["volumes"] == {
+        "sbx-aaaaaaaaaaaa-db": {"bind": "/database", "mode": "rw"}
+    }
 
     SQLITE_DATABASE.drop(
         DatabaseDropRequest(

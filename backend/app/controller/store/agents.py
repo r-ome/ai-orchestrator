@@ -224,7 +224,10 @@ class AgentsMixin:
         if lease is not None:
             raise SandboxWriterAdmissionError(sandbox_id, lease=dict(lease))
         desired_state = sandbox["desired_state"]
-        if lifecycle_status != SandboxLifecycleStatus.READY or desired_state != "active":
+        if (
+            lifecycle_status != SandboxLifecycleStatus.READY
+            or desired_state != "active"
+        ):
             raise SandboxWriterAdmissionError(
                 sandbox_id,
                 lifecycle_status=SandboxLifecycleStatus(str(lifecycle_status)),

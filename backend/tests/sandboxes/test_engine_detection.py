@@ -32,10 +32,16 @@ def test_only_confirmation_normalizes_no_database() -> None:
     ("files", "engine"),
     [
         ({"prisma/schema.prisma": b'datasource db { provider = "mysql" }'}, "mysql"),
-        ({".env.example": b"DATABASE_URL=postgresql://localhost/example\n"}, "postgres"),
+        (
+            {".env.example": b"DATABASE_URL=postgresql://localhost/example\n"},
+            "postgres",
+        ),
         ({"project/settings.py": b"'ENGINE': 'django.db.backends.sqlite3'"}, "sqlite"),
         ({"config/database.yml": b"development:\n  adapter: mysql2\n"}, "mysql"),
-        ({"alembic.ini": b"sqlalchemy.url = postgresql://localhost/example"}, "postgres"),
+        (
+            {"alembic.ini": b"sqlalchemy.url = postgresql://localhost/example"},
+            "postgres",
+        ),
         ({"docker-compose.yml": b"services:\n  db:\n    image: mariadb:11\n"}, "mysql"),
         ({"package.json": b'{"dependencies":{"better-sqlite3":"11"}}'}, "sqlite"),
         ({"requirements.txt": b"PyMySQL==1.1\n"}, "mysql"),
@@ -111,9 +117,7 @@ def test_conflicting_signals_are_all_reported_without_a_proposed_engine() -> Non
 
 
 def test_mysql_dependency_proposes_mysql_without_explicit_signal() -> None:
-    detection = detect_engine(
-        {"package.json": b'{"dependencies":{"mysql2":"3"}}'}
-    )
+    detection = detect_engine({"package.json": b'{"dependencies":{"mysql2":"3"}}'})
 
     assert detection.proposed_engine == "mysql"
     assert {(signal.engine, signal.source) for signal in detection.signals} == {
@@ -166,7 +170,8 @@ def test_untracked_database_file_is_not_reported() -> None:
 
 
 def test_discovery_container_is_read_only_networkless_and_reads_no_project_code(
-    fake_docker_client, monkeypatch: pytest.MonkeyPatch,
+    fake_docker_client,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[dict[str, object]] = []
     create = fake_docker_client.containers.create

@@ -378,18 +378,20 @@ def test_startup_reports_each_unclaimed_sbx_resource_without_removing_it(
     )
     network = docker_client.networks.create("sbx-aaaaaaaaaaaa-network", labels=labels)
 
-    monkeypatch.setattr(
-        "app.startup.docker.from_env", lambda: docker_client
-    )
+    monkeypatch.setattr("app.startup.docker.from_env", lambda: docker_client)
     monkeypatch.setattr(
         store,
         "acquire_sandbox_lease",
-        lambda **_kwargs: pytest.fail("orphan reporting must not acquire a lifecycle lease"),
+        lambda **_kwargs: pytest.fail(
+            "orphan reporting must not acquire a lifecycle lease"
+        ),
     )
     monkeypatch.setattr(
         store,
         "acquire_project_mirror_lock",
-        lambda **_kwargs: pytest.fail("orphan reporting must not acquire a mirror lock"),
+        lambda **_kwargs: pytest.fail(
+            "orphan reporting must not acquire a mirror lock"
+        ),
     )
     counts = reconcile_controller_state(store)
 
@@ -442,9 +444,7 @@ def test_startup_orphan_reporting_skips_manifest_claims_and_shared_infrastructur
         },
     )
 
-    monkeypatch.setattr(
-        "app.startup.docker.from_env", lambda: docker_client
-    )
+    monkeypatch.setattr("app.startup.docker.from_env", lambda: docker_client)
     counts = reconcile_controller_state(store)
 
     assert counts["orphan_resources"] == 0
@@ -494,9 +494,7 @@ def test_startup_orphan_reporting_keeps_partial_findings_after_a_docker_failure(
         name="sbx-cccccccccccc-container", image="test", labels=labels
     )
     docker_client.inject_failure("networks.list", DockerException("unavailable"))
-    monkeypatch.setattr(
-        "app.startup.docker.from_env", lambda: docker_client
-    )
+    monkeypatch.setattr("app.startup.docker.from_env", lambda: docker_client)
 
     counts = reconcile_controller_state(store)
 

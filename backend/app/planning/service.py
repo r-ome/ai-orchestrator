@@ -160,11 +160,9 @@ def list_sessions(
     sessions = [
         _session_model(session)
         for session in controller_store.planning_sessions_for_project(
-            
-                project.source_path.removeprefix("managed:")
-                if project.source_path.startswith("managed:")
-                else project_id(project.source_path)
-            
+            project.source_path.removeprefix("managed:")
+            if project.source_path.startswith("managed:")
+            else project_id(project.source_path)
         )
     ]
     return PlanningSessionsResponse(count=len(sessions), sessions=sessions)
@@ -183,7 +181,11 @@ def _resolve_model(
                 f"'{requested}' is a {owner.value} model and {provider.value} cannot run it.",
             )
         return requested
-    return settings.claude_model if provider is AgentProvider.CLAUDE else settings.codex_model
+    return (
+        settings.claude_model
+        if provider is AgentProvider.CLAUDE
+        else settings.codex_model
+    )
 
 
 def _resolve_reviewer_reasoning_effort(
@@ -213,15 +215,22 @@ def get_session(
     session_id: str,
 ) -> PlanningSessionDetail:
     session = _session_for_project(controller_store, project_name, session_id)
-    session_with_feature_facts = controller_store.planning_session_with_feature_facts(session_id)
+    session_with_feature_facts = controller_store.planning_session_with_feature_facts(
+        session_id
+    )
     if session_with_feature_facts is not None:
         session = session_with_feature_facts
-    messages = [_message_model(row) for row in controller_store.planning_messages(session_id)]
+    messages = [
+        _message_model(row) for row in controller_store.planning_messages(session_id)
+    ]
     return PlanningSessionDetail(
         **_session_data(session),
         feature_brief=str(session["feature_brief"]),
         messages=messages,
-        findings=[PlanningFinding(**_finding_data(row)) for row in controller_store.planning_findings(session_id)],
+        findings=[
+            PlanningFinding(**_finding_data(row))
+            for row in controller_store.planning_findings(session_id)
+        ],
         plan_spec=_json_value(session.get("plan_spec_json")),
     )
 
@@ -259,14 +268,18 @@ def post_message(
     session = _session_for_project(controller_store, project_name, session_id)
     _reject_terminal(session)
     if session["turn_state"] == "running":
-        raise PlanningOperationError(409, "A planning turn is already running for this session")
+        raise PlanningOperationError(
+            409, "A planning turn is already running for this session"
+        )
     if session["status"] == PlanningStatus.AWAITING_CONFIRMATION.value:
         raise PlanningOperationError(
             409,
             "This session awaits confirmation. Use confirm, correct, or proceed instead.",
         )
     if session["status"] != PlanningStatus.CLARIFYING.value:
-        raise PlanningOperationError(409, "This session is no longer accepting clarifications")
+        raise PlanningOperationError(
+            409, "This session is no longer accepting clarifications"
+        )
     controller_store.append_planning_message(
         session_id=session_id,
         role=PlanningRole.USER.value,
@@ -285,7 +298,9 @@ def confirm_understanding(
     session = _session_for_project(controller_store, project_name, session_id)
     _reject_terminal(session)
     if session["turn_state"] == "running":
-        raise PlanningOperationError(409, "A planning turn is already running for this session")
+        raise PlanningOperationError(
+            409, "A planning turn is already running for this session"
+        )
     if session["status"] != PlanningStatus.AWAITING_CONFIRMATION.value:
         raise PlanningOperationError(409, "This session is not awaiting confirmation")
     _freeze_and_start_planning(controller_store, settings, session, confirmed=True)
@@ -302,7 +317,9 @@ def correct_understanding(
     session = _session_for_project(controller_store, project_name, session_id)
     _reject_terminal(session)
     if session["turn_state"] == "running":
-        raise PlanningOperationError(409, "A planning turn is already running for this session")
+        raise PlanningOperationError(
+            409, "A planning turn is already running for this session"
+        )
     if session["status"] != PlanningStatus.AWAITING_CONFIRMATION.value:
         raise PlanningOperationError(409, "This session is not awaiting confirmation")
     controller_store.append_planning_message(
@@ -328,7 +345,9 @@ def proceed_without_confirmation(
     session = _session_for_project(controller_store, project_name, session_id)
     _reject_terminal(session)
     if session["turn_state"] == "running":
-        raise PlanningOperationError(409, "A planning turn is already running for this session")
+        raise PlanningOperationError(
+            409, "A planning turn is already running for this session"
+        )
     if session["status"] not in {
         PlanningStatus.CLARIFYING.value,
         PlanningStatus.AWAITING_CONFIRMATION.value,
@@ -400,13 +419,24 @@ async def _run_turn(
         session = _required_session(controller_store, session_id)
         if _is_terminal(session):
             return
-        if kind is TurnKind.CLARIFIER and session["status"] != PlanningStatus.CLARIFYING.value:
+        if (
+            kind is TurnKind.CLARIFIER
+            and session["status"] != PlanningStatus.CLARIFYING.value
+        ):
             return
-        if kind is TurnKind.PLANNER and session["status"] != PlanningStatus.PLANNING.value:
+        if (
+            kind is TurnKind.PLANNER
+            and session["status"] != PlanningStatus.PLANNING.value
+        ):
             return
-        if kind is TurnKind.REVIEWER and session["status"] != PlanningStatus.UNDER_REVIEW.value:
+        if (
+            kind is TurnKind.REVIEWER
+            and session["status"] != PlanningStatus.UNDER_REVIEW.value
+        ):
             return
-        result = await _run_turn_with_retries(controller_store, settings, session_id, kind)
+        result = await _run_turn_with_retries(
+            controller_store, settings, session_id, kind
+        )
         if result is None:
             return
 
@@ -462,7 +492,9 @@ async def _run_turn_with_retries(
 
             session = _required_session(controller_store, session_id)
             if _is_terminal(session):
-                _append_raw_system_message(controller_store, session_id, error.raw_output)
+                _append_raw_system_message(
+                    controller_store, session_id, error.raw_output
+                )
                 return None
             delay = settings.turn_retry_backoff_seconds * 2 ** (attempt - 1)
             _append_raw_system_message(
@@ -534,15 +566,17 @@ def _run_clarifier_turn(
     )
     client = _turn_client()
     try:
-        return _accepted(run_validated_turn(
-            lambda prompt: run_planning_turn(
-                client,
-                _turn_settings(settings, session, PlanningRole.CLARIFIER),
-                replace(request, prompt=prompt),
-            ),
-            prompt=request.prompt,
-            validate=_validate_clarifier_payload,
-        ))
+        return _accepted(
+            run_validated_turn(
+                lambda prompt: run_planning_turn(
+                    client,
+                    _turn_settings(settings, session, PlanningRole.CLARIFIER),
+                    replace(request, prompt=prompt),
+                ),
+                prompt=request.prompt,
+                validate=_validate_clarifier_payload,
+            )
+        )
     finally:
         client.close()
 
@@ -606,15 +640,17 @@ def _run_planner_turn(
     )
     client = _turn_client()
     try:
-        return _accepted(run_validated_turn(
-            lambda prompt: run_planning_turn(
-                client,
-                _turn_settings(settings, session, PlanningRole.PLANNER),
-                replace(request, prompt=prompt),
-            ),
-            prompt=request.prompt,
-            validate=_planner_validator({str(finding["id"]) for finding in ledger}),
-        ))
+        return _accepted(
+            run_validated_turn(
+                lambda prompt: run_planning_turn(
+                    client,
+                    _turn_settings(settings, session, PlanningRole.PLANNER),
+                    replace(request, prompt=prompt),
+                ),
+                prompt=request.prompt,
+                validate=_planner_validator({str(finding["id"]) for finding in ledger}),
+            )
+        )
     finally:
         client.close()
 
@@ -628,7 +664,9 @@ def _run_reviewer_turn(
     sandbox = controller_store.sandbox(str(session["sandbox_id"]))
     if sandbox is None:
         raise PlanningTurnError(500, "reviewer turn has no registered sandbox")
-    revision = _current_revision(controller_store, session_id, int(session["plan_revision"]))
+    revision = _current_revision(
+        controller_store, session_id, int(session["plan_revision"])
+    )
     plan = _json_value(revision["plan_json"])
     if not isinstance(plan, dict):
         raise PlanningTurnError(500, "stored plan revision has invalid JSON")
@@ -645,15 +683,17 @@ def _run_reviewer_turn(
     )
     client = _turn_client()
     try:
-        return _accepted(run_validated_turn(
-            lambda prompt: run_planning_turn(
-                client,
-                _turn_settings(settings, session, PlanningRole.REVIEWER),
-                replace(request, prompt=prompt),
-            ),
-            prompt=request.prompt,
-            validate=_validate_reviewer_payload,
-        ))
+        return _accepted(
+            run_validated_turn(
+                lambda prompt: run_planning_turn(
+                    client,
+                    _turn_settings(settings, session, PlanningRole.REVIEWER),
+                    replace(request, prompt=prompt),
+                ),
+                prompt=request.prompt,
+                validate=_validate_reviewer_payload,
+            )
+        )
     finally:
         client.close()
 
@@ -761,7 +801,9 @@ def _apply_reviewer_result(
             status=FindingStatus.OPEN.value,
             round_number=round_number,
         )
-    controller_store.resolve_unseen_findings(session_id=session_id, round_number=round_number)
+    controller_store.resolve_unseen_findings(
+        session_id=session_id, round_number=round_number
+    )
     persisted_round_findings = [
         finding
         for finding in controller_store.planning_findings(session_id)
@@ -860,7 +902,9 @@ def _freeze_and_start_planning(
     confirmed: bool,
 ) -> None:
     messages = controller_store.planning_messages(str(session["id"]))
-    request = next((message["text"] for message in messages if message["role"] == "user"), "")
+    request = next(
+        (message["text"] for message in messages if message["role"] == "user"), ""
+    )
     brief = feature_brief(
         title=str(session["title"]),
         request=str(request),
@@ -889,7 +933,9 @@ def _validate_clarifier_payload(payload: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     if not isinstance(message, str):
         errors.append("clarifier message must be a string")
-    if not isinstance(questions, list) or not all(isinstance(item, str) for item in questions):
+    if not isinstance(questions, list) or not all(
+        isinstance(item, str) for item in questions
+    ):
         errors.append("clarifier questions must be a list of strings")
     if not isinstance(ready, bool):
         errors.append("clarifier ready_to_summarize must be a boolean")
@@ -963,7 +1009,9 @@ def _validate_planner_payload(payload: dict[str, Any]) -> list[str]:
     ):
         errors.append("planner risks must be a list of valid risks")
     questions = payload.get("open_questions")
-    if not isinstance(questions, list) or not all(isinstance(item, str) for item in questions):
+    if not isinstance(questions, list) or not all(
+        isinstance(item, str) for item in questions
+    ):
         errors.append("planner open_questions must be a list of strings")
     # Absent is legal: the round-one schema omits the field, because there is no
     # ledger to respond to yet.
@@ -989,7 +1037,8 @@ def _validate_planner_payload(payload: dict[str, Any]) -> list[str]:
     ):
         errors.append("planner risks must be a list of valid risks")
     if any(
-        item["status"] not in {FindingStatus.ANSWERED.value, FindingStatus.REJECTED.value}
+        item["status"]
+        not in {FindingStatus.ANSWERED.value, FindingStatus.REJECTED.value}
         for item in responses
     ):
         errors.append("planner finding_responses must be valid responses")
@@ -1113,11 +1162,15 @@ def build_plan_spec(
     confirmed = bool(session["confirmed"])
     if not confirmed:
         scope = "The human chose to proceed without confirming a summary. " + scope
-    outstanding = [] if approved else [
-        _finding_data(finding)
-        for finding in findings
-        if finding["status"] != FindingStatus.RESOLVED.value
-    ]
+    outstanding = (
+        []
+        if approved
+        else [
+            _finding_data(finding)
+            for finding in findings
+            if finding["status"] != FindingStatus.RESOLVED.value
+        ]
+    )
     return PlanSpec(
         title=str(session["title"]),
         scope=scope,
@@ -1166,7 +1219,9 @@ def _session_for_project(
     return session
 
 
-def _required_session(controller_store: ControllerStore, session_id: str) -> dict[str, Any]:
+def _required_session(
+    controller_store: ControllerStore, session_id: str
+) -> dict[str, Any]:
     session = controller_store.planning_session(session_id)
     if session is None:
         raise PlanningOperationError(404, "Planning session not found")

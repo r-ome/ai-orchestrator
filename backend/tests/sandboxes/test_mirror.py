@@ -68,7 +68,10 @@ def test_same_named_mirror_with_wrong_labels_is_refused(
     fake_docker_client.volumes.create(
         name=mirror_volume(PROJECT_ID), driver="local", labels={}
     )
-    monkeypatch.setattr("app.sandboxes.mirror.ensure_canonical_mirror", lambda *_a, **_k: ("main", "c" * 40))
+    monkeypatch.setattr(
+        "app.sandboxes.mirror.ensure_canonical_mirror",
+        lambda *_a, **_k: ("main", "c" * 40),
+    )
 
     with pytest.raises(ValueError, match="ownership"):
         ensure_project_mirror(
@@ -138,7 +141,9 @@ def test_workspace_name_with_wrong_ownership_is_not_adopted(
         driver="local",
         labels=ownership_labels(sandbox_id="wrong", project_id=PROJECT_ID),
     )
-    monkeypatch.setattr("app.sandboxes.mirror.clone_mirror_to_workspace", lambda *_a, **_k: b"")
+    monkeypatch.setattr(
+        "app.sandboxes.mirror.clone_mirror_to_workspace", lambda *_a, **_k: b""
+    )
     mirror = MirrorPin(mirror_volume(PROJECT_ID), "main", "c" * 40)
 
     with pytest.raises(ValueError, match="ownership"):
@@ -166,30 +171,38 @@ def test_workspace_import_has_no_network_remote_hooks_or_shared_objects(
 
     try:
         network = client.networks.create(name=f"orchestrator-phase4-net-{run_id}")
-        remote_volume = client.volumes.create(name=f"orchestrator-phase4-remote-{run_id}")
+        remote_volume = client.volumes.create(
+            name=f"orchestrator-phase4-remote-{run_id}"
+        )
         mirror = client.volumes.create(name=f"orchestrator-phase4-mirror-{run_id}")
-        workspace = client.volumes.create(name=f"orchestrator-phase4-workspace-{run_id}")
-        base_commit = client.containers.run(
-            "alpine/git:latest",
-            entrypoint=["sh", "-c"],
-            command=[
-                "set -eu\n"
-                "git init --bare -q /remote/repository.git\n"
-                "git init -q -b main /tmp/seed\n"
-                "git -C /tmp/seed config user.name test\n"
-                "git -C /tmp/seed config user.email test@example.invalid\n"
-                "printf source > /tmp/seed/source.txt\n"
-                "git -C /tmp/seed add source.txt\n"
-                "git -C /tmp/seed commit -qm source\n"
-                "git -C /tmp/seed remote add origin /remote/repository.git\n"
-                "git -C /tmp/seed push -q origin main\n"
-                "git -C /remote/repository.git symbolic-ref HEAD refs/heads/main\n"
-                "git -C /remote/repository.git rev-parse refs/heads/main\n"
-            ],
-            remove=True,
-            volumes={remote_volume.name: {"bind": "/remote", "mode": "rw"}},
-            tmpfs={"/git": "rw,nosuid,size=1m"},
-        ).decode().strip()
+        workspace = client.volumes.create(
+            name=f"orchestrator-phase4-workspace-{run_id}"
+        )
+        base_commit = (
+            client.containers.run(
+                "alpine/git:latest",
+                entrypoint=["sh", "-c"],
+                command=[
+                    "set -eu\n"
+                    "git init --bare -q /remote/repository.git\n"
+                    "git init -q -b main /tmp/seed\n"
+                    "git -C /tmp/seed config user.name test\n"
+                    "git -C /tmp/seed config user.email test@example.invalid\n"
+                    "printf source > /tmp/seed/source.txt\n"
+                    "git -C /tmp/seed add source.txt\n"
+                    "git -C /tmp/seed commit -qm source\n"
+                    "git -C /tmp/seed remote add origin /remote/repository.git\n"
+                    "git -C /tmp/seed push -q origin main\n"
+                    "git -C /remote/repository.git symbolic-ref HEAD refs/heads/main\n"
+                    "git -C /remote/repository.git rev-parse refs/heads/main\n"
+                ],
+                remove=True,
+                volumes={remote_volume.name: {"bind": "/remote", "mode": "rw"}},
+                tmpfs={"/git": "rw,nosuid,size=1m"},
+            )
+            .decode()
+            .strip()
+        )
         daemon = client.containers.run(
             "alpine/git:latest",
             entrypoint=["sh", "-c"],
@@ -214,7 +227,9 @@ def test_workspace_import_has_no_network_remote_hooks_or_shared_objects(
             probe = client.containers.run(
                 "alpine/git:latest",
                 entrypoint=["sh", "-c"],
-                command=[f"git ls-remote {remote_url} >/dev/null 2>&1 && echo ready || echo waiting"],
+                command=[
+                    f"git ls-remote {remote_url} >/dev/null 2>&1 && echo ready || echo waiting"
+                ],
                 remove=True,
                 tmpfs={"/git": "rw,nosuid,size=1m"},
             )
@@ -249,8 +264,8 @@ def test_workspace_import_has_no_network_remote_hooks_or_shared_objects(
             entrypoint=["sh", "-c"],
             command=[
                 "set -eu\n"
-                f"test \"$(git -C /mirror rev-parse refs/heads/main)\" = {commit}\n"
-                "test \"$(git -C /mirror symbolic-ref HEAD)\" = refs/heads/main\n"
+                f'test "$(git -C /mirror rev-parse refs/heads/main)" = {commit}\n'
+                'test "$(git -C /mirror symbolic-ref HEAD)" = refs/heads/main\n'
                 "test \"$(git -C /mirror config --get-all remote.origin.fetch)\" = '+refs/*:refs/*'\n"
                 # remote.origin.mirror conflicts with the single-ref publish push.
                 "! git -C /mirror config --get remote.origin.mirror\n"
@@ -277,9 +292,9 @@ def test_workspace_import_has_no_network_remote_hooks_or_shared_objects(
             entrypoint=["sh", "-c"],
             command=[
                 "set -eu\n"
-                "test -z \"$(git -C /workspace remote)\"\n"
-                "test -z \"$(find /workspace/.git/hooks -mindepth 1 -print -quit)\"\n"
-                f"test \"$(git -C /workspace rev-parse HEAD)\" = {commit}\n"
+                'test -z "$(git -C /workspace remote)"\n'
+                'test -z "$(find /workspace/.git/hooks -mindepth 1 -print -quit)"\n'
+                f'test "$(git -C /workspace rev-parse HEAD)" = {commit}\n'
                 # The real proof that --no-local was used. `git clone --local`
                 # hardlinks the source object and pack files, so those entries
                 # would report a link count of 2. --no-local copies them over the

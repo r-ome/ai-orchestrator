@@ -66,7 +66,10 @@ def describe_git_failure(error: Exception) -> str:
         if not lines:
             return f"Git failed with exit status {_container_error_exit_status(error)}"
         lowered_output = output.lower()
-        if "denied to" in lowered_output or "the requested url returned error: 403" in lowered_output:
+        if (
+            "denied to" in lowered_output
+            or "the requested url returned error: 403" in lowered_output
+        ):
             repository = _github_repository_from_stderr(output)
             target = f" for {repository}" if repository else ""
             # Quote what GitHub actually said. A 403 is usually a missing scope,
@@ -120,7 +123,7 @@ def _github_repository_from_stderr(stderr: str) -> str | None:
 
 _GITHUB_READ_CREDENTIAL_HELPER = (
     "!f() { "
-    f'if [ ! -f {GITHUB_READ_TOKEN_PATH} ] || [ ! -s {GITHUB_READ_TOKEN_PATH} ]; then '
+    f"if [ ! -f {GITHUB_READ_TOKEN_PATH} ] || [ ! -s {GITHUB_READ_TOKEN_PATH} ]; then "
     f'echo "GitHub read credential mount failed: expected a non-empty regular file at {GITHUB_READ_TOKEN_PATH}" >&2; '
     "exit 1; "
     "fi; "
@@ -138,7 +141,7 @@ _CREDENTIAL_ENVIRONMENT = {
 }
 _GITHUB_WRITE_CREDENTIAL_HELPER = (
     "!f() { "
-    f'if [ ! -f {GITHUB_WRITE_TOKEN_PATH} ] || [ ! -s {GITHUB_WRITE_TOKEN_PATH} ]; then '
+    f"if [ ! -f {GITHUB_WRITE_TOKEN_PATH} ] || [ ! -s {GITHUB_WRITE_TOKEN_PATH} ]; then "
     f'echo "GitHub write credential mount failed: expected a non-empty regular file at {GITHUB_WRITE_TOKEN_PATH}" >&2; '
     "exit 1; "
     "fi; "
@@ -178,99 +181,94 @@ _CANONICAL_FETCH_SCRIPT = (
 _MIRROR_STALENESS_SCRIPT = (
     "set -eu\n"
     "git -C /mirror rev-list --count "
-    "\"$ORCHESTRATOR_CURRENT_BASE_COMMIT..$ORCHESTRATOR_BASE_REF\"\n"
+    '"$ORCHESTRATOR_CURRENT_BASE_COMMIT..$ORCHESTRATOR_BASE_REF"\n'
 )
-_WORKSPACE_CLEAN_SCRIPT = (
-    "set -eu\n"
-    "test -z \"$(git -C /workspace status --porcelain)\"\n"
-)
+_WORKSPACE_CLEAN_SCRIPT = 'set -eu\ntest -z "$(git -C /workspace status --porcelain)"\n'
 _CREATE_SAFETY_REF_SCRIPT = (
-    "set -eu\n"
-    "git -C /workspace update-ref \"$ORCHESTRATOR_SAFETY_REF\" HEAD\n"
+    'set -eu\ngit -C /workspace update-ref "$ORCHESTRATOR_SAFETY_REF" HEAD\n'
 )
 _MIRROR_BASE_COMMIT_SCRIPT = (
-    "set -eu\n"
-    "git -C /mirror rev-parse \"$ORCHESTRATOR_BASE_REF\"\n"
+    'set -eu\ngit -C /mirror rev-parse "$ORCHESTRATOR_BASE_REF"\n'
 )
 _SYNC_WORKSPACE_SCRIPT = (
     "set -eu\n"
     "git -C /workspace fetch --no-tags /mirror "
-    "\"$ORCHESTRATOR_BASE_REF:$ORCHESTRATOR_BASE_REF\"\n"
-    "test \"$(git -C /workspace rev-parse \"$ORCHESTRATOR_BASE_REF\")\" = "
-    "\"$ORCHESTRATOR_PENDING_BASE_COMMIT\"\n"
-    "if [ \"$ORCHESTRATOR_SYNC_STRATEGY\" = rebase ]; then\n"
-    "  git -C /workspace rebase \"$ORCHESTRATOR_BASE_REF\"\n"
+    '"$ORCHESTRATOR_BASE_REF:$ORCHESTRATOR_BASE_REF"\n'
+    'test "$(git -C /workspace rev-parse "$ORCHESTRATOR_BASE_REF")" = '
+    '"$ORCHESTRATOR_PENDING_BASE_COMMIT"\n'
+    'if [ "$ORCHESTRATOR_SYNC_STRATEGY" = rebase ]; then\n'
+    '  git -C /workspace rebase "$ORCHESTRATOR_BASE_REF"\n'
     "else\n"
-    "  git -C /workspace merge --no-edit \"$ORCHESTRATOR_BASE_REF\"\n"
+    '  git -C /workspace merge --no-edit "$ORCHESTRATOR_BASE_REF"\n'
     "fi\n"
 )
 _RESTORE_SAFETY_REF_SCRIPT = (
     "set -eu\n"
     "git -C /workspace rebase --abort >/dev/null 2>&1 || true\n"
     "git -C /workspace merge --abort >/dev/null 2>&1 || true\n"
-    "git -C /workspace reset --hard \"$ORCHESTRATOR_SAFETY_REF\"\n"
+    'git -C /workspace reset --hard "$ORCHESTRATOR_SAFETY_REF"\n'
 )
 _CANONICAL_MIRROR_SCRIPT = (
     "set -eu\n"
     "if [ ! -f /mirror/HEAD ]; then\n"
-    "  git clone --mirror -q \"$ORCHESTRATOR_MIRROR_REMOTE\" /mirror\n"
+    '  git clone --mirror -q "$ORCHESTRATOR_MIRROR_REMOTE" /mirror\n'
     "  git -C /mirror config --unset-all remote.origin.mirror || true\n"
     "else\n"
     "  git -C /mirror rev-parse --is-bare-repository | grep -qx true\n"
-    "  test \"$(git -C /mirror remote get-url origin)\" = \"$ORCHESTRATOR_MIRROR_REMOTE\"\n"
+    '  test "$(git -C /mirror remote get-url origin)" = "$ORCHESTRATOR_MIRROR_REMOTE"\n'
     "  git -C /mirror config --replace-all remote.origin.fetch '+refs/*:refs/*'\n"
     "  git -C /mirror config --unset-all remote.origin.mirror || true\n"
     "  git -C /mirror fetch --prune origin\n"
     "  default_ref=$(git -C /mirror ls-remote --symref origin HEAD "
-    "| awk '$1 == \"ref:\" && $3 == \"HEAD\" { print $2; exit }')\n"
-    "  test -n \"$default_ref\"\n"
-    "  git -C /mirror symbolic-ref HEAD \"$default_ref\"\n"
+    '| awk \'$1 == "ref:" && $3 == "HEAD" { print $2; exit }\')\n'
+    '  test -n "$default_ref"\n'
+    '  git -C /mirror symbolic-ref HEAD "$default_ref"\n'
     "fi\n"
     "branch=$(git -C /mirror symbolic-ref --quiet --short HEAD)\n"
-    "commit=$(git -C /mirror rev-parse \"refs/heads/$branch\")\n"
-    "printf '%s\\n%s\\n' \"$branch\" \"$commit\"\n"
+    'commit=$(git -C /mirror rev-parse "refs/heads/$branch")\n'
+    'printf \'%s\\n%s\\n\' "$branch" "$commit"\n'
 )
 _CLONE_SANDBOX_SCRIPT = (
     "set -eu\n"
     "git clone --no-local /mirror /workspace\n"
     "cd /workspace\n"
-    "for remote in $(git remote); do git remote remove \"$remote\"; done\n"
-    "test -z \"$(git remote)\"\n"
+    'for remote in $(git remote); do git remote remove "$remote"; done\n'
+    'test -z "$(git remote)"\n'
     "mkdir -p .git/hooks\n"
     "find .git/hooks -mindepth 1 -maxdepth 1 -exec rm -rf {} +\n"
-    "test -z \"$(find .git/hooks -mindepth 1 -print -quit)\"\n"
+    'test -z "$(find .git/hooks -mindepth 1 -print -quit)"\n'
     "mkdir -p .git/info\n"
     "touch .git/info/exclude\n"
     "for scaffold in .agent .claude .orchestrator; do\n"
-    "  if ! grep -qxF \"/$scaffold/\" .git/info/exclude; then\n"
+    '  if ! grep -qxF "/$scaffold/" .git/info/exclude; then\n'
     "    printf '/%s/\\n' \"$scaffold\" >> .git/info/exclude\n"
     "  fi\n"
     "done\n"
-    "git checkout -q -B \"$ORCHESTRATOR_FEATURE_BRANCH\" \"$ORCHESTRATOR_BASE_COMMIT\"\n"
-    "test -z \"$(git remote)\"\n"
+    'git checkout -q -B "$ORCHESTRATOR_FEATURE_BRANCH" "$ORCHESTRATOR_BASE_COMMIT"\n'
+    'test -z "$(git remote)"\n'
 )
 _PUSH_WORKSPACE_TO_MIRROR_SCRIPT = (
     "set -eu\n"
-    "test -z \"$(git -C /workspace remote)\"\n"
-    "test \"$(git -C /workspace branch --show-current)\" = \"$ORCHESTRATOR_FEATURE_BRANCH\"\n"
-    "test \"$(git -C /workspace rev-parse HEAD)\" = \"$ORCHESTRATOR_REVIEWED_HEAD\"\n"
-    "git -C /workspace push /mirror \"HEAD:refs/heads/$ORCHESTRATOR_REMOTE_BRANCH\"\n"
-    "git -C /mirror rev-parse \"refs/heads/$ORCHESTRATOR_REMOTE_BRANCH\"\n"
+    'test -z "$(git -C /workspace remote)"\n'
+    'test "$(git -C /workspace branch --show-current)" = "$ORCHESTRATOR_FEATURE_BRANCH"\n'
+    'test "$(git -C /workspace rev-parse HEAD)" = "$ORCHESTRATOR_REVIEWED_HEAD"\n'
+    'git -C /workspace push /mirror "HEAD:refs/heads/$ORCHESTRATOR_REMOTE_BRANCH"\n'
+    'git -C /mirror rev-parse "refs/heads/$ORCHESTRATOR_REMOTE_BRANCH"\n'
 )
 _REMOTE_BRANCH_SHA_SCRIPT = (
     "set -eu\n"
-    "git -C /mirror ls-remote origin \"refs/heads/$ORCHESTRATOR_REMOTE_BRANCH\" "
+    'git -C /mirror ls-remote origin "refs/heads/$ORCHESTRATOR_REMOTE_BRANCH" '
     "| awk 'NR == 1 { print $1 }'\n"
 )
 _PUSH_MIRROR_TO_REMOTE_SCRIPT = (
     "set -eu\n"
     "git -C /mirror push origin "
-    "\"refs/heads/$ORCHESTRATOR_REMOTE_BRANCH:refs/heads/$ORCHESTRATOR_REMOTE_BRANCH\"\n"
+    '"refs/heads/$ORCHESTRATOR_REMOTE_BRANCH:refs/heads/$ORCHESTRATOR_REMOTE_BRANCH"\n'
 )
 _PUSH_MIRROR_TO_REMOTE_FORCE_WITH_LEASE_SCRIPT = (
     "set -eu\n"
     "git -C /mirror push --force-with-lease origin "
-    "\"refs/heads/$ORCHESTRATOR_REMOTE_BRANCH:refs/heads/$ORCHESTRATOR_REMOTE_BRANCH\"\n"
+    '"refs/heads/$ORCHESTRATOR_REMOTE_BRANCH:refs/heads/$ORCHESTRATOR_REMOTE_BRANCH"\n'
 )
 
 
@@ -430,7 +428,9 @@ def run_git(
         )
     else:
         secret_directory = get_controller_settings().git_secret_directory
-        with provision_git_read_token(credential_source, secret_directory) as secret_path:
+        with provision_git_read_token(
+            credential_source, secret_directory
+        ) as secret_path:
             resolved_environment.update(_CREDENTIAL_ENVIRONMENT)
             credential_volumes = dict(volumes)
             credential_volumes[str(secret_path)] = {
@@ -541,7 +541,9 @@ def count_mirror_staleness(
     )
     result = output.decode().strip()
     if not result.isdigit():
-        raise RuntimeError(f"mirror staleness command returned invalid count: {result!r}")
+        raise RuntimeError(
+            f"mirror staleness command returned invalid count: {result!r}"
+        )
     return int(result)
 
 
@@ -599,7 +601,9 @@ def mirror_base_commit(
         ensure_image=ensure_image,
     )
     commit = output.decode().strip()
-    if len(commit) != 40 or any(character not in "0123456789abcdef" for character in commit.lower()):
+    if len(commit) != 40 or any(
+        character not in "0123456789abcdef" for character in commit.lower()
+    ):
         raise RuntimeError(f"mirror base ref did not resolve to a commit: {commit!r}")
     return commit
 
@@ -681,7 +685,9 @@ def ensure_canonical_mirror(
     )
     lines = output.decode().strip().splitlines()
     if len(lines) < 2 or not lines[-2] or not lines[-1]:
-        raise RuntimeError("canonical mirror did not report a default branch and commit")
+        raise RuntimeError(
+            "canonical mirror did not report a default branch and commit"
+        )
     return lines[-2], lines[-1]
 
 
@@ -822,7 +828,9 @@ def push_mirror_to_remote(
 
 def _commit_from_output(output: bytes, operation: str) -> str:
     commit = output.decode().strip().splitlines()[-1] if output.strip() else ""
-    if len(commit) != 40 or any(character not in "0123456789abcdef" for character in commit.lower()):
+    if len(commit) != 40 or any(
+        character not in "0123456789abcdef" for character in commit.lower()
+    ):
         raise RuntimeError(f"{operation} did not report a commit: {commit!r}")
     return commit
 

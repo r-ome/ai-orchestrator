@@ -85,7 +85,9 @@ def test_task_archive_preview_mounts_the_same_sandbox_sqlite_database(
     store.initialize()
     sandbox_id = "a" * 32
     project_id = "b" * 32
-    _managed_database(store, fake_docker_client, sandbox_id=sandbox_id, project_id=project_id)
+    _managed_database(
+        store, fake_docker_client, sandbox_id=sandbox_id, project_id=project_id
+    )
     calls: list[dict[str, object]] = []
     exports: list[tuple[str, str, str]] = []
     create = fake_docker_client.containers.create
@@ -106,7 +108,9 @@ def test_task_archive_preview_mounts_the_same_sandbox_sqlite_database(
     monkeypatch.setattr(fake_docker_client.containers, "create", capture)
     monkeypatch.setattr(preview_native, "_ensure_preview_image", lambda *_args: None)
     monkeypatch.setattr(preview_native, "_environment_masks", lambda *_args: [])
-    monkeypatch.setattr(preview_native, "_wait_for_container_health", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        preview_native, "_wait_for_container_health", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(preview_native, "_network", run_network)
     monkeypatch.setattr(
         preview_native,
@@ -145,11 +149,11 @@ def test_task_archive_preview_mounts_the_same_sandbox_sqlite_database(
         commit_sha="d" * 40,
     )
 
-    application = next(call for call in calls if str(call.get("name", "")).endswith("-app"))
+    application = next(
+        call for call in calls if str(call.get("name", "")).endswith("-app")
+    )
     runtime_workspace = f"orchestrator-preview-{run_id[:12]}-runtime-workspace"
-    assert exports == [
-        (workspace_volume(sandbox_id), runtime_workspace, "d" * 40)
-    ]
+    assert exports == [(workspace_volume(sandbox_id), runtime_workspace, "d" * 40)]
     assert application["environment"]["DATABASE_URL"] == (
         "file:/var/lib/orchestrator/sqlite/database.sqlite3"
     )
@@ -205,7 +209,9 @@ def test_server_preview_borrows_and_disconnects_the_persistent_sandbox_network(
     monkeypatch.setattr(preview_native, "_ensure_preview_image", lambda *_args: None)
     monkeypatch.setattr(preview_native, "_environment_masks", lambda *_args: [])
     monkeypatch.setattr(preview_native, "_exclude_preview_masks", lambda *_args: None)
-    monkeypatch.setattr(preview_native, "_wait_for_container_health", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        preview_native, "_wait_for_container_health", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(preview_native, "_network", run_network)
     settings = PreviewSettings(
         inspection_image="alpine:latest",
@@ -237,12 +243,19 @@ def test_server_preview_borrows_and_disconnects_the_persistent_sandbox_network(
 
     sandbox_network = fake_docker_client.networks.get(network(sandbox_id))
     application = next(
-        resource for resource in resources["containers"] if resource.name.endswith("-app")
+        resource
+        for resource in resources["containers"]
+        if resource.name.endswith("-app")
     )
-    assert application in [container for container, _kwargs in sandbox_network.connections]
-    assert "DATABASE_URL" in next(
-        call for call in calls if str(call.get("name", "")).endswith("-app")
-    )["environment"]
+    assert application in [
+        container for container, _kwargs in sandbox_network.connections
+    ]
+    assert (
+        "DATABASE_URL"
+        in next(call for call in calls if str(call.get("name", "")).endswith("-app"))[
+            "environment"
+        ]
+    )
 
     preview_resources._remove_resources(resources, remove_data_volumes=True)
 
@@ -259,7 +272,9 @@ def test_verification_container_receives_the_sandbox_sqlite_connection(
     store.initialize()
     sandbox_id = "2" * 32
     project_id = "3" * 32
-    _managed_database(store, fake_docker_client, sandbox_id=sandbox_id, project_id=project_id)
+    _managed_database(
+        store, fake_docker_client, sandbox_id=sandbox_id, project_id=project_id
+    )
     calls: list[dict[str, object]] = []
     create = fake_docker_client.containers.create
 

@@ -88,7 +88,9 @@ class GitHubPullRequestClient:
         *,
         api_url: str = GITHUB_API_URL,
     ) -> None:
-        self._credential_source = credential_source or EnvironmentGitHubWriteCredentialSource()
+        self._credential_source = (
+            credential_source or EnvironmentGitHubWriteCredentialSource()
+        )
         self._api_url = api_url.rstrip("/")
 
     def find_by_head(
@@ -108,7 +110,9 @@ class GitHubPullRequestClient:
             operation="discovery",
         )
         if not isinstance(payload, list):
-            raise GitHubApiError("GitHub pull request discovery returned an invalid response")
+            raise GitHubApiError(
+                "GitHub pull request discovery returned an invalid response"
+            )
         candidates = [
             pull_request_from_payload(item)
             for item in payload
@@ -119,7 +123,11 @@ class GitHubPullRequestClient:
         # GitHub can return historical closed PRs for the same branch. Prefer
         # an open PR, because it is the branch's live publication.
         return next(
-            (candidate for candidate in candidates if candidate.state.lower() == "open"),
+            (
+                candidate
+                for candidate in candidates
+                if candidate.state.lower() == "open"
+            ),
             candidates[0],
         )
 
@@ -185,7 +193,9 @@ class GitHubPullRequestClient:
         except requests.RequestException as error:
             # Do not include the exception text. A transport adapter can include
             # request details, including headers, in that text.
-            raise GitHubApiError(f"GitHub pull request {operation} request failed") from error
+            raise GitHubApiError(
+                f"GitHub pull request {operation} request failed"
+            ) from error
         if response.status_code not in expected_statuses:
             # Never include response text or headers. GitHub's error body can
             # reflect input, and a mocked or proxy response could reflect auth.
@@ -205,7 +215,9 @@ def github_repository_from_remote(remote_url: str) -> GitHubRepository:
     parsed = urlsplit(remote_url)
     parts = [part for part in parsed.path.split("/") if part]
     if parsed.hostname != "github.com" or len(parts) != 2:
-        raise PublishError(424, "GitHub pull request publishing requires a github.com remote")
+        raise PublishError(
+            424, "GitHub pull request publishing requires a github.com remote"
+        )
     return GitHubRepository(owner=parts[0], name=parts[1])
 
 
@@ -255,7 +267,9 @@ def discover_or_create_pull_request(
         )
     verified = github.get(repository, observed.number)
     if verified.number != observed.number:
-        raise GitHubApiError("GitHub pull request verification returned a different pull request")
+        raise GitHubApiError(
+            "GitHub pull request verification returned a different pull request"
+        )
     return verified
 
 
@@ -272,7 +286,9 @@ def reviewed_target(
     try:
         result = json.loads(str(review.get("result_json") or "{}"))
     except ValueError as error:
-        raise PublishError(409, "The latest feature review has an invalid result") from error
+        raise PublishError(
+            409, "The latest feature review has an invalid result"
+        ) from error
     if not isinstance(result, dict) or result.get("approved") is not True:
         raise PublishError(409, "An approved feature review is required before publish")
     target = FeatureTarget(
@@ -381,7 +397,9 @@ def publish_reviewed_feature(
         ensure_image=True,
     )
     if verified_sha != target.head_commit:
-        raise PublishError(424, "Remote branch did not verify the reviewed feature commit")
+        raise PublishError(
+            424, "Remote branch did not verify the reviewed feature commit"
+        )
     assert_workspace_has_no_remotes(
         docker_client,
         image=preview_settings.git_image,

@@ -97,7 +97,14 @@ def store(tmp_path: Path) -> ControllerStore:
         changes={
             "manifest_json": "{}",
             "commands_json": json.dumps(
-                [{"kind": "test", "command": "pytest", "confirmed": True, "reason": "defined"}]
+                [
+                    {
+                        "kind": "test",
+                        "command": "pytest",
+                        "confirmed": True,
+                        "reason": "defined",
+                    }
+                ]
             ),
         },
     )
@@ -203,7 +210,11 @@ def test_review_reads_final_repo_and_retains_result(
         calls.append((settings, request))
         return TurnResult(
             raw_output="{}",
-            payload={"approved": True, "summary": "The feature matches the plan", "findings": []},
+            payload={
+                "approved": True,
+                "summary": "The feature matches the plan",
+                "findings": [],
+            },
             model="reported-model",
         )
 
@@ -233,7 +244,10 @@ def test_review_reads_final_repo_and_retains_result(
     assert "Replace the button label after it is clicked" in calls[0][1].prompt
     assert "A build alone" not in calls[0][1].prompt
     assert "only evidence is a build" in calls[0][1].prompt
-    assert service.view(store, completed.delegation.id).changes[0].status.value == "completed"
+    assert (
+        service.view(store, completed.delegation.id).changes[0].status.value
+        == "completed"
+    )
     assert service.view(store, completed.delegation.id).review == outcome.review
 
 
@@ -336,7 +350,13 @@ def test_a_later_change_supersedes_an_earlier_incomplete_one(
     """
     completed = _completed(store)
     for revision, evidence in (
-        (1, {"complete": False, "errors": ["Agent reported no observable acceptance criteria"]}),
+        (
+            1,
+            {
+                "complete": False,
+                "errors": ["Agent reported no observable acceptance criteria"],
+            },
+        ),
         (2, {"complete": True, "errors": []}),
     ):
         request_id = f"change-{revision}"
@@ -395,7 +415,11 @@ def _approving_review(
         "run_planning_turn",
         lambda *_args, **_kwargs: TurnResult(
             raw_output="{}",
-            payload={"approved": True, "summary": "Looks correct", "findings": findings},
+            payload={
+                "approved": True,
+                "summary": "Looks correct",
+                "findings": findings,
+            },
             model="review-model",
         ),
     )
@@ -416,7 +440,13 @@ def test_approval_is_overridden_by_a_medium_finding(
     outcome = _approving_review(
         store,
         monkeypatch,
-        [{"severity": "medium", "text": "The error path is unhandled", "work_item_keys": ["a"]}],
+        [
+            {
+                "severity": "medium",
+                "text": "The error path is unhandled",
+                "work_item_keys": ["a"],
+            }
+        ],
     )
 
     assert outcome.review.approved is False
@@ -432,7 +462,13 @@ def test_a_low_finding_still_approves(
     outcome = _approving_review(
         store,
         monkeypatch,
-        [{"severity": "low", "text": "The comment has a typo", "work_item_keys": ["a"]}],
+        [
+            {
+                "severity": "low",
+                "text": "The comment has a typo",
+                "work_item_keys": ["a"],
+            }
+        ],
     )
 
     assert outcome.review.approved is True

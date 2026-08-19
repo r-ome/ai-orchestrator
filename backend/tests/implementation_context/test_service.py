@@ -36,9 +36,7 @@ PLANNING_SETTINGS = PlanningSettings(
     codex_reasoning_effort="high",
 )
 PACKAGE = {
-    "package.json": json.dumps(
-        {"scripts": {"build": "astro build", "test": "vitest"}}
-    )
+    "package.json": json.dumps({"scripts": {"build": "astro build", "test": "vitest"}})
 }
 PNPM_PROJECT = {
     "package.json": json.dumps(
@@ -166,7 +164,9 @@ class _Turns:
 
 
 def _result(payload: dict[str, Any]) -> TurnResult:
-    return TurnResult(raw_output=json.dumps(payload), payload=payload, model="claude-sonnet-5")
+    return TurnResult(
+        raw_output=json.dumps(payload), payload=payload, model="claude-sonnet-5"
+    )
 
 
 @pytest.fixture

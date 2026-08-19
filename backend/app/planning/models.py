@@ -114,9 +114,7 @@ PLANNING_TRANSITIONS: Mapping[PlanningStatus, frozenset[PlanningStatus]] = {
 
 def source_statuses(target: PlanningStatus) -> frozenset[PlanningStatus]:
     return frozenset(
-        source
-        for source, targets in PLANNING_TRANSITIONS.items()
-        if target in targets
+        source for source, targets in PLANNING_TRANSITIONS.items() if target in targets
     )
 
 

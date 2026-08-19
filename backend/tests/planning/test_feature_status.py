@@ -71,21 +71,18 @@ def test_derives_each_feature_status_branch(
 def test_pre_plan_ready_planning_statuses_pass_through(
     planning_status: PlanningStatus,
 ) -> None:
-    assert (
-        derive_feature_status(
-            planning_status,
-            context_status="failed",
-            delegation_status="completed",
-            review_status="completed",
-            review_approved=True,
-            source_merged_at="2026-08-14T00:00:00Z",
-            change_status="failed",
-            pr_number=42,
-            pr_state="closed",
-            pr_merged_at="2026-08-14T00:00:00Z",
-        )
-        is FeatureStatus(planning_status)
-    )
+    assert derive_feature_status(
+        planning_status,
+        context_status="failed",
+        delegation_status="completed",
+        review_status="completed",
+        review_approved=True,
+        source_merged_at="2026-08-14T00:00:00Z",
+        change_status="failed",
+        pr_number=42,
+        pr_state="closed",
+        pr_merged_at="2026-08-14T00:00:00Z",
+    ) is FeatureStatus(planning_status)
 
 
 def test_review_limit_reached_stays_until_downstream_work_starts() -> None:
@@ -119,16 +116,22 @@ def test_review_limit_reached_stays_until_downstream_work_starts() -> None:
 
 
 def test_blocked_wins_over_in_review() -> None:
-    assert _derive(review_status="failed", change_status="running") is FeatureStatus.BLOCKED
+    assert (
+        _derive(review_status="failed", change_status="running")
+        is FeatureStatus.BLOCKED
+    )
 
 
 def test_merged_wins_over_published() -> None:
-    assert _derive(
-        delegation_status="completed",
-        pr_number=42,
-        pr_state="closed",
-        pr_merged_at="2026-08-14T00:00:00Z",
-    ) is FeatureStatus.MERGED
+    assert (
+        _derive(
+            delegation_status="completed",
+            pr_number=42,
+            pr_state="closed",
+            pr_merged_at="2026-08-14T00:00:00Z",
+        )
+        is FeatureStatus.MERGED
+    )
 
 
 def test_merged_pull_request_never_reads_as_plan_ready() -> None:
@@ -188,11 +191,14 @@ def test_a_pull_request_without_a_delegation_belongs_to_another_session() -> Non
 
 
 def test_a_merged_pull_request_without_a_delegation_is_also_ignored() -> None:
-    assert _derive(
-        pr_number=1,
-        pr_state="closed",
-        pr_merged_at="2026-08-14T00:00:00Z",
-    ) is FeatureStatus.PLAN_READY
+    assert (
+        _derive(
+            pr_number=1,
+            pr_state="closed",
+            pr_merged_at="2026-08-14T00:00:00Z",
+        )
+        is FeatureStatus.PLAN_READY
+    )
 
 
 def test_running_delegation_without_context_is_building() -> None:

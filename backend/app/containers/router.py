@@ -114,7 +114,9 @@ def remove_container(
     container_id: str,
     docker_client: Annotated[DockerClient, Depends(get_docker_client)],
     confirm: Annotated[bool, Query(description="Confirm permanent removal")] = False,
-    force: Annotated[bool, Query(description="Force-remove a running container")] = False,
+    force: Annotated[
+        bool, Query(description="Force-remove a running container")
+    ] = False,
     remove_volumes: Annotated[
         bool,
         Query(description="Remove attached anonymous volumes"),
@@ -306,8 +308,7 @@ async def _forward_shell_input(
             ):
                 await _shell_protocol_error(
                     websocket,
-                    f"resize requires columns 1..{MAX_COLUMNS} "
-                    f"and rows 1..{MAX_ROWS}",
+                    f"resize requires columns 1..{MAX_COLUMNS} and rows 1..{MAX_ROWS}",
                 )
                 continue
             await asyncio.to_thread(

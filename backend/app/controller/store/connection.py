@@ -48,4 +48,3 @@ class ConnectionMixin:
                     yield connection
             finally:
                 connection.close()
-

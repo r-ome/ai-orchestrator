@@ -28,7 +28,7 @@ GIT_BASELINE_SCRIPT = (
     'git config user.email "orchestrator@localhost"\n'
     "mkdir -p .git/info\n"
     "touch .git/info/exclude\n"
-    f'for scaffold in {" ".join(SANDBOX_SCAFFOLDING)}; do\n'
+    f"for scaffold in {' '.join(SANDBOX_SCAFFOLDING)}; do\n"
     '  if ! grep -qxF "/$scaffold/" .git/info/exclude; then\n'
     '    printf "/%s/\\n" "$scaffold" >> .git/info/exclude\n'
     "  fi\n"
@@ -65,10 +65,7 @@ def inspect_registered_project(
     except ValueError as error:
         raise ProjectOperationError(409, str(error)) from error
     lifecycle_status = SandboxLifecycleStatus(
-        str(
-            sandbox.get("lifecycle_status")
-            or SandboxLifecycleStatus.CREATING.value
-        )
+        str(sandbox.get("lifecycle_status") or SandboxLifecycleStatus.CREATING.value)
     )
     return ProjectRegistration(
         sandbox_id=project_name,

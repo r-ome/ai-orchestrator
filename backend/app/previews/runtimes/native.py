@@ -137,10 +137,7 @@ def _start_native(
     mounts = _environment_masks(docker_client, settings, workspace_volume)
     tmpfs = {
         "/tmp": "rw,nosuid,size=256m",
-        **{
-            f"/workspace/{path}": "rw,nosuid,size=1m"
-            for path in _MASKED_DIRECTORIES
-        },
+        **{f"/workspace/{path}": "rw,nosuid,size=1m" for path in _MASKED_DIRECTORIES},
     }
     volumes: dict[str, dict[str, str]] = {
         workspace_volume: {"bind": "/workspace", "mode": "rw"},
@@ -237,7 +234,9 @@ def _start_native(
                     size_path=(
                         "/workspace/node_modules"
                         if config.runtime.value in _NODE_RUNTIMES
-                        else "/opt/venv" if config.runtime.value == "fastapi" else None
+                        else "/opt/venv"
+                        if config.runtime.value == "fastapi"
+                        else None
                     ),
                     completion_marker=(
                         f"/workspace/node_modules/{_DEPENDENCY_READY_MARKER}"
@@ -407,25 +406,30 @@ def _start_native(
     else:
         start = f"exec {start}"
     with _timed_step(report, "container", "Creating application container") as finish:
-        container = create_hardened(docker_client, HardenedContainerSpec(
-            image=config.image,
-            command=["sh", "-lc", f"set -eu\n{start}"],
-            name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-app",
-            working_dir="/workspace",
-            environment=application_environment,
-            labels={**labels, LABEL_SERVICE: "app"},
-            volumes=volumes,
-            mounts=mounts or None,
-            tmpfs_size="256m",
-            extra_tmpfs={key: value for key, value in tmpfs.items() if key != "/tmp"},
-            network=network.name,
-            egress=_preview_egress(config.network_access),
-            ports=_direct_ports(config, host_port),
-            restart_policy={"Name": "no"},
-            mem_limit=settings.preview_memory,
-            nano_cpus=1_000_000_000,
-            pids_limit=256,
-        ))
+        container = create_hardened(
+            docker_client,
+            HardenedContainerSpec(
+                image=config.image,
+                command=["sh", "-lc", f"set -eu\n{start}"],
+                name=f"{PREVIEW_CONTAINER_PREFIX}{run_id[:12]}-app",
+                working_dir="/workspace",
+                environment=application_environment,
+                labels={**labels, LABEL_SERVICE: "app"},
+                volumes=volumes,
+                mounts=mounts or None,
+                tmpfs_size="256m",
+                extra_tmpfs={
+                    key: value for key, value in tmpfs.items() if key != "/tmp"
+                },
+                network=network.name,
+                egress=_preview_egress(config.network_access),
+                ports=_direct_ports(config, host_port),
+                restart_policy={"Name": "no"},
+                mem_limit=settings.preview_memory,
+                nano_cpus=1_000_000_000,
+                pids_limit=256,
+            ),
+        )
         network.disconnect(container)
         network.connect(container, aliases=["app"])
         if managed_database is not None and managed_database.engine != "sqlite":
@@ -585,29 +589,32 @@ def _run_prepare(
             maximum_kib = settings.maximum_dependency_bytes // 1024
             checked_command += (
                 f"\nused_kib=$(du -sk {shlex.quote(size_path)} | awk '{{print $1}}')"
-                f"\nif [ \"$used_kib\" -gt {maximum_kib} ]; then"
+                f'\nif [ "$used_kib" -gt {maximum_kib} ]; then'
                 " echo 'Installed dependencies exceed the configured size limit' >&2;"
                 " exit 73; fi"
             )
         if completion_marker:
             checked_command += f"\ntouch {shlex.quote(completion_marker)}"
-        container = create_hardened(docker_client, HardenedContainerSpec(
-            image=image,
-            command=["sh", "-lc", checked_command],
-            working_dir="/workspace",
-            network="bridge",
-            egress=Egress.PROVIDER,
-            environment=environment,
-            labels={**labels, LABEL_SERVICE: "prepare"},
-            volumes=volumes,
-            mounts=mounts or None,
-            rootfs=Rootfs.WRITABLE,
-            # No /tmp tmpfs. A package manager unpacks into /tmp, and this
-            # container had a disk-backed /tmp before the boundary owned it.
-            tmpfs_size=None,
-            mem_limit=settings.preview_memory,
-            pids_limit=256,
-        ))
+        container = create_hardened(
+            docker_client,
+            HardenedContainerSpec(
+                image=image,
+                command=["sh", "-lc", checked_command],
+                working_dir="/workspace",
+                network="bridge",
+                egress=Egress.PROVIDER,
+                environment=environment,
+                labels={**labels, LABEL_SERVICE: "prepare"},
+                volumes=volumes,
+                mounts=mounts or None,
+                rootfs=Rootfs.WRITABLE,
+                # No /tmp tmpfs. A package manager unpacks into /tmp, and this
+                # container had a disk-backed /tmp before the boundary owned it.
+                tmpfs_size=None,
+                mem_limit=settings.preview_memory,
+                pids_limit=256,
+            ),
+        )
         container.start()
         try:
             result = container.wait(timeout=settings.prepare_timeout_seconds)

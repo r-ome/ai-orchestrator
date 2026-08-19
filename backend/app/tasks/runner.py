@@ -472,10 +472,12 @@ def _codex_tool_calls(events: list[dict[str, Any]]) -> list[ToolCall]:
         if event.get("type") == "item.completed":
             status = str(item.get("status") or "completed").lower()
             exit_code = _integer(item.get("exit_code"))
-            failures[item_id] = (
-                status in {"failed", "error", "cancelled", "canceled"}
-                or (exit_code is not None and exit_code != 0)
-            )
+            failures[item_id] = status in {
+                "failed",
+                "error",
+                "cancelled",
+                "canceled",
+            } or (exit_code is not None and exit_code != 0)
     return [
         ToolCall(name=name, failed=failures.get(item_id, True))
         for item_id, name in names.items()
@@ -571,7 +573,9 @@ def _reported_model(envelope: Mapping[str, Any] | None) -> str | None:
 
 
 def _integer(value: Any) -> int | None:
-    return int(value) if isinstance(value, int) and not isinstance(value, bool) else None
+    return (
+        int(value) if isinstance(value, int) and not isinstance(value, bool) else None
+    )
 
 
 def run_with_repair(

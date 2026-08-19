@@ -140,8 +140,7 @@ def drive_delegation(
                 sandbox_id,
                 step="started",
                 message=(
-                    f"Driving {len(view.items)} work item(s), "
-                    f"cap {driver.max_seconds}s"
+                    f"Driving {len(view.items)} work item(s), cap {driver.max_seconds}s"
                 ),
             )
         if outcome.status not in _DRIVABLE:
@@ -211,7 +210,9 @@ def drive_delegation(
             # A run that fails settles its own row, and the item then reads
             # FAILED rather than READY. Reaching here means the claim itself
             # was refused, which is a condition the next pass would hit again.
-            outcome.stopped_because = f"work item '{key}' could not start: {error.detail}"
+            outcome.stopped_because = (
+                f"work item '{key}' could not start: {error.detail}"
+            )
             _halt(
                 store,
                 delegation_id,
@@ -292,9 +293,7 @@ def _record_final_states(
     )
     outcome.status = view.delegation.status
     outcome.completed = [
-        entry.item.key
-        for entry in view.items
-        if entry.state is WorkItemState.COMPLETED
+        entry.item.key for entry in view.items if entry.state is WorkItemState.COMPLETED
     ]
     outcome.failed = [
         entry.item.key for entry in view.items if entry.state is WorkItemState.FAILED

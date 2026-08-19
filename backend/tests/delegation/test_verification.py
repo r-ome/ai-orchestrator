@@ -88,9 +88,12 @@ def test_stops_after_first_failed_command_and_bounds_output() -> None:
 def test_no_commands_does_not_pass() -> None:
     client = SimpleNamespace(containers=_Containers([]))
 
-    assert run_verification(
-        client,
-        SETTINGS,
-        volume_name="project-volume",
-        commands=[],
-    )["passed"] is False
+    assert (
+        run_verification(
+            client,
+            SETTINGS,
+            volume_name="project-volume",
+            commands=[],
+        )["passed"]
+        is False
+    )

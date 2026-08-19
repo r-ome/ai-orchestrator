@@ -107,7 +107,11 @@ def _run_codex(
 
 
 def test_a_successful_turn_captures_cost_usage_and_the_reported_model() -> None:
-    result = _run("\n".join([_tool_use("t1", "Edit"), _tool_result("t1", is_error=None), _envelope()]))
+    result = _run(
+        "\n".join(
+            [_tool_use("t1", "Edit"), _tool_result("t1", is_error=None), _envelope()]
+        )
+    )
 
     assert result.status == SUCCEEDED
     assert result.text == "done"
@@ -156,7 +160,9 @@ def test_a_partial_tool_failure_still_succeeds() -> None:
 
 
 def test_a_tool_use_without_a_result_counts_as_failed() -> None:
-    assert _run("\n".join([_tool_use("t1", "Edit"), _envelope()])).status == TOOL_FAILURE
+    assert (
+        _run("\n".join([_tool_use("t1", "Edit"), _envelope()])).status == TOOL_FAILURE
+    )
 
 
 def test_a_turn_with_no_tool_calls_succeeds() -> None:

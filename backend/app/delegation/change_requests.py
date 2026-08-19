@@ -84,7 +84,9 @@ def claim_change_request(
         raise service.DelegationOperationError(409, "Another change request is running")
     instructions = request.instructions.strip()
     if not instructions:
-        raise service.DelegationOperationError(422, "Change instructions cannot be empty")
+        raise service.DelegationOperationError(
+            422, "Change instructions cannot be empty"
+        )
 
     context_id = view.delegation.context_id
     try:
@@ -95,7 +97,9 @@ def claim_change_request(
             project_name=project_name,
         )
     except ContextOperationError as error:
-        raise service.DelegationOperationError(error.status_code, error.detail) from error
+        raise service.DelegationOperationError(
+            error.status_code, error.detail
+        ) from error
     verification = [
         ResolvedVerification(
             command_kind=command.kind,
@@ -127,10 +131,14 @@ def claim_change_request(
         task = start_task(
             docker_client,
             store,
-            StartTaskRequest(project_name=project_name, title="Requested feature changes"),
+            StartTaskRequest(
+                project_name=project_name, title="Requested feature changes"
+            ),
         )
     except TaskOperationError as error:
-        raise service.DelegationOperationError(error.status_code, error.detail) from error
+        raise service.DelegationOperationError(
+            error.status_code, error.detail
+        ) from error
 
     request_id = uuid4().hex
     model = request.model or settings.model(request.provider.value)
@@ -210,7 +218,9 @@ def execute_change_request(
         if not response.committed:
             raise service.DelegationOperationError(
                 409,
-                response.turn_error or response.detail or "The agent made no committed changes",
+                response.turn_error
+                or response.detail
+                or "The agent made no committed changes",
             )
 
         _progress(
@@ -256,7 +266,9 @@ def execute_change_request(
             verification_json=json.dumps(verification),
         )
         if row is None:
-            raise service.DelegationOperationError(409, "Change request was settled elsewhere")
+            raise service.DelegationOperationError(
+                409, "Change request was settled elsewhere"
+            )
     except Exception as error:
         detail = str(getattr(error, "detail", error)) or "Change request failed"
         _discard_task(docker_client, store, claim.task_id)
@@ -445,9 +457,10 @@ def _acceptance_evidence(result: Any) -> dict[str, Any]:
         if not isinstance(criterion, Mapping):
             errors.append(f"acceptance_criteria[{index}] is not an object")
             continue
-        if not isinstance(criterion.get("criterion"), str) or not str(
-            criterion.get("criterion")
-        ).strip():
+        if (
+            not isinstance(criterion.get("criterion"), str)
+            or not str(criterion.get("criterion")).strip()
+        ):
             errors.append(f"acceptance_criteria[{index}] has no criterion")
         if criterion.get("verified") is not True:
             errors.append(f"acceptance_criteria[{index}] is not verified")
@@ -457,12 +470,11 @@ def _acceptance_evidence(result: Any) -> dict[str, Any]:
                 f"acceptance_criteria[{index}] has no recognized verification kind"
             )
         if behavioral_change and verification_kind != "behavior_test":
-            errors.append(
-                f"acceptance_criteria[{index}] lacks a behavioral test"
-            )
-        if not isinstance(criterion.get("evidence"), str) or not str(
-            criterion.get("evidence")
-        ).strip():
+            errors.append(f"acceptance_criteria[{index}] lacks a behavioral test")
+        if (
+            not isinstance(criterion.get("evidence"), str)
+            or not str(criterion.get("evidence")).strip()
+        ):
             errors.append(f"acceptance_criteria[{index}] has no evidence")
 
     verification = result.get("verification")
@@ -476,7 +488,9 @@ def _acceptance_evidence(result: Any) -> dict[str, Any]:
             checks = [check for check in ran if isinstance(check, str)]
             if any(_installs_test_infrastructure(check) for check in checks):
                 errors.append("Agent attempted to install test infrastructure")
-            if behavioral_change and not any(_is_behavior_check(check) for check in checks):
+            if behavioral_change and not any(
+                _is_behavior_check(check) for check in checks
+            ):
                 errors.append("Behavioral change has no behavioral verification check")
         if verification.get("outcome") != "passed":
             errors.append("Agent did not report a passed verification outcome")
@@ -560,7 +574,11 @@ def _bounded_json(value: Mapping[str, Any], limit: int = 120_000) -> str:
 
 def _verification_failure(verification: dict[str, Any]) -> str:
     failed = next(
-        (command for command in verification.get("commands", []) if not command.get("passed")),
+        (
+            command
+            for command in verification.get("commands", [])
+            if not command.get("passed")
+        ),
         None,
     )
     if failed:
@@ -568,7 +586,9 @@ def _verification_failure(verification: dict[str, Any]) -> str:
     return "Full implementation verification failed"
 
 
-def _discard_task(docker_client: DockerClient, store: ControllerStore, task_id: str) -> None:
+def _discard_task(
+    docker_client: DockerClient, store: ControllerStore, task_id: str
+) -> None:
     try:
         reject_task(docker_client, store, task_id)
     except TaskOperationError:

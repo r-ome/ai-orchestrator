@@ -2,7 +2,9 @@ from app.previews.errors import PreviewOperationError
 from app.previews.models import PreviewConfiguration
 
 
-def _secret_environment(config: PreviewConfiguration, secrets: dict[str, str]) -> dict[str, str]:
+def _secret_environment(
+    config: PreviewConfiguration, secrets: dict[str, str]
+) -> dict[str, str]:
     """Resolves from_secret entries against stored project secrets.
 
     Fails before any container starts, so a missing secret never surfaces as a

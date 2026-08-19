@@ -115,6 +115,7 @@ def open_delegation(
         )
     )
 
+
 @router.post(
     "/generate",
     response_model=AcceptedJob,

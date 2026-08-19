@@ -65,7 +65,9 @@ def settings() -> PlanningSettings:
 
 
 @pytest.fixture
-def scripted_runner(monkeypatch: pytest.MonkeyPatch) -> tuple[deque[dict[str, Any]], list[str]]:
+def scripted_runner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[deque[dict[str, Any]], list[str]]:
     queue: deque[dict[str, Any]] = deque()
     prompts: list[str] = []
 
@@ -83,7 +85,9 @@ def scripted_runner(monkeypatch: pytest.MonkeyPatch) -> tuple[deque[dict[str, An
         "run_planning_turn",
         lambda _client, _settings, request: run(request),
     )
-    monkeypatch.setattr(service, "_turn_client", lambda: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(
+        service, "_turn_client", lambda: SimpleNamespace(close=lambda: None)
+    )
     monkeypatch.setattr(
         service,
         "ensure_sandbox_registered",
@@ -92,13 +96,17 @@ def scripted_runner(monkeypatch: pytest.MonkeyPatch) -> tuple[deque[dict[str, An
     return queue, prompts
 
 
-def _plan(*, responses: list[dict[str, str]] | None = None, name: str = "First") -> dict[str, Any]:
+def _plan(
+    *, responses: list[dict[str, str]] | None = None, name: str = "First"
+) -> dict[str, Any]:
     return {
         "plan_markdown": f"# {name} plan\nImplement the planning flow.",
         "scope": "Add the planning flow and exclude execution.",
         "approach": "Store revisions and review each revision independently.",
         "components": [{"name": "planning service", "responsibility": "run the loop"}],
-        "risks": [{"severity": "medium", "text": "A reviewer can reject a valid plan."}],
+        "risks": [
+            {"severity": "medium", "text": "A reviewer can reject a valid plan."}
+        ],
         "open_questions": [],
         "finding_responses": responses or [],
     }
@@ -119,9 +127,13 @@ def _start(
         store,
         settings,
         PROJECT.name,
-        CreatePlanningSessionRequest(title="Planning flow", request="Add planning sessions"),
+        CreatePlanningSessionRequest(
+            title="Planning flow", request="Add planning sessions"
+        ),
     )
-    store.set_planning_understanding(session_id=session.id, summary="Build a reviewed planning flow")
+    store.set_planning_understanding(
+        session_id=session.id, summary="Build a reviewed planning flow"
+    )
     store.advance_planning_status(
         session_id=session.id,
         from_statuses=(PlanningStatus.CLARIFYING.value,),
@@ -131,7 +143,9 @@ def _start(
     return session.id
 
 
-def _run(store: ControllerStore, settings: PlanningSettings, session_id: str, kind: TurnKind) -> None:
+def _run(
+    store: ControllerStore, settings: PlanningSettings, session_id: str, kind: TurnKind
+) -> None:
     asyncio.run(service._run_turn(store, settings, session_id, kind))
 
 
@@ -166,20 +180,42 @@ def test_rejection_then_approval_records_two_review_rounds(
     queue.extend(
         [
             _plan(),
-            _review(approved=False, findings=[{"id": "NEW-1", "severity": "major", "text": "Add recovery."}]),
-            _plan(responses=[{"finding_id": "F1", "status": "answered", "rationale": "Added recovery."}], name="Second"),
+            _review(
+                approved=False,
+                findings=[
+                    {"id": "NEW-1", "severity": "major", "text": "Add recovery."}
+                ],
+            ),
+            _plan(
+                responses=[
+                    {
+                        "finding_id": "F1",
+                        "status": "answered",
+                        "rationale": "Added recovery.",
+                    }
+                ],
+                name="Second",
+            ),
             _review(approved=True, findings=[]),
         ]
     )
     session_id = _start(controller_store, settings)
 
-    for kind in (TurnKind.PLANNER, TurnKind.REVIEWER, TurnKind.PLANNER, TurnKind.REVIEWER):
+    for kind in (
+        TurnKind.PLANNER,
+        TurnKind.REVIEWER,
+        TurnKind.PLANNER,
+        TurnKind.REVIEWER,
+    ):
         _run(controller_store, settings, session_id, kind)
 
     session = controller_store.planning_session(session_id)
     assert session is not None
     assert session["status"] == PlanningStatus.PLAN_READY.value
-    assert service._json_value(session["plan_spec_json"])["reviewer_outcome"]["rounds"] == 2
+    assert (
+        service._json_value(session["plan_spec_json"])["reviewer_outcome"]["rounds"]
+        == 2
+    )
 
 
 def test_three_rejections_reach_the_limit_with_outstanding_findings(
@@ -191,11 +227,22 @@ def test_three_rejections_reach_the_limit_with_outstanding_findings(
     queue.extend(
         [
             _plan(),
-            _review(approved=False, findings=[{"id": "NEW-1", "severity": "major", "text": "Add recovery."}]),
+            _review(
+                approved=False,
+                findings=[
+                    {"id": "NEW-1", "severity": "major", "text": "Add recovery."}
+                ],
+            ),
             _plan(name="Second"),
-            _review(approved=False, findings=[{"id": "F1", "severity": "major", "text": "Add recovery."}]),
+            _review(
+                approved=False,
+                findings=[{"id": "F1", "severity": "major", "text": "Add recovery."}],
+            ),
             _plan(name="Third"),
-            _review(approved=False, findings=[{"id": "F1", "severity": "major", "text": "Add recovery."}]),
+            _review(
+                approved=False,
+                findings=[{"id": "F1", "severity": "major", "text": "Add recovery."}],
+            ),
         ]
     )
     session_id = _start(controller_store, settings)
@@ -208,7 +255,10 @@ def test_three_rejections_reach_the_limit_with_outstanding_findings(
     assert session["status"] == PlanningStatus.REVIEW_LIMIT_REACHED.value
     spec = service._json_value(session["plan_spec_json"])
     assert spec["reviewer_outcome"]["approved"] is False
-    assert [finding["finding_id"] for finding in spec["reviewer_outcome"]["outstanding_findings"]] == ["F1"]
+    assert [
+        finding["finding_id"]
+        for finding in spec["reviewer_outcome"]["outstanding_findings"]
+    ] == ["F1"]
 
 
 def test_second_round_prompts_keep_only_the_required_context(
@@ -220,13 +270,32 @@ def test_second_round_prompts_keep_only_the_required_context(
     queue.extend(
         [
             _plan(),
-            _review(approved=False, findings=[{"id": "NEW-1", "severity": "major", "text": "Add recovery."}]),
-            _plan(responses=[{"finding_id": "F1", "status": "answered", "rationale": "Added recovery."}], name="Second"),
+            _review(
+                approved=False,
+                findings=[
+                    {"id": "NEW-1", "severity": "major", "text": "Add recovery."}
+                ],
+            ),
+            _plan(
+                responses=[
+                    {
+                        "finding_id": "F1",
+                        "status": "answered",
+                        "rationale": "Added recovery.",
+                    }
+                ],
+                name="Second",
+            ),
             _review(approved=True, findings=[]),
         ]
     )
     session_id = _start(controller_store, settings)
-    for kind in (TurnKind.PLANNER, TurnKind.REVIEWER, TurnKind.PLANNER, TurnKind.REVIEWER):
+    for kind in (
+        TurnKind.PLANNER,
+        TurnKind.REVIEWER,
+        TurnKind.PLANNER,
+        TurnKind.REVIEWER,
+    ):
         _run(controller_store, settings, session_id, kind)
 
     planner_two = requests[2]
@@ -249,13 +318,26 @@ def test_reraised_finding_keeps_its_stable_id_and_original_round(
     queue.extend(
         [
             _plan(),
-            _review(approved=False, findings=[{"id": "NEW-1", "severity": "minor", "text": "Name the owner."}]),
+            _review(
+                approved=False,
+                findings=[
+                    {"id": "NEW-1", "severity": "minor", "text": "Name the owner."}
+                ],
+            ),
             _plan(name="Second"),
-            _review(approved=False, findings=[{"id": "F1", "severity": "minor", "text": "Name the owner."}]),
+            _review(
+                approved=False,
+                findings=[{"id": "F1", "severity": "minor", "text": "Name the owner."}],
+            ),
         ]
     )
     session_id = _start(controller_store, settings)
-    for kind in (TurnKind.PLANNER, TurnKind.REVIEWER, TurnKind.PLANNER, TurnKind.REVIEWER):
+    for kind in (
+        TurnKind.PLANNER,
+        TurnKind.REVIEWER,
+        TurnKind.PLANNER,
+        TurnKind.REVIEWER,
+    ):
         _run(controller_store, settings, session_id, kind)
 
     finding = controller_store.planning_findings(session_id)[0]
@@ -273,14 +355,25 @@ def test_unseen_finding_becomes_resolved_and_leaves_the_next_ledger(
     queue.extend(
         [
             _plan(),
-            _review(approved=False, findings=[{"id": "NEW-1", "severity": "minor", "text": "Name the owner."}]),
+            _review(
+                approved=False,
+                findings=[
+                    {"id": "NEW-1", "severity": "minor", "text": "Name the owner."}
+                ],
+            ),
             _plan(name="Second"),
             _review(approved=False, findings=[]),
             _plan(name="Third"),
         ]
     )
     session_id = _start(controller_store, settings)
-    for kind in (TurnKind.PLANNER, TurnKind.REVIEWER, TurnKind.PLANNER, TurnKind.REVIEWER, TurnKind.PLANNER):
+    for kind in (
+        TurnKind.PLANNER,
+        TurnKind.REVIEWER,
+        TurnKind.PLANNER,
+        TurnKind.REVIEWER,
+        TurnKind.PLANNER,
+    ):
         _run(controller_store, settings, session_id, kind)
 
     assert controller_store.planning_findings(session_id)[0]["status"] == "resolved"
@@ -296,13 +389,26 @@ def test_new_ids_are_minted_then_reused_from_the_ledger(
     queue.extend(
         [
             _plan(),
-            _review(approved=False, findings=[{"id": "NEW-1", "severity": "minor", "text": "Name the owner."}]),
+            _review(
+                approved=False,
+                findings=[
+                    {"id": "NEW-1", "severity": "minor", "text": "Name the owner."}
+                ],
+            ),
             _plan(name="Second"),
-            _review(approved=False, findings=[{"id": "F1", "severity": "minor", "text": "Name the owner."}]),
+            _review(
+                approved=False,
+                findings=[{"id": "F1", "severity": "minor", "text": "Name the owner."}],
+            ),
         ]
     )
     session_id = _start(controller_store, settings)
-    for kind in (TurnKind.PLANNER, TurnKind.REVIEWER, TurnKind.PLANNER, TurnKind.REVIEWER):
+    for kind in (
+        TurnKind.PLANNER,
+        TurnKind.REVIEWER,
+        TurnKind.PLANNER,
+        TurnKind.REVIEWER,
+    ):
         _run(controller_store, settings, session_id, kind)
 
     findings = controller_store.planning_findings(session_id)
@@ -318,7 +424,16 @@ def test_approved_verdict_with_blocking_finding_is_overridden(
     queue.extend(
         [
             _plan(),
-            _review(approved=True, findings=[{"id": "NEW-1", "severity": "blocking", "text": "Plan lacks safety."}]),
+            _review(
+                approved=True,
+                findings=[
+                    {
+                        "id": "NEW-1",
+                        "severity": "blocking",
+                        "text": "Plan lacks safety.",
+                    }
+                ],
+            ),
         ]
     )
     session_id = _start(controller_store, settings)
@@ -343,7 +458,12 @@ def test_missing_planner_response_leaves_the_finding_open(
     queue.extend(
         [
             _plan(),
-            _review(approved=False, findings=[{"id": "NEW-1", "severity": "minor", "text": "Name the owner."}]),
+            _review(
+                approved=False,
+                findings=[
+                    {"id": "NEW-1", "severity": "minor", "text": "Name the owner."}
+                ],
+            ),
             _plan(name="Second"),
         ]
     )
@@ -370,8 +490,16 @@ def test_planner_responses_to_unknown_findings_are_rejected_and_repaired(
         [
             _plan(
                 responses=[
-                    {"finding_id": "F1", "status": "answered", "rationale": "Invented."},
-                    {"finding_id": "F2", "status": "rejected", "rationale": "Invented."},
+                    {
+                        "finding_id": "F1",
+                        "status": "answered",
+                        "rationale": "Invented.",
+                    },
+                    {
+                        "finding_id": "F2",
+                        "status": "rejected",
+                        "rationale": "Invented.",
+                    },
                 ]
             ),
             _plan(name="Repaired"),
@@ -405,8 +533,18 @@ def test_planner_may_respond_to_a_finding_on_the_ledger(
     queue.extend(
         [
             _plan(),
-            _review(approved=False, findings=[{"id": "NEW-1", "severity": "major", "text": "Add recovery."}]),
-            _plan(responses=[{"finding_id": "F1", "status": "answered", "rationale": "Added."}], name="Second"),
+            _review(
+                approved=False,
+                findings=[
+                    {"id": "NEW-1", "severity": "major", "text": "Add recovery."}
+                ],
+            ),
+            _plan(
+                responses=[
+                    {"finding_id": "F1", "status": "answered", "rationale": "Added."}
+                ],
+                name="Second",
+            ),
         ]
     )
     session_id = _start(controller_store, settings)
@@ -494,14 +632,33 @@ def test_turn_messages_expose_the_verdict_and_the_findings_of_each_round(
     queue.extend(
         [
             _plan(),
-            _review(approved=False, findings=[{"id": "NEW-1", "severity": "major", "text": "Add recovery."}]),
-            _plan(responses=[{"finding_id": "F1", "status": "answered", "rationale": "Added recovery."}], name="Second"),
+            _review(
+                approved=False,
+                findings=[
+                    {"id": "NEW-1", "severity": "major", "text": "Add recovery."}
+                ],
+            ),
+            _plan(
+                responses=[
+                    {
+                        "finding_id": "F1",
+                        "status": "answered",
+                        "rationale": "Added recovery.",
+                    }
+                ],
+                name="Second",
+            ),
             _review(approved=True, findings=[]),
         ]
     )
     session_id = _start(controller_store, settings)
 
-    for kind in (TurnKind.PLANNER, TurnKind.REVIEWER, TurnKind.PLANNER, TurnKind.REVIEWER):
+    for kind in (
+        TurnKind.PLANNER,
+        TurnKind.REVIEWER,
+        TurnKind.PLANNER,
+        TurnKind.REVIEWER,
+    ):
         _run(controller_store, settings, session_id, kind)
 
     messages = [

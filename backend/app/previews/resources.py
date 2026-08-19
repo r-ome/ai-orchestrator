@@ -30,7 +30,9 @@ def _ensure_preview_image(docker_client: DockerClient, image: str) -> None:
     try:
         ensure_image(docker_client, image)
     except DockerException as error:
-        raise PreviewOperationError(424, f"Preview image '{image}' is unavailable") from error
+        raise PreviewOperationError(
+            424, f"Preview image '{image}' is unavailable"
+        ) from error
 
 
 def _run_preview_command(
@@ -72,7 +74,9 @@ def _decode_preview_archive(output: str) -> bytes:
     try:
         return base64.b64decode(output, validate=True)
     except ValueError as error:
-        raise PreviewOperationError(502, "Sandbox inspection returned invalid data") from error
+        raise PreviewOperationError(
+            502, "Sandbox inspection returned invalid data"
+        ) from error
 
 
 def _validate_built_image(image: Any, settings: PreviewSettings) -> None:
@@ -132,17 +136,13 @@ def _preview_networks(docker_client: DockerClient, run_id: str) -> list[Any]:
 
 def _preview_volumes(docker_client: DockerClient, run_id: str) -> list[Any]:
     return docker_client.volumes.list(
-        filters={
-            "label": [f"{LABEL_DATA_MANAGED}=true", f"{LABEL_RUN_ID}={run_id}"]
-        }
+        filters={"label": [f"{LABEL_DATA_MANAGED}=true", f"{LABEL_RUN_ID}={run_id}"]}
     )
 
 
 def _preview_images(docker_client: DockerClient, run_id: str) -> list[Any]:
     return docker_client.images.list(
-        filters={
-            "label": [f"{LABEL_MANAGED}=true", f"{LABEL_RUN_ID}={run_id}"]
-        }
+        filters={"label": [f"{LABEL_MANAGED}=true", f"{LABEL_RUN_ID}={run_id}"]}
     )
 
 
@@ -178,7 +178,7 @@ def _disconnect_foreign_endpoints(network: Any) -> None:
         network.reload()
     except DockerException:
         return
-    for container_id in (network.attrs.get("Containers") or {}):
+    for container_id in network.attrs.get("Containers") or {}:
         try:
             network.disconnect(container_id, force=True)
         except DockerException:

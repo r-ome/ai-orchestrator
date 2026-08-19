@@ -107,7 +107,9 @@ def test_linked_worktree_or_submodule_gets_a_named_baseline_refusal() -> None:
         client.containers.run(
             GIT_IMAGE,
             entrypoint=["sh", "-c"],
-            command=["printf 'gitdir: /host/path/that-is-not-mounted\\n' > /project/.git"],
+            command=[
+                "printf 'gitdir: /host/path/that-is-not-mounted\\n' > /project/.git"
+            ],
             remove=True,
             volumes={volume.name: {"bind": "/project", "mode": "rw"}},
             tmpfs={"/git": "rw,nosuid,size=1m"},
@@ -119,7 +121,11 @@ def test_linked_worktree_or_submodule_gets_a_named_baseline_refusal() -> None:
         # docker-py returns stderr as str or bytes depending on the path taken;
         # `describe_git_failure` handles both, so the test must too.
         stderr = raised.value.stderr
-        output = stderr.decode(errors="replace") if isinstance(stderr, bytes) else (stderr or "")
+        output = (
+            stderr.decode(errors="replace")
+            if isinstance(stderr, bytes)
+            else (stderr or "")
+        )
         assert "linked worktree or submodule" in output
         assert "fatal: not a git repository" not in output
     finally:
@@ -323,7 +329,9 @@ def test_agent_creation_gives_a_baseline_to_a_sandbox_missing_one(
     agent = create_agent(
         docker_client,
         settings,
-        CreateAgentRequest(project_name="Sample Project", provider=AgentProvider.CLAUDE),
+        CreateAgentRequest(
+            project_name="Sample Project", provider=AgentProvider.CLAUDE
+        ),
         controller_store,
     )
 
@@ -334,7 +342,9 @@ def test_agent_creation_gives_a_baseline_to_a_sandbox_missing_one(
     create_agent(
         docker_client,
         settings,
-        CreateAgentRequest(project_name="Sample Project", provider=AgentProvider.CLAUDE),
+        CreateAgentRequest(
+            project_name="Sample Project", provider=AgentProvider.CLAUDE
+        ),
         controller_store,
     )
 

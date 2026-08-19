@@ -208,8 +208,11 @@ def test_events_websocket_closes_when_proposal_is_unknown(
 ) -> None:
     _configure(monkeypatch, sandbox_id="sandbox-missing")
 
-    with pytest.raises(WebSocketDisconnect) as excinfo, client.websocket_connect(
-        "/projects/events-sandbox-1/preview-proposals/does-not-exist/events"
+    with (
+        pytest.raises(WebSocketDisconnect) as excinfo,
+        client.websocket_connect(
+            "/projects/events-sandbox-1/preview-proposals/does-not-exist/events"
+        ),
     ):
         pass
 

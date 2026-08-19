@@ -88,9 +88,7 @@ def inspect_volume(
     volume_name: str,
     docker_client: Annotated[DockerClient, Depends(get_docker_client)],
 ) -> ManagedVolume:
-    return _docker_response(
-        lambda: inspect_managed_volume(docker_client, volume_name)
-    )
+    return _docker_response(lambda: inspect_managed_volume(docker_client, volume_name))
 
 
 @router.delete("/{volume_name}", response_model=RemoveVolumeResponse)
@@ -98,7 +96,9 @@ def remove_volume(
     volume_name: str,
     docker_client: Annotated[DockerClient, Depends(get_docker_client)],
     confirm: Annotated[bool, Query(description="Confirm permanent deletion")] = False,
-    force: Annotated[bool, Query(description="Pass force to the volume driver")] = False,
+    force: Annotated[
+        bool, Query(description="Pass force to the volume driver")
+    ] = False,
 ) -> RemoveVolumeResponse:
     _require_confirmation(confirm)
     return _docker_response(

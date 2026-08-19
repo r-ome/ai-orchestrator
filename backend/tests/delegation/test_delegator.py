@@ -150,7 +150,9 @@ class _Turns:
 
 
 def _result(payload: dict[str, Any]) -> TurnResult:
-    return TurnResult(raw_output=json.dumps(payload), payload=payload, model="delegator-model")
+    return TurnResult(
+        raw_output=json.dumps(payload), payload=payload, model="delegator-model"
+    )
 
 
 @pytest.fixture
@@ -182,9 +184,7 @@ def test_valid_decomposition_becomes_revision_one(
     turns: _Turns,
 ) -> None:
     _with_context(store)
-    turns.queue.append(
-        _result({"items": [_item("a"), _item("b", dependencies=["a"])]})
-    )
+    turns.queue.append(_result({"items": [_item("a"), _item("b", dependencies=["a"])]}))
 
     outcome = _generate(store)
 
@@ -275,9 +275,7 @@ def test_unconfirmed_verification_kind_is_rejected(
     turns: _Turns,
 ) -> None:
     _with_context(store)
-    bad = _result(
-        {"items": [_item("a", verification=[{"command_kind": "test"}])]}
-    )
+    bad = _result({"items": [_item("a", verification=[{"command_kind": "test"}])]})
     turns.queue.extend([bad, bad])
 
     outcome = _generate(store)

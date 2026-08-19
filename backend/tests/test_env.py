@@ -59,4 +59,3 @@ def test_env_file_resolves_to_the_backend_directory() -> None:
     backend = Path(__file__).resolve().parents[1]
     assert ENV_FILE == backend / ".env"
     assert ENV_FILE.parent.joinpath("app").is_dir(), "ENV_FILE must sit beside app/"
-

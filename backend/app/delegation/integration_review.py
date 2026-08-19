@@ -72,7 +72,9 @@ def claim_integration_review(
         raise service.DelegationOperationError(404, "Planning session was not found")
     plan = json_object(session.get("plan_spec_json"))
     if plan is None:
-        raise service.DelegationOperationError(409, "Planning session has no plan specification")
+        raise service.DelegationOperationError(
+            409, "Planning session has no plan specification"
+        )
     sandbox = store.sandbox(delegation_view.delegation.sandbox_id)
     if sandbox is None:
         raise service.DelegationOperationError(404, "Delegation sandbox was not found")
@@ -324,7 +326,9 @@ def execute_integration_review(
     # A reviewer that approves while naming a high or medium finding contradicts
     # itself, and the approval is the half the controller acts on. Take the
     # findings as the verdict and keep the reviewer's own words in the summary.
-    elif result_payload.get("approved") is True and _has_serious_finding(result_payload):
+    elif result_payload.get("approved") is True and _has_serious_finding(
+        result_payload
+    ):
         result_payload["approved"] = False
         result_payload["summary"] = (
             "The reviewer verdict was overridden because it approved the feature "
@@ -400,7 +404,10 @@ def _validate(payload: Mapping[str, Any], item_keys: set[str]) -> list[str]:
             continue
         if finding.get("severity") not in {"low", "medium", "high"}:
             errors.append(f"{label}.severity must be low, medium, or high")
-        if not isinstance(finding.get("text"), str) or not finding.get("text", "").strip():
+        if (
+            not isinstance(finding.get("text"), str)
+            or not finding.get("text", "").strip()
+        ):
             errors.append(f"{label}.text must be a non-empty string")
         keys = finding.get("work_item_keys")
         if not isinstance(keys, list) or any(
@@ -510,7 +517,8 @@ def _change_evidence_findings(delegation_view: Any) -> list[dict[str, Any]]:
     # it, and a change request has no settled state to leave, so judging every
     # pending revision let one weak turn block the delegation permanently.
     pending = [
-        change for change in delegation_view.changes
+        change
+        for change in delegation_view.changes
         if change.status.value == "awaiting_review"
     ]
     latest = max(pending, key=lambda change: change.revision, default=None)
@@ -605,6 +613,8 @@ def review_from_row(row: Mapping[str, Any]) -> IntegrationReview:
     )
 
 
-def latest_review(store: ControllerStore, delegation_id: str) -> IntegrationReview | None:
+def latest_review(
+    store: ControllerStore, delegation_id: str
+) -> IntegrationReview | None:
     rows = store.delegation_reviews(delegation_id)
     return review_from_row(rows[0]) if rows else None

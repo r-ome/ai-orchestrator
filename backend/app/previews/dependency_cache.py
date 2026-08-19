@@ -33,6 +33,7 @@ _LOCKFILE_NAMES = (
 
 _DEPENDENCY_READY_MARKER = ".orchestrator-install-complete"
 
+
 def _volume_runtime_files(
     docker_client: DockerClient,
     volume_name: str,
@@ -89,7 +90,9 @@ def _volume_runtime_files(
                     )
                 files[normalized] = content
     except tarfile.TarError as error:
-        raise PreviewOperationError(502, "Sandbox inspection returned invalid data") from error
+        raise PreviewOperationError(
+            502, "Sandbox inspection returned invalid data"
+        ) from error
     return files
 
 
@@ -118,10 +121,7 @@ def _dependency_volume_ready(
         command=[
             "sh",
             "-c",
-            (
-                f"if [ -f /workspace/{_DEPENDENCY_READY_MARKER} ]; "
-                "then printf ready; fi"
-            ),
+            (f"if [ -f /workspace/{_DEPENDENCY_READY_MARKER} ]; then printf ready; fi"),
         ],
         volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
         tmpfs_size="32m",
@@ -179,7 +179,9 @@ def _volume_environment_files(
                     )
                 files[normalized] = content
     except tarfile.TarError as error:
-        raise PreviewOperationError(502, "Sandbox inspection returned invalid data") from error
+        raise PreviewOperationError(
+            502, "Sandbox inspection returned invalid data"
+        ) from error
     return files
 
 
@@ -194,7 +196,11 @@ def _volume_context_tar(
     output = _run_preview_command(
         docker_client,
         image=inspection_image,
-        command=["sh", "-c", f"tar -C {shlex.quote(directory)} -cf - . | base64 | tr -d '\\n'"],
+        command=[
+            "sh",
+            "-c",
+            f"tar -C {shlex.quote(directory)} -cf - . | base64 | tr -d '\\n'",
+        ],
         volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
         max_log_bytes=PREVIEW_ARCHIVE_MAX_LOG_BYTES,
     )

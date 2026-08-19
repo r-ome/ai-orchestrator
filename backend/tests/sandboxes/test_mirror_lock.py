@@ -16,17 +16,25 @@ def _store(tmp_path: Path) -> ControllerStore:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
     store.register_v1_project(
-        project_id="project-1", remote_url="https://example.test/repo",
-        default_branch="main", mirror_volume="prj-project-mirr", created_at="",
+        project_id="project-1",
+        remote_url="https://example.test/repo",
+        default_branch="main",
+        mirror_volume="prj-project-mirr",
+        created_at="",
     )
     store.register_v1_sandbox(
-        sandbox_id="sandbox-1", project_id="project-1", project_name="repo",
-        volume_name="sbx-sandbox-ws", created_at="",
+        sandbox_id="sandbox-1",
+        project_id="project-1",
+        project_name="repo",
+        volume_name="sbx-sandbox-ws",
+        created_at="",
     )
     return store
 
 
-def test_mirror_lock_atomic_admission_has_exactly_one_of_32_winners(tmp_path: Path) -> None:
+def test_mirror_lock_atomic_admission_has_exactly_one_of_32_winners(
+    tmp_path: Path,
+) -> None:
     store = _store(tmp_path)
     barrier = threading.Barrier(32)
     wins: list[str] = []
@@ -37,7 +45,10 @@ def test_mirror_lock_atomic_admission_has_exactly_one_of_32_winners(tmp_path: Pa
         barrier.wait()
         try:
             candidate.acquire_project_mirror_lock(
-                project_id="project-1", operation="create", operation_id=str(index), owner="test"
+                project_id="project-1",
+                operation="create",
+                operation_id=str(index),
+                owner="test",
             )
         except SandboxLeaseHeldError:
             result = "blocked"

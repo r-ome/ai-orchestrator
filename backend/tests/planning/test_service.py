@@ -79,7 +79,9 @@ def _create(store: ControllerStore, settings: PlanningSettings):
         store,
         settings,
         PROJECT.name,
-        CreatePlanningSessionRequest(title="Add planning", request="Plan project sessions"),
+        CreatePlanningSessionRequest(
+            title="Add planning", request="Plan project sessions"
+        ),
     )
 
 
@@ -90,9 +92,9 @@ def test_create_stores_request_as_first_message_and_starts_clarifying(
 
     assert session.status is PlanningStatus.CLARIFYING
     messages = controller_store.planning_messages(session.id)
-    assert [(message["sequence"], message["role"], message["text"]) for message in messages] == [
-        (1, "user", "Plan project sessions")
-    ]
+    assert [
+        (message["sequence"], message["role"], message["text"]) for message in messages
+    ] == [(1, "user", "Plan project sessions")]
 
 
 def test_illegal_planning_transition_changes_nothing(
@@ -105,7 +107,10 @@ def test_illegal_planning_transition_changes_nothing(
         session_id=session.id,
         to_status=PlanningStatus.UNDER_REVIEW,
     )
-    assert controller_store.planning_session(session.id)["status"] == PlanningStatus.CLARIFYING.value
+    assert (
+        controller_store.planning_session(session.id)["status"]
+        == PlanningStatus.CLARIFYING.value
+    )
 
 
 def test_create_records_resolved_model_defaults(
@@ -124,7 +129,9 @@ def test_create_records_resolved_model_defaults(
 def test_create_rejects_a_model_owned_by_another_provider(
     controller_store: ControllerStore, settings: PlanningSettings
 ) -> None:
-    with pytest.raises(PlanningOperationError, match="claude model and codex cannot run it") as error:
+    with pytest.raises(
+        PlanningOperationError, match="claude model and codex cannot run it"
+    ) as error:
         service.create_session(
             object(),
             controller_store,
@@ -199,7 +206,10 @@ def test_a_configured_effort_outside_the_dialog_choices_is_not_refused(
             reviewer_reasoning_effort="minimal",
         ),
     )
-    assert controller_store.planning_session(echoed.id)["reviewer_reasoning_effort"] == "minimal"
+    assert (
+        controller_store.planning_session(echoed.id)["reviewer_reasoning_effort"]
+        == "minimal"
+    )
 
 
 def test_each_role_runs_with_its_stored_model(
@@ -267,13 +277,18 @@ def test_each_role_runs_with_its_stored_model(
         return TurnResult(raw_output="", payload=payload)
 
     monkeypatch.setattr(service, "run_planning_turn", run)
-    monkeypatch.setattr(service, "_turn_client", lambda: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(
+        service, "_turn_client", lambda: SimpleNamespace(close=lambda: None)
+    )
 
     service._run_clarifier_turn(controller_store, settings, session.id)
     service._run_planner_turn(controller_store, settings, session.id)
     service._run_reviewer_turn(controller_store, settings, session.id)
 
-    assert [(turn.claude_model, turn.codex_model, turn.codex_reasoning_effort, provider) for turn, provider in captured] == [
+    assert [
+        (turn.claude_model, turn.codex_model, turn.codex_reasoning_effort, provider)
+        for turn, provider in captured
+    ] == [
         ("claude-fable-5", "gpt-5.6-terra", "high", AgentProvider.CLAUDE),
         ("opus", "gpt-5.6-sol", "high", AgentProvider.CODEX),
         ("opus", "gpt-5.6-terra", "low", AgentProvider.CODEX),
@@ -281,7 +296,9 @@ def test_each_role_runs_with_its_stored_model(
 
 
 def test_create_rejects_project_that_is_not_ready(
-    controller_store: ControllerStore, settings: PlanningSettings, monkeypatch: pytest.MonkeyPatch
+    controller_store: ControllerStore,
+    settings: PlanningSettings,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         service,
@@ -305,7 +322,11 @@ def test_second_message_while_a_turn_runs_and_terminal_message_are_rejected(
 
     with pytest.raises(PlanningOperationError, match="already running") as running:
         service.post_message(
-            controller_store, settings, PROJECT.name, session.id, PlanningMessageRequest(text="More")
+            controller_store,
+            settings,
+            PROJECT.name,
+            session.id,
+            PlanningMessageRequest(text="More"),
         )
     assert running.value.status_code == 409
 
@@ -318,7 +339,11 @@ def test_second_message_while_a_turn_runs_and_terminal_message_are_rejected(
     )
     with pytest.raises(PlanningOperationError) as terminal:
         service.post_message(
-            controller_store, settings, PROJECT.name, session.id, PlanningMessageRequest(text="More")
+            controller_store,
+            settings,
+            PROJECT.name,
+            session.id,
+            PlanningMessageRequest(text="More"),
         )
     assert terminal.value.status_code == 409
 
@@ -334,11 +359,19 @@ def test_awaiting_confirmation_rejects_plain_message_and_correct_restarts_clarif
     )
     with pytest.raises(PlanningOperationError, match="confirm, correct, or proceed"):
         service.post_message(
-            controller_store, settings, PROJECT.name, session.id, PlanningMessageRequest(text="Correction")
+            controller_store,
+            settings,
+            PROJECT.name,
+            session.id,
+            PlanningMessageRequest(text="Correction"),
         )
 
     corrected = service.correct_understanding(
-        controller_store, settings, PROJECT.name, session.id, PlanningMessageRequest(text="Correction")
+        controller_store,
+        settings,
+        PROJECT.name,
+        session.id,
+        PlanningMessageRequest(text="Correction"),
     )
     assert corrected.status is PlanningStatus.CLARIFYING
     assert controller_store.planning_messages(session.id)[-1]["text"] == "Correction"
@@ -358,7 +391,9 @@ def test_ready_clarifier_response_stores_summary_and_awaits_confirmation(
         },
     )
 
-    service._apply_clarifier_result(controller_store, controller_store.planning_session(session.id), result)  # type: ignore[arg-type]
+    service._apply_clarifier_result(
+        controller_store, controller_store.planning_session(session.id), result
+    )  # type: ignore[arg-type]
 
     stored = controller_store.planning_session(session.id)
     assert stored["status"] == "awaiting_confirmation"
@@ -369,14 +404,24 @@ def test_confirm_freezes_complete_brief_and_moves_to_planning(
     controller_store: ControllerStore, settings: PlanningSettings
 ) -> None:
     session = _create(controller_store, settings)
-    controller_store.append_planning_message(session_id=session.id, role="clarifier", text="What scope?")
-    controller_store.append_planning_message(session_id=session.id, role="user", text="Only the API")
-    controller_store.set_planning_understanding(session_id=session.id, summary="Add the API only")
+    controller_store.append_planning_message(
+        session_id=session.id, role="clarifier", text="What scope?"
+    )
+    controller_store.append_planning_message(
+        session_id=session.id, role="user", text="Only the API"
+    )
+    controller_store.set_planning_understanding(
+        session_id=session.id, summary="Add the API only"
+    )
     controller_store.advance_planning_status(
-        session_id=session.id, from_statuses=("clarifying",), to_status="awaiting_confirmation"
+        session_id=session.id,
+        from_statuses=("clarifying",),
+        to_status="awaiting_confirmation",
     )
 
-    confirmed = service.confirm_understanding(controller_store, settings, PROJECT.name, session.id)
+    confirmed = service.confirm_understanding(
+        controller_store, settings, PROJECT.name, session.id
+    )
 
     assert confirmed.status is PlanningStatus.PLANNING
     stored = controller_store.planning_session(session.id)
@@ -393,7 +438,9 @@ def test_proceed_from_clarifying_freezes_an_unconfirmed_brief(
 ) -> None:
     session = _create(controller_store, settings)
 
-    proceeded = service.proceed_without_confirmation(controller_store, settings, PROJECT.name, session.id)
+    proceeded = service.proceed_without_confirmation(
+        controller_store, settings, PROJECT.name, session.id
+    )
 
     assert proceeded.status is PlanningStatus.PLANNING
     stored = controller_store.planning_session(session.id)
@@ -402,7 +449,9 @@ def test_proceed_from_clarifying_freezes_an_unconfirmed_brief(
 
 
 def test_cancel_discards_a_late_turn_result_and_releases_the_turn(
-    controller_store: ControllerStore, settings: PlanningSettings, monkeypatch: pytest.MonkeyPatch
+    controller_store: ControllerStore,
+    settings: PlanningSettings,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _create(controller_store, settings)
     entered = threading.Event()
@@ -424,7 +473,11 @@ def test_cancel_discards_a_late_turn_result_and_releases_the_turn(
     monkeypatch.setattr(service, "_run_clarifier_turn", late_result)
 
     async def run() -> None:
-        task = asyncio.create_task(service._run_turn(controller_store, settings, session.id, TurnKind.CLARIFIER))
+        task = asyncio.create_task(
+            service._run_turn(
+                controller_store, settings, session.id, TurnKind.CLARIFIER
+            )
+        )
         while not entered.is_set():
             await asyncio.sleep(0)
         service.cancel_session(controller_store, PROJECT.name, session.id)
@@ -442,22 +495,31 @@ def test_cancel_discards_a_late_turn_result_and_releases_the_turn(
 
 
 def test_turn_error_fails_session_records_reason_and_releases_turn(
-    controller_store: ControllerStore, settings: PlanningSettings, monkeypatch: pytest.MonkeyPatch
+    controller_store: ControllerStore,
+    settings: PlanningSettings,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _create(controller_store, settings)
     monkeypatch.setattr(
         service,
         "_run_clarifier_turn",
-        lambda *_: (_ for _ in ()).throw(PlanningTurnError(422, "bad JSON", "raw failure")),
+        lambda *_: (_ for _ in ()).throw(
+            PlanningTurnError(422, "bad JSON", "raw failure")
+        ),
     )
 
-    asyncio.run(service._run_turn(controller_store, settings, session.id, TurnKind.CLARIFIER))
+    asyncio.run(
+        service._run_turn(controller_store, settings, session.id, TurnKind.CLARIFIER)
+    )
 
     stored = controller_store.planning_session(session.id)
     assert stored["status"] == "failed"
     assert stored["turn_state"] == "idle"
     assert stored["failure_reason"] == "bad JSON"
-    assert controller_store.planning_messages(session.id)[-1]["raw_output"] == "raw failure"
+    assert (
+        controller_store.planning_messages(session.id)[-1]["raw_output"]
+        == "raw failure"
+    )
 
 
 def test_transient_turn_failure_classifier_matches_capacity_and_rate_limit() -> None:
@@ -495,7 +557,9 @@ def test_transient_classifier_ignores_bare_status_numbers_and_timeouts() -> None
     )
 
 
-def test_transient_classifier_ignores_a_reviewed_plan_that_discusses_rate_limits() -> None:
+def test_transient_classifier_ignores_a_reviewed_plan_that_discusses_rate_limits() -> (
+    None
+):
     """The echoed prompt embeds the plan, which may legitimately use these words."""
     reviewed_plan = "\n".join(
         [
@@ -520,10 +584,14 @@ def test_transient_classifier_ignores_a_reviewed_plan_that_discusses_rate_limits
 
 
 def test_transient_reviewer_failure_retries_without_losing_the_current_revision(
-    controller_store: ControllerStore, settings: PlanningSettings, monkeypatch: pytest.MonkeyPatch
+    controller_store: ControllerStore,
+    settings: PlanningSettings,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _create(controller_store, settings)
-    controller_store.set_planning_understanding(session_id=session.id, summary="Build the feature")
+    controller_store.set_planning_understanding(
+        session_id=session.id, summary="Build the feature"
+    )
     controller_store.advance_planning_status(
         session_id=session.id,
         from_statuses=(PlanningStatus.CLARIFYING.value,),
@@ -586,7 +654,9 @@ def test_transient_reviewer_failure_retries_without_losing_the_current_revision(
 
 
 def test_exhausted_transient_retries_fail_with_attempt_count(
-    controller_store: ControllerStore, settings: PlanningSettings, monkeypatch: pytest.MonkeyPatch
+    controller_store: ControllerStore,
+    settings: PlanningSettings,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _create(controller_store, settings)
     attempts = 0
@@ -620,7 +690,9 @@ def test_exhausted_transient_retries_fail_with_attempt_count(
 
 
 def test_cancelled_session_between_retries_stays_cancelled(
-    controller_store: ControllerStore, settings: PlanningSettings, monkeypatch: pytest.MonkeyPatch
+    controller_store: ControllerStore,
+    settings: PlanningSettings,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _create(controller_store, settings)
     attempts = 0
@@ -636,7 +708,9 @@ def test_cancelled_session_between_retries_stays_cancelled(
     monkeypatch.setattr(service, "_run_clarifier_turn", fail)
     monkeypatch.setattr(service.asyncio, "sleep", cancel_before_retry)
 
-    asyncio.run(service._run_turn(controller_store, settings, session.id, TurnKind.CLARIFIER))
+    asyncio.run(
+        service._run_turn(controller_store, settings, session.id, TurnKind.CLARIFIER)
+    )
 
     stored = controller_store.planning_session(session.id)
     assert attempts == 1
@@ -645,7 +719,9 @@ def test_cancelled_session_between_retries_stays_cancelled(
 
 
 def test_timeout_fails_without_retrying(
-    controller_store: ControllerStore, settings: PlanningSettings, monkeypatch: pytest.MonkeyPatch
+    controller_store: ControllerStore,
+    settings: PlanningSettings,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _create(controller_store, settings)
     attempts = 0
@@ -657,7 +733,9 @@ def test_timeout_fails_without_retrying(
 
     monkeypatch.setattr(service, "_run_clarifier_turn", timeout)
 
-    asyncio.run(service._run_turn(controller_store, settings, session.id, TurnKind.CLARIFIER))
+    asyncio.run(
+        service._run_turn(controller_store, settings, session.id, TurnKind.CLARIFIER)
+    )
 
     stored = controller_store.planning_session(session.id)
     assert attempts == 1

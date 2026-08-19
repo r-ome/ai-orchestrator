@@ -95,13 +95,9 @@ SANDBOX_LIFECYCLE_TRANSITIONS: Mapping[
     ),
     # Destroy accepts every managed status. Draining declares the destructive
     # intent and blocks writers before destroying starts the resource sweep.
-    SandboxLifecycleStatus.DRAINING: frozenset(
-        {SandboxLifecycleStatus.DESTROYING}
-    ),
+    SandboxLifecycleStatus.DRAINING: frozenset({SandboxLifecycleStatus.DESTROYING}),
     # A repeated destroy reasserts draining before it retries the sweep.
-    SandboxLifecycleStatus.DESTROYING: frozenset(
-        {SandboxLifecycleStatus.DRAINING}
-    ),
+    SandboxLifecycleStatus.DESTROYING: frozenset({SandboxLifecycleStatus.DRAINING}),
 }
 
 

@@ -137,7 +137,11 @@ def _stub_git(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> None:
         sandbox_service,
         "discover_engine",
         lambda *_args, **_kwargs: EngineDetection(
-            signals=(), proposed_engine="sqlite", migrate_commands=(), seed_commands=(), commands_source={}
+            signals=(),
+            proposed_engine="sqlite",
+            migrate_commands=(),
+            seed_commands=(),
+            commands_source={},
         ),
     )
 
@@ -149,7 +153,7 @@ def _complete_sync(*_args: object, **kwargs: object) -> None:
     assert manifest is not None
     detection = store.sandbox_engine_detection(SANDBOX_ID)
     assert detection is not None
-    assert 'approved migrate' in str(detection["migrate_commands_json"])
+    assert "approved migrate" in str(detection["migrate_commands_json"])
     transition_sandbox_lifecycle(
         store,
         replace(
@@ -226,17 +230,32 @@ def test_sync_preview_requires_opt_in_and_names_the_preview(
     store = get_controller_store()
     store.create_preview_run(
         {
-            "id": "preview-blocker", "sandbox_id": SANDBOX_ID, "proposal_id": "proposal",
-            "mode": "native", "kind": "live", "task_id": None, "commit_sha": None,
-            "status": "running", "selected_service": None, "container_port": 3000,
-            "host_port": None, "config_json": "{}", "config_digest": "digest",
-            "network_name": None, "created_at": "", "started_at": None,
-            "expires_at": None, "last_activity_at": "",
+            "id": "preview-blocker",
+            "sandbox_id": SANDBOX_ID,
+            "proposal_id": "proposal",
+            "mode": "native",
+            "kind": "live",
+            "task_id": None,
+            "commit_sha": None,
+            "status": "running",
+            "selected_service": None,
+            "container_port": 3000,
+            "host_port": None,
+            "config_json": "{}",
+            "config_digest": "digest",
+            "network_name": None,
+            "created_at": "",
+            "started_at": None,
+            "expires_at": None,
+            "last_activity_at": "",
         }
     )
     refused = client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={})
     assert refused.status_code == 409
-    assert refused.json()["detail"]["blocking_writer"] == {"class": "preview", "id": "preview-blocker"}
+    assert refused.json()["detail"]["blocking_writer"] == {
+        "class": "preview",
+        "id": "preview-blocker",
+    }
 
     def stop(*_args: object, preview_id: str, **_kwargs: object) -> None:
         assert preview_id == "preview-blocker"
@@ -295,7 +314,9 @@ def test_sync_allows_idle_agent_but_refuses_open_agent_writer_session(
 ) -> None:
     _register(fake_docker_client=fake_docker_client)
     store = get_controller_store()
-    store.start_agent_run(run_id="agent-1", sandbox_id=SANDBOX_ID, provider="codex", status="running")
+    store.start_agent_run(
+        run_id="agent-1", sandbox_id=SANDBOX_ID, provider="codex", status="running"
+    )
     calls: list[str] = []
     _stub_git(monkeypatch, calls)
     monkeypatch.setattr(sandbox_service, "complete_database_provision", _complete_sync)
@@ -305,12 +326,16 @@ def test_sync_allows_idle_agent_but_refuses_open_agent_writer_session(
     assert manifest is not None
     write_manifest(store, replace(manifest, current_base_commit=OLD_BASE))
     store.open_agent_writer_session(
-        session_id="writer-1", sandbox_id=SANDBOX_ID, agent_run_id="agent-1", kind="terminal"
+        session_id="writer-1",
+        sandbox_id=SANDBOX_ID,
+        agent_run_id="agent-1",
+        kind="terminal",
     )
     blocked = client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={})
     assert blocked.status_code == 409
     assert blocked.json()["detail"]["blocking_writer"] == {
-        "class": "agent_writer_session", "id": "writer-1"
+        "class": "agent_writer_session",
+        "id": "writer-1",
     }
 
 
@@ -321,10 +346,14 @@ def test_git_failure_restores_safety_ref_and_dirty_workspace_changes_nothing(
     calls: list[str] = []
     _stub_git(monkeypatch, calls)
     monkeypatch.setattr(
-        sandbox_service, "sync_workspace_from_mirror", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("conflict"))
+        sandbox_service,
+        "sync_workspace_from_mirror",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("conflict")),
     )
     monkeypatch.setattr(
-        sandbox_service, "restore_workspace_safety_ref", lambda *_args, **_kwargs: calls.append("restored")
+        sandbox_service,
+        "restore_workspace_safety_ref",
+        lambda *_args, **_kwargs: calls.append("restored"),
     )
     failed = client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={})
     assert failed.status_code == 409
@@ -338,7 +367,9 @@ def test_git_failure_restores_safety_ref_and_dirty_workspace_changes_nothing(
 
     before = list(calls)
     monkeypatch.setattr(
-        sandbox_service, "require_clean_workspace", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("dirty"))
+        sandbox_service,
+        "require_clean_workspace",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("dirty")),
     )
     dirty = client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={})
     assert dirty.status_code == 409
@@ -356,7 +387,9 @@ def test_migration_failure_keeps_pending_and_reset_db_finalizes_recovery(
         raise sandbox_database.SandboxDatabaseError(422, "migration exploded")
 
     with monkeypatch.context() as migration_patch:
-        migration_patch.setattr(sandbox_database.SQLITE_DATABASE, "run_migrations", fail)
+        migration_patch.setattr(
+            sandbox_database.SQLITE_DATABASE, "run_migrations", fail
+        )
         failed = client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={})
     assert failed.status_code == 422
     assert "not rolled back" in failed.json()["detail"]
@@ -385,16 +418,24 @@ def test_sync_reports_but_never_applies_an_engine_mismatch(
         "discover_engine",
         lambda *_args, **_kwargs: EngineDetection(
             signals=(EngineSignal("postgres", "test", "x", "changed", 1),),
-            proposed_engine="postgres", migrate_commands=(), seed_commands=(), commands_source={}
+            proposed_engine="postgres",
+            migrate_commands=(),
+            seed_commands=(),
+            commands_source={},
         ),
     )
     response = client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={})
     assert response.status_code == 202
     assert response.json()["engine_report"] == {
-        "confirmed_engine": "sqlite", "detected_engine": "postgres", "mismatch": True,
+        "confirmed_engine": "sqlite",
+        "detected_engine": "postgres",
+        "mismatch": True,
         "detection_error": None,
     }
-    assert get_controller_store().sandbox_engine_detection(SANDBOX_ID)["confirmed_engine"] == "sqlite"
+    assert (
+        get_controller_store().sandbox_engine_detection(SANDBOX_ID)["confirmed_engine"]
+        == "sqlite"
+    )
 
 
 def test_sync_reports_a_database_added_after_no_database_confirmation(
@@ -447,30 +488,38 @@ def test_sync_git_path_rebases_from_a_local_bare_remote() -> None:
 
     try:
         network = docker_client.networks.create(name=f"orchestrator-sync-net-{run_id}")
-        remote_volume = docker_client.volumes.create(name=f"orchestrator-sync-remote-{run_id}")
+        remote_volume = docker_client.volumes.create(
+            name=f"orchestrator-sync-remote-{run_id}"
+        )
         mirror = docker_client.volumes.create(name=f"orchestrator-sync-mirror-{run_id}")
-        workspace = docker_client.volumes.create(name=f"orchestrator-sync-workspace-{run_id}")
-        base_commit = docker_client.containers.run(
-            "alpine/git:latest",
-            entrypoint=["sh", "-c"],
-            command=[
-                "set -eu\n"
-                "git init --bare -q /remote/repository.git\n"
-                "git init -q -b main /tmp/seed\n"
-                "git -C /tmp/seed config user.name test\n"
-                "git -C /tmp/seed config user.email test@example.invalid\n"
-                "printf initial > /tmp/seed/source.txt\n"
-                "git -C /tmp/seed add source.txt\n"
-                "git -C /tmp/seed commit -qm initial\n"
-                "git -C /tmp/seed remote add origin /remote/repository.git\n"
-                "git -C /tmp/seed push -q origin main\n"
-                "git -C /remote/repository.git symbolic-ref HEAD refs/heads/main\n"
-                "git -C /remote/repository.git rev-parse refs/heads/main\n"
-            ],
-            remove=True,
-            volumes={remote_volume.name: {"bind": "/remote", "mode": "rw"}},
-            tmpfs={"/git": "rw,nosuid,size=1m"},
-        ).decode().strip()
+        workspace = docker_client.volumes.create(
+            name=f"orchestrator-sync-workspace-{run_id}"
+        )
+        base_commit = (
+            docker_client.containers.run(
+                "alpine/git:latest",
+                entrypoint=["sh", "-c"],
+                command=[
+                    "set -eu\n"
+                    "git init --bare -q /remote/repository.git\n"
+                    "git init -q -b main /tmp/seed\n"
+                    "git -C /tmp/seed config user.name test\n"
+                    "git -C /tmp/seed config user.email test@example.invalid\n"
+                    "printf initial > /tmp/seed/source.txt\n"
+                    "git -C /tmp/seed add source.txt\n"
+                    "git -C /tmp/seed commit -qm initial\n"
+                    "git -C /tmp/seed remote add origin /remote/repository.git\n"
+                    "git -C /tmp/seed push -q origin main\n"
+                    "git -C /remote/repository.git symbolic-ref HEAD refs/heads/main\n"
+                    "git -C /remote/repository.git rev-parse refs/heads/main\n"
+                ],
+                remove=True,
+                volumes={remote_volume.name: {"bind": "/remote", "mode": "rw"}},
+                tmpfs={"/git": "rw,nosuid,size=1m"},
+            )
+            .decode()
+            .strip()
+        )
         daemon = docker_client.containers.run(
             "alpine/git:latest",
             entrypoint=["sh", "-c"],
@@ -495,7 +544,9 @@ def test_sync_git_path_rebases_from_a_local_bare_remote() -> None:
             probe = docker_client.containers.run(
                 "alpine/git:latest",
                 entrypoint=["sh", "-c"],
-                command=[f"git ls-remote {remote_url} >/dev/null 2>&1 && echo ready || echo waiting"],
+                command=[
+                    f"git ls-remote {remote_url} >/dev/null 2>&1 && echo ready || echo waiting"
+                ],
                 remove=True,
                 tmpfs={"/git": "rw,nosuid,size=1m"},
             )
@@ -506,22 +557,33 @@ def test_sync_git_path_rebases_from_a_local_bare_remote() -> None:
         with tempfile.TemporaryDirectory(dir=Path.home()) as secret_directory:
             from app.controller.config import get_controller_settings
 
-            previous_secret_directory = os.environ.get("CONTROLLER_GIT_SECRET_DIRECTORY")
+            previous_secret_directory = os.environ.get(
+                "CONTROLLER_GIT_SECRET_DIRECTORY"
+            )
             os.environ["CONTROLLER_GIT_SECRET_DIRECTORY"] = secret_directory
             get_controller_settings.cache_clear()
             try:
                 default_branch, imported_commit = ensure_canonical_mirror(
-                    docker_client, image="alpine/git:latest", mirror_volume=mirror.name,
-                    remote_url=remote_url, credential_source=StaticCredentialSource(), ensure_image=True,
+                    docker_client,
+                    image="alpine/git:latest",
+                    mirror_volume=mirror.name,
+                    remote_url=remote_url,
+                    credential_source=StaticCredentialSource(),
+                    ensure_image=True,
                 )
                 assert (default_branch, imported_commit) == ("main", base_commit)
                 clone_mirror_to_workspace(
-                    docker_client, image="alpine/git:latest", mirror_volume=mirror.name,
-                    workspace_volume=workspace.name, base_commit=base_commit,
-                    branch="feature/sync", ensure_image=True,
+                    docker_client,
+                    image="alpine/git:latest",
+                    mirror_volume=mirror.name,
+                    workspace_volume=workspace.name,
+                    base_commit=base_commit,
+                    branch="feature/sync",
+                    ensure_image=True,
                 )
                 docker_client.containers.run(
-                    "alpine/git:latest", entrypoint=["sh", "-c"],
+                    "alpine/git:latest",
+                    entrypoint=["sh", "-c"],
                     command=[
                         "set -eu\n"
                         "git clone -q /remote/repository.git /tmp/work\n"
@@ -537,29 +599,42 @@ def test_sync_git_path_rebases_from_a_local_bare_remote() -> None:
                     tmpfs={"/git": "rw,nosuid,size=1m"},
                 )
                 require_clean_workspace(
-                    docker_client, image="alpine/git:latest", workspace_volume=workspace.name
+                    docker_client,
+                    image="alpine/git:latest",
+                    workspace_volume=workspace.name,
                 )
                 create_workspace_safety_ref(
-                    docker_client, image="alpine/git:latest", workspace_volume=workspace.name,
+                    docker_client,
+                    image="alpine/git:latest",
+                    workspace_volume=workspace.name,
                     safety_ref="refs/orchestrator/safety/test-sync",
                 )
                 fetch_canonical_mirror(
-                    docker_client, image="alpine/git:latest", mirror_volume=mirror.name,
+                    docker_client,
+                    image="alpine/git:latest",
+                    mirror_volume=mirror.name,
                     credential_source=StaticCredentialSource(),
                 )
                 new_commit = mirror_base_commit(
-                    docker_client, image="alpine/git:latest", mirror_volume=mirror.name,
+                    docker_client,
+                    image="alpine/git:latest",
+                    mirror_volume=mirror.name,
                     base_ref="refs/heads/main",
                 )
                 sync_workspace_from_mirror(
-                    docker_client, image="alpine/git:latest", mirror_volume=mirror.name,
-                    workspace_volume=workspace.name, base_ref="refs/heads/main",
-                    pending_base_commit=new_commit, strategy="rebase",
+                    docker_client,
+                    image="alpine/git:latest",
+                    mirror_volume=mirror.name,
+                    workspace_volume=workspace.name,
+                    base_ref="refs/heads/main",
+                    pending_base_commit=new_commit,
+                    strategy="rebase",
                 )
                 output = run_git(
-                    docker_client, image="alpine/git:latest",
+                    docker_client,
+                    image="alpine/git:latest",
                     volumes={workspace.name: {"bind": "/workspace", "mode": "ro"}},
-                    script="git -C /workspace rev-parse HEAD; test -z \"$(git -C /workspace remote)\"",
+                    script='git -C /workspace rev-parse HEAD; test -z "$(git -C /workspace remote)"',
                     network=GitNetworkMode.NONE,
                 )
                 assert output.decode().strip() == new_commit
@@ -567,7 +642,9 @@ def test_sync_git_path_rebases_from_a_local_bare_remote() -> None:
                 if previous_secret_directory is None:
                     os.environ.pop("CONTROLLER_GIT_SECRET_DIRECTORY", None)
                 else:
-                    os.environ["CONTROLLER_GIT_SECRET_DIRECTORY"] = previous_secret_directory
+                    os.environ["CONTROLLER_GIT_SECRET_DIRECTORY"] = (
+                        previous_secret_directory
+                    )
                 get_controller_settings.cache_clear()
     finally:
         if daemon is not None:
@@ -590,12 +667,24 @@ def test_publish_requires_review_before_stopping_a_running_preview(
     store = get_controller_store()
     store.create_preview_run(
         {
-            "id": "preview-blocker", "sandbox_id": SANDBOX_ID, "proposal_id": "proposal",
-            "mode": "native", "kind": "live", "task_id": None, "commit_sha": None,
-            "status": "running", "selected_service": None, "container_port": 3000,
-            "host_port": None, "config_json": "{}", "config_digest": "digest",
-            "network_name": None, "created_at": "", "started_at": None,
-            "expires_at": None, "last_activity_at": "",
+            "id": "preview-blocker",
+            "sandbox_id": SANDBOX_ID,
+            "proposal_id": "proposal",
+            "mode": "native",
+            "kind": "live",
+            "task_id": None,
+            "commit_sha": None,
+            "status": "running",
+            "selected_service": None,
+            "container_port": 3000,
+            "host_port": None,
+            "config_json": "{}",
+            "config_digest": "digest",
+            "network_name": None,
+            "created_at": "",
+            "started_at": None,
+            "expires_at": None,
+            "last_activity_at": "",
         }
     )
 
@@ -611,7 +700,10 @@ def test_publish_requires_review_before_stopping_a_running_preview(
         f"/sandboxes/{SANDBOX_ID}/publish", json={"stop_blocking_preview": True}
     )
     assert refused.status_code == 409
-    assert refused.json()["detail"] == "An approved feature review is required before publish"
+    assert (
+        refused.json()["detail"]
+        == "An approved feature review is required before publish"
+    )
     assert stopped == []
     assert store.preview_run("preview-blocker")["status"] == "running"
 
@@ -628,15 +720,29 @@ def test_reviewed_publish_reports_a_blocking_preview_and_takes_the_opt_in(
     store = get_controller_store()
     store.create_preview_run(
         {
-            "id": "preview-blocker", "sandbox_id": SANDBOX_ID, "proposal_id": "proposal",
-            "mode": "native", "kind": "live", "task_id": None, "commit_sha": None,
-            "status": "running", "selected_service": None, "container_port": 3000,
-            "host_port": None, "config_json": "{}", "config_digest": "digest",
-            "network_name": None, "created_at": "", "started_at": None,
-            "expires_at": None, "last_activity_at": "",
+            "id": "preview-blocker",
+            "sandbox_id": SANDBOX_ID,
+            "proposal_id": "proposal",
+            "mode": "native",
+            "kind": "live",
+            "task_id": None,
+            "commit_sha": None,
+            "status": "running",
+            "selected_service": None,
+            "container_port": 3000,
+            "host_port": None,
+            "config_json": "{}",
+            "config_digest": "digest",
+            "network_name": None,
+            "created_at": "",
+            "started_at": None,
+            "expires_at": None,
+            "last_activity_at": "",
         }
     )
-    monkeypatch.setattr(sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None
+    )
 
     refused = client.post(f"/sandboxes/{SANDBOX_ID}/publish", json={})
 
@@ -655,7 +761,9 @@ def test_reviewed_publish_reports_a_blocking_preview_and_takes_the_opt_in(
 
     monkeypatch.setattr(sandbox_lifecycle, "_stop_blocking_preview", stop)
 
-    client.post(f"/sandboxes/{SANDBOX_ID}/publish", json={"stop_blocking_preview": True})
+    client.post(
+        f"/sandboxes/{SANDBOX_ID}/publish", json={"stop_blocking_preview": True}
+    )
 
     assert stopped == ["preview-blocker"]
 
