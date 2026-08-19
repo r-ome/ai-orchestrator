@@ -3,6 +3,7 @@ import type { PlanningMessage } from '../api/planning'
 import Markdown from './Markdown'
 import PlanDiff from './PlanDiff'
 import PlanningRawOutput from './PlanningRawOutput'
+import { severityPill } from '../utils/severity'
 
 interface PlanningTurnCardProps {
   message: PlanningMessage
@@ -16,13 +17,6 @@ interface PlanningTurnCardProps {
   bare?: boolean
   /** The previous planner revision, so this one can be shown as a diff. */
   previousPlan?: { revision: number; text: string } | null
-}
-
-/** Severity carries its own word, so these only reinforce it. */
-const SEVERITY_PILL: Record<string, string> = {
-  blocking: 'err',
-  major: 'warn',
-  minor: 'muted',
 }
 
 const RESPONSE_PILL: Record<string, string> = {
@@ -99,7 +93,7 @@ function PlanningTurnCard({
               {message.findings.map((finding) => (
                 <li key={finding.finding_id}>
                   <span className="kv-key">
-                    <span className={`pill ${SEVERITY_PILL[finding.severity] ?? ''}`}>
+                    <span className={`pill ${severityPill(finding.severity)}`}>
                       {finding.severity}
                     </span>
                     <span className="mono turn-finding-id">{finding.finding_id}</span>

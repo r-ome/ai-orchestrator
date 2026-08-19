@@ -2,6 +2,7 @@ import type { PlanningSessionDetail } from '../api/planning'
 import CollapsibleCard from '../components/CollapsibleCard'
 import Markdown from '../components/Markdown'
 import PlanningTurnCard from '../components/PlanningTurnCard'
+import { severityPill } from '../utils/severity'
 import {
   providerFor,
   roundVerdict,
@@ -186,7 +187,9 @@ export function PlanReviewPanel({
                     .map((finding) => (
                       <li key={finding.finding_id}>
                         <span className="kv-key">
-                          <span className="pill warn">{finding.severity}</span>
+                          <span className={`pill ${severityPill(finding.severity)}`}>
+                            {finding.severity}
+                          </span>
                           <span className="mono turn-finding-id">
                             {finding.finding_id}
                           </span>

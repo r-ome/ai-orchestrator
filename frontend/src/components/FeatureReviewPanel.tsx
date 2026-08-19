@@ -4,6 +4,7 @@ import type { DelegationWorkspace } from './DelegationWorkspace'
 import TurnConsole from './TurnConsole'
 import { selectReviewState } from './delegationWorkspaceModel'
 import { formatRelativeTime, formatTimestamp } from '../utils/format'
+import { severityPill } from '../utils/severity'
 
 function changeEvidenceErrors(verification: Record<string, unknown> | null): string[] {
   const evidence = verification?.acceptance_evidence
@@ -67,7 +68,9 @@ export function FeatureReviewPanel({
                     {delegation.review.findings.map((finding, index) => (
                       <li key={`${finding.text}-${index}`}>
                         <span className="kv-key">
-                          <span className="pill warn">{finding.severity}</span>
+                          <span className={`pill ${severityPill(finding.severity)}`}>
+                            {finding.severity}
+                          </span>
                           {finding.work_item_keys.join(', ')}
                         </span>
                         <span className="kv-value">{finding.text}</span>

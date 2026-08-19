@@ -438,7 +438,7 @@ describe('tab selectors', () => {
     [
       'one finding',
       makeDelegation({
-        review: makeReview({ findings: [{ severity: 'warn', text: 'One', work_item_keys: [] }] }),
+        review: makeReview({ findings: [{ severity: 'medium', text: 'One', work_item_keys: [] }] }),
       }),
       '1 finding',
     ],
@@ -447,8 +447,8 @@ describe('tab selectors', () => {
       makeDelegation({
         review: makeReview({
           findings: [
-            { severity: 'warn', text: 'One', work_item_keys: [] },
-            { severity: 'warn', text: 'Two', work_item_keys: [] },
+            { severity: 'medium', text: 'One', work_item_keys: [] },
+            { severity: 'medium', text: 'Two', work_item_keys: [] },
           ],
         }),
       }),

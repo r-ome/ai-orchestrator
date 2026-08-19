@@ -1,25 +1,14 @@
 import type { PlanRisk, PlanSpec } from '../api/planning'
 import CollapsibleCard from './CollapsibleCard'
 import Markdown from './Markdown'
-
-const RISK_SEVERITY: Record<string, number> = {
-  high: 3,
-  medium: 2,
-  low: 1,
-}
-
-const RISK_PILL: Record<string, string> = {
-  high: 'err',
-  medium: 'warn',
-  low: 'muted',
-}
+import { severityPill, severityRank } from '../utils/severity'
 
 function highestSeverityRisks(risks: PlanRisk[]): PlanRisk[] {
   const highest = Math.max(
     0,
-    ...risks.map((risk) => RISK_SEVERITY[risk.severity] ?? 0),
+    ...risks.map((risk) => severityRank(risk.severity)),
   )
-  return risks.filter((risk) => (RISK_SEVERITY[risk.severity] ?? 0) === highest)
+  return risks.filter((risk) => severityRank(risk.severity) === highest)
 }
 
 /** Turns a plan title into a filename stem: lowercase words joined by hyphens. */
@@ -107,7 +96,9 @@ function PlanSpecView({ planSpec, understanding, onImplementPlan }: PlanSpecView
             {reviewerOutcome.outstanding_findings.map((finding) => (
               <li key={finding.finding_id}>
                 <span className="kv-key">
-                  <span className="pill warn">{finding.severity}</span>
+                  <span className={`pill ${severityPill(finding.severity)}`}>
+                    {finding.severity}
+                  </span>
                   <span className="mono turn-finding-id">{finding.finding_id}</span>
                 </span>
                 <span className="kv-value">{finding.text}</span>
@@ -151,7 +142,7 @@ function PlanSpecView({ planSpec, understanding, onImplementPlan }: PlanSpecView
               {topRisks.map((risk) => (
                 <li key={`${risk.severity}-${risk.text}`}>
                   <span className="kv-key">
-                    <span className={`pill ${RISK_PILL[risk.severity] ?? ''}`}>
+                    <span className={`pill ${severityPill(risk.severity)}`}>
                       {risk.severity}
                     </span>
                   </span>
