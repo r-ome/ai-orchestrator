@@ -6,7 +6,8 @@
 
 > **Progress, 19 Aug 2026 — `main` @ `282dc1e`.** Phases 0, 1, 2, 3.1, 3.2, 3.3, 4, 5 and 6
 > are done. Phase 3.4 is partially done and deliberately stopped; see its status block. Phase 7
-> is next. Current suite: **backend 834 passed, 43 skipped; frontend 74 passed**.
+> is now done too; see its status block. Phase 8 is next. Current suite: **backend 834 passed,
+> 43 skipped; frontend 74 passed**.
 >
 > Phase 6 added the frontend's first real tests: 1 file and 1 test became 4 files and 74. It
 > also found and fixed a backend defect the plan did not anticipate; see its status block.
@@ -478,6 +479,66 @@ style. Expose a facade so `get_controller_store()` keeps working while callers m
 
 *Risk: mechanically large, conceptually low. Deliberately after Phase 5 — its benefit
 accrues gradually while Phases 3–5 are immediate.*
+
+> **Status — done, 19 Aug 2026, `main` @ `66ad0a8`.** Three commits: `1239d96` made the
+> module a package and moved the module-level code out, `218b610` split seven areas into
+> mixins, `66ad0a8` moved the last three. `store.py` was 4,454 lines; `store/__init__.py`
+> is now 89, and the largest module is `sandboxes.py` at 905.
+>
+> **The phase text's figures above are wrong.** There are **151** methods, not 155. 33
+> `CREATE TABLE` is correct. The per-area distribution is wrong in four places and omits a
+> module. Measured: sandboxes 31 (not 35), implementation 34 ✓, planning 22 ✓, **projects 17
+> (not 5)**, agents 13 (not 10), previews 11 (not 12), tasks 9 (not 8), events 4 (not 2),
+> **connection 4 (not 27)**. The claim that the measured distribution "matches the proposed
+> module list" was not true.
+>
+> **A tenth module the plan had no name for.** Six methods — `record_initial_baseline`,
+> `latest_baseline`, `create_review`, `review`, `latest_approval`, `approve_review` — gate a
+> sandbox change and belong to neither planning review nor delegation review. They are now
+> `store/reviews.py`.
+>
+> The plan also did not say where `store.py`'s 23 module-level functions and **13** exception
+> classes (not "~10") should go. They went to `migrations.py` (15 migrations plus
+> `_apply_migrations`, `_add_column`, `_violates`), `_shared.py` (`_row`, `_json`, `_now`,
+> `_ensure_immutable_manifest_value`), `schema.py`, `queries.py` and `errors.py`.
+>
+> **Shape: mixins, not sub-repositories.** Each area is a plain class with no base and no
+> state; `ControllerStore` inherits all ten and has an empty body. This keeps the move purely
+> mechanical — no method body, signature or call site changed anywhere — and lets the five
+> cross-area private helpers (`_event` with 23 call sites, `_assert_writer_admission`,
+> `_active_writers`, `_active_run`, `_active_runs`, `_delete_sandbox_children`) resolve
+> through the MRO with no wiring. The cost is honest: the modules are not independently
+> usable, so this is file hygiene and a dependency graph, not decoupling. The plan's phrase
+> "while callers migrate" implies a later step that did not happen and is not needed for
+> Phase 9.
+>
+> The intra-package import graph is a DAG. `_shared`, `errors`, `schema`, `queries` are
+> leaves; nothing imports the facade. That property is the part Phase 9 can build on.
+>
+> **The oracle.** An AST script dumping the 150-name public surface, every method body
+> normalised, the schema SQL, the migration map, the exception MROs and a live database's
+> `sqlite_master`. Byte-identical across all three commits, plus a byte-identical
+> `app.openapi()`. **The oracle was itself mutation-tested** — it catches a changed `ORDER BY`
+> column, a deleted method, and a semantics-preserving comprehension-variable rename. A
+> behaviour probe was not written: with every body proven byte-identical, it would have added
+> nothing.
+>
+> **Two monkeypatch traps the plan did not name.** `tests/controller/test_store.py` patched
+> `store_module.MIGRATIONS` and `tests/sandboxes/test_staleness.py` patched `store_module._now`.
+> Both were repointed at the module that now binds the name. The `_now` retarget was
+> mutation-tested: aiming it at any other module fails the test, so it still pins the
+> timestamp sequence.
+>
+> **Codex broke a stated constraint again, the same way it did in Phase 6.** Told twice that
+> no module may import the facade, it added a `_now()` shim in `projects.py` doing
+> `from . import _now` — a runtime import cycle whose only purpose was to keep the old
+> monkeypatch target alive. Tests stayed green and the oracle stayed byte-identical; only
+> reading its own report and then the diff caught it. Restating the constraint verbatim in
+> the next prompt worked: slice 3 introduced no back-import. **The rule holds — Codex may
+> write, Claude must verify, and its self-reported caveats are worth reading closely.**
+>
+> Not done and not attempted: `ruff` is not installed in this environment, so no lint gate
+> ran on any of the three commits.
 
 ---
 
