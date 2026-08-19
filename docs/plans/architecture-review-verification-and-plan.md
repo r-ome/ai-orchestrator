@@ -6,8 +6,15 @@
 
 > **Progress, 19 Aug 2026 — `main` @ `6f94db3`.** Phases 0, 1, 2, 3.1, 3.2, 3.3, 4, 5, 6, 7,
 > 8 and 9 are done. Phase 3.4 is partially done and deliberately stopped; see its status block.
-> Phase 10 is in progress: its `Severity` item is **closed unbuilt**, the `SandboxChange`
-> rename is not started. Current suite: **backend 835 passed, 43 skipped; frontend 80 passed**.
+> Phase 10 is done. Both its items are **closed unbuilt**: the `Severity` enum, and the
+> `SandboxChange` rename. Current suite: **backend 835 passed, 43 skipped; frontend 80
+> passed**.
+>
+> Phase 10 renamed nothing and shipped its vocabulary as docs. Its `SandboxChange` target
+> is a word `app/delegation/` already uses for a different concept, and its hierarchy gets a
+> Task's parent wrong — a Task hangs off the sandbox, with three possible origins. The
+> glossary in `CONTEXT.md` turned out to define no `Task` at all, nor any of the five other
+> nouns in the implementation chain; all six are now defined there.
 >
 > Phase 10's `Severity` candidate pairs the wrong two sites. Plan risks and integration
 > findings share a scale but not a concept; planning reviewer findings and integration
@@ -747,6 +754,50 @@ ApprovedPlan → ImplementationContext → WorkItem → WorkItemRun
 Rename the internal task-branch concept toward `SandboxChange`, preserving wire
 compatibility. Optionally fold `implementation_context`, `delegation`, and `tasks` under
 `domain/implementation/`. Structural move only.
+
+> **Rename closed unbuilt, 19 Aug 2026. The target name is already taken, and the
+> hierarchy above is wrong about where a Task sits.**
+>
+> **1. `change` is spent.** `app/delegation/` owns 16 `Change*` symbols, the
+> `delegation_change_requests` table, and a live route
+> `POST …/delegations/{id}/changes`. There `change` means *a revision of a feature diff
+> under review*. A Task is a coding-agent turn on a temporary branch. Renaming Task to
+> `SandboxChange` gives one word two meanings — which `CLAUDE.md` forbids — and, because
+> `delegation_change_requests.task_id → tasks(id)`, it produces
+> `delegation_change_requests.sandbox_change_id`: a change row owning a change row.
+>
+> **2. A Task does not hang off `WorkItemRun`.** The hierarchy above draws one parent.
+> The schema gives three origins: `work_item_runs.task_id` (`schema.py:379`),
+> `delegation_change_requests.task_id` (`schema.py:325`), and a standalone `POST /tasks`
+> with no delegation at all. `tasks.sandbox_id` is a Task's only foreign key — it belongs
+> to the sandbox, and the delegation side merely points at it.
+>
+> **Measured cost of the rename, had it run:** 1,139 occurrences over 63 distinct
+> identifiers in `backend/app`, 1,266 over 85 in `backend/tests`. `frontend/src` has 25,
+> all wire fields, so it would change zero lines under wire compatibility. Six OpenAPI
+> component names would move (`Task`, `TaskStatus`, `TasksResponse`, `TaskRunResponse`,
+> `StartTaskRequest`, `ReportTaskRequest`, `RunTaskRequest`) — payloads identical, but the
+> byte-identical-OpenAPI gate Phase 5 used could not be reused as-is.
+>
+> **What was done instead**, taking this phase's own heading at its word ("make the
+> hierarchy explicit in names **and docs**"): the vocabulary work landed in docs only, at
+> zero risk. `CONTEXT.md` defined `Feature change request` but had **no entry for `Task`**,
+> and none for `Implementation context`, `Delegation`, `Work item`, `Work item run` or
+> `Verification` either — the whole implementation chain was missing from the glossary that
+> exists to hold it. All six are now defined, with a nesting diagram drawn from the foreign
+> keys rather than from the hierarchy above. `app/tasks/models.py` gained a module docstring
+> naming the three origins and the `change` collision; `FeatureChangeRequest` gained a
+> comment stating what `change` means in that package.
+>
+> **One defect found while doing it.** The `FeatureChangeRequest` note was first written as
+> a class docstring. Pydantic copies a model docstring into the OpenAPI schema as its
+> `description`, so a repo-internal note about `app/tasks/` was published to API consumers.
+> Caught by diffing the OpenAPI dump across the change, not by reading it. It is a comment
+> now, and the dump is byte-identical to `main`.
+>
+> **If the rename is ever wanted**, pick a word that is free — `SandboxEdit` reads clean at
+> `delegation_change_requests.sandbox_edit_id` — or free `change` first by renaming the
+> delegation family, which touches the `/changes` route and so is a wire change.
 
 **Also here:** the earlier review's outstanding candidate 10 — one `Severity` enum. Its
 premise is partly wrong. There are **three** vocabularies, not two:
