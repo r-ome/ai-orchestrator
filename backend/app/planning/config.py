@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from app.agents.models import AgentProvider
+from app.env import integer_setting
 
 
 @dataclass(frozen=True)
@@ -48,15 +49,15 @@ def get_planning_settings() -> PlanningSettings:
         planner_provider=_provider("PLANNING_PLANNER_PROVIDER", AgentProvider.CLAUDE),
         reviewer_provider=_provider("PLANNING_REVIEWER_PROVIDER", AgentProvider.CODEX),
         credential_profile=os.getenv("PLANNING_CREDENTIAL_PROFILE", "default"),
-        max_review_turns=_integer("PLANNING_MAX_REVIEW_TURNS", 3),
-        turn_timeout_seconds=_integer("PLANNING_TURN_TIMEOUT_SECONDS", 600),
-        turn_retries=_integer("PLANNING_TURN_RETRIES", 2),
-        turn_retry_backoff_seconds=_integer("PLANNING_TURN_RETRY_BACKOFF_SECONDS", 5),
+        max_review_turns=integer_setting("PLANNING_MAX_REVIEW_TURNS", 3),
+        turn_timeout_seconds=integer_setting("PLANNING_TURN_TIMEOUT_SECONDS", 600),
+        turn_retries=integer_setting("PLANNING_TURN_RETRIES", 2),
+        turn_retry_backoff_seconds=integer_setting("PLANNING_TURN_RETRY_BACKOFF_SECONDS", 5),
         planning_memory=os.getenv("PLANNING_MEMORY", "2g"),
         claude_model=os.getenv("PLANNING_CLAUDE_MODEL", "opus"),
         codex_model=os.getenv("PLANNING_CODEX_MODEL", "gpt-5.6-terra"),
         codex_reasoning_effort=os.getenv("PLANNING_CODEX_REASONING_EFFORT", "high"),
-        max_log_bytes=_integer("PLANNING_MAX_LOG_BYTES", 2_000_000),
+        max_log_bytes=integer_setting("PLANNING_MAX_LOG_BYTES", 2_000_000),
     )
 
 
@@ -65,11 +66,3 @@ def _provider(name: str, default: AgentProvider) -> AgentProvider:
         return AgentProvider(os.getenv(name, default.value))
     except ValueError:
         return default
-
-
-def _integer(name: str, default: int) -> int:
-    try:
-        value = int(os.getenv(name, str(default)))
-    except ValueError:
-        return default
-    return value if value > 0 else default

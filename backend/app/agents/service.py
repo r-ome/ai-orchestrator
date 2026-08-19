@@ -21,6 +21,7 @@ from app.controller.store import (
     SandboxWriterAdmissionError,
 )
 from app.errors import OperationError
+from app.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND, LABEL_RUN_ID, LABEL_SANDBOX_ID
 from app.agents.models import (
     AgentProvider,
     CleanupAgentsResponse,
@@ -53,10 +54,6 @@ LABEL_CREDENTIAL_PROFILE = "orchestrator.agent.credential-profile"
 LABEL_CREDENTIAL_VOLUME = "orchestrator.agent.credential-volume"
 LABEL_COMMAND = "orchestrator.agent.command"
 LABEL_CREDENTIAL_MANAGED = "orchestrator.agent.credential.managed"
-LABEL_SANDBOX_ID = "orchestrator.sandbox.id"
-LABEL_RUN_ID = "orchestrator.run.id"
-LABEL_KIND = "orchestrator.kind"
-LABEL_CONTROLLER_MANAGED = "orchestrator.managed"
 AGENT_CONTAINER_PREFIX = "orchestrator-agent-"
 WORKSPACE_DIRECTORY = "/workspace"
 CREDENTIAL_DIRECTORY = "/auth"

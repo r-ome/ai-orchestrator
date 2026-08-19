@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from docker.client import DockerClient
 
+from app.coercions import json_object
 from app.controller.store import ControllerStore, ReviewGenerating, RevisionTaken
 from app.delegation import service
 from app.delegation.config import IntegrationReviewSettings
@@ -69,7 +70,7 @@ def claim_integration_review(
     session = store.planning_session(delegation_view.delegation.session_id)
     if session is None:
         raise service.DelegationOperationError(404, "Planning session was not found")
-    plan = _object(session.get("plan_spec_json"))
+    plan = json_object(session.get("plan_spec_json"))
     if plan is None:
         raise service.DelegationOperationError(409, "Planning session has no plan specification")
     sandbox = store.sandbox(delegation_view.delegation.sandbox_id)
@@ -154,11 +155,13 @@ def _progress(
     message: str,
     level: str = "info",
 ) -> None:
-    store.event(
+    store.progress_event(
         sandbox_id=sandbox_id,
         run_id=review_id,
         kind="review.progress",
-        payload={"step": step, "message": message[:900], "level": level},
+        step=step,
+        message=message,
+        level=level,
     )
 
 
@@ -576,7 +579,7 @@ def _settings(
 
 
 def review_from_row(row: Mapping[str, Any]) -> IntegrationReview:
-    result = _object(row.get("result_json")) or {}
+    result = json_object(row.get("result_json")) or {}
     return IntegrationReview(
         id=str(row["id"]),
         delegation_id=str(row["delegation_id"]),
@@ -605,13 +608,3 @@ def review_from_row(row: Mapping[str, Any]) -> IntegrationReview:
 def latest_review(store: ControllerStore, delegation_id: str) -> IntegrationReview | None:
     rows = store.delegation_reviews(delegation_id)
     return review_from_row(rows[0]) if rows else None
-
-
-def _object(value: Any) -> dict[str, Any] | None:
-    if not value:
-        return None
-    try:
-        parsed = json.loads(str(value))
-    except ValueError:
-        return None
-    return parsed if isinstance(parsed, dict) else None

@@ -55,6 +55,10 @@ from app.sandboxes.service import (
     SandboxDependencyFailure,
     SandboxInternalFailure,
     SandboxNotFound,
+    _base_branch,
+    _json_value,
+    _optional_string,
+    _sync_strategy,
     complete_database_provision,
     publish,
     require_v1,
@@ -476,9 +480,9 @@ def remove_orphan_resource(
     """Remove one operator-selected orphan after checking live manifest ownership."""
     try:
         orphan = parse_orphan_resource_key(resource)
+        collection = _docker_collection(docker_client, orphan.kind)
     except ValueError as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error)) from error
-    collection = getattr(docker_client, f"{orphan.kind}s")
     try:
         docker_resource = collection.get(orphan.name)
     except NotFound as error:
@@ -1076,13 +1080,29 @@ def _sweep_manifest_resources(
     if not any(entry["kind"] == "volume" and entry["name"] == workspace for entry in entries):
         entries.append({"kind": "volume", "name": workspace})
     for entry in entries:
-        collection = getattr(docker_client, f"{entry['kind']}s")
+        collection = _docker_collection(docker_client, entry["kind"])
         try:
             resource = collection.get(entry["name"])
         except NotFound:
             continue
         validate_ownership(resource, sandbox_id=sandbox_id)
         _remove_manifest_resource(resource, entry["kind"])
+
+
+def _docker_collection(docker_client: DockerClient, kind: str) -> object:
+    """Return the Docker collection for a supported resource kind."""
+    collections = {
+        "volume": docker_client.volumes,
+        "container": docker_client.containers,
+        "network": docker_client.networks,
+    }
+    try:
+        return collections[kind]
+    except KeyError as error:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Unsupported sandbox resource kind: {kind}",
+        ) from error
 
 
 def _remove_manifest_resource(resource: object, kind: str) -> None:
@@ -1169,25 +1189,6 @@ def _required_staleness_value(
     return str(value)
 
 
-def _sync_strategy(store: ControllerStore, sandbox_id: str) -> str:
-    """Merge only when the publication table observes an open PR."""
-    publication = store.sandbox_publication(sandbox_id)
-    if (
-        publication is not None
-        and publication.get("pr_number") is not None
-        and str(publication.get("pr_state") or "").lower() == "open"
-    ):
-        return "merge"
-    return "rebase"
-
-
-def _base_branch(base_ref: str) -> str:
-    prefix = "refs/heads/"
-    if not base_ref.startswith(prefix) or not base_ref[len(prefix) :]:
-        raise PublishError(409, "Sandbox has an invalid base branch for pull request publishing")
-    return base_ref[len(prefix) :]
-
-
 def _engine_detection_response(detection: dict[str, object]) -> EngineDetectionResponse:
     return EngineDetectionResponse(
         sandbox_id=str(detection["sandbox_id"]),
@@ -1239,17 +1240,6 @@ def _confirm_engine_snapshot(
     )
 
 
-def _json_value(value: object, default: object) -> object:
-    try:
-        return json.loads(str(value))
-    except (TypeError, ValueError):
-        return default
-
-
 def _json_list(value: object) -> list[dict[str, object]]:
     parsed = _json_value(value, [])
     return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
-
-
-def _optional_string(value: object) -> str | None:
-    return str(value) if value is not None else None

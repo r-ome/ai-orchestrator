@@ -78,11 +78,13 @@ def _progress(
     message: str,
     level: str = "info",
 ) -> None:
-    store.event(
+    store.progress_event(
         sandbox_id=sandbox_id,
         run_id=delegation_id,
         kind=EVENT_KIND,
-        payload={"step": step, "message": message[:900], "level": level},
+        step=step,
+        message=message,
+        level=level,
     )
 
 

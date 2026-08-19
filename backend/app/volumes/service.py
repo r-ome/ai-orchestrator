@@ -2,6 +2,7 @@ from typing import Any
 
 from docker.client import DockerClient
 
+from app.coercions import clamped_integer
 from app.volumes.models import (
     DockerStorageStatusResponse,
     RunningVolume,
@@ -48,13 +49,13 @@ def get_docker_storage_status(
         summary=data.get("ImageUsage"),
         fallback_total_count=len(images),
         fallback_active_count=sum(
-            _integer(item.get("Containers")) > 0 for item in images
+            clamped_integer(item.get("Containers")) > 0 for item in images
         ),
-        fallback_size=_integer(data.get("LayersSize")),
+        fallback_size=clamped_integer(data.get("LayersSize")),
         fallback_reclaimable=sum(
-            max(_integer(item.get("Size")) - _integer(item.get("SharedSize")), 0)
+            max(clamped_integer(item.get("Size")) - clamped_integer(item.get("SharedSize")), 0)
             for item in images
-            if _integer(item.get("Containers")) == 0
+            if clamped_integer(item.get("Containers")) == 0
         ),
     )
     container_usage = _storage_usage(
@@ -63,9 +64,9 @@ def get_docker_storage_status(
         fallback_active_count=sum(
             item.get("State") == "running" for item in containers
         ),
-        fallback_size=sum(_integer(item.get("SizeRw")) for item in containers),
+        fallback_size=sum(clamped_integer(item.get("SizeRw")) for item in containers),
         fallback_reclaimable=sum(
-            _integer(item.get("SizeRw"))
+            clamped_integer(item.get("SizeRw"))
             for item in containers
             if item.get("State") != "running"
         ),
@@ -74,26 +75,26 @@ def get_docker_storage_status(
         summary=data.get("VolumeUsage"),
         fallback_total_count=len(volumes),
         fallback_active_count=sum(
-            _integer((item.get("UsageData") or {}).get("RefCount")) > 0
+            clamped_integer((item.get("UsageData") or {}).get("RefCount")) > 0
             for item in volumes
         ),
         fallback_size=sum(
-            _integer((item.get("UsageData") or {}).get("Size"))
+            clamped_integer((item.get("UsageData") or {}).get("Size"))
             for item in volumes
         ),
         fallback_reclaimable=sum(
-            _integer((item.get("UsageData") or {}).get("Size"))
+            clamped_integer((item.get("UsageData") or {}).get("Size"))
             for item in volumes
-            if _integer((item.get("UsageData") or {}).get("RefCount")) == 0
+            if clamped_integer((item.get("UsageData") or {}).get("RefCount")) == 0
         ),
     )
     build_cache_usage = _storage_usage(
         summary=data.get("BuildCacheUsage"),
         fallback_total_count=len(build_cache),
         fallback_active_count=sum(bool(item.get("InUse")) for item in build_cache),
-        fallback_size=sum(_integer(item.get("Size")) for item in build_cache),
+        fallback_size=sum(clamped_integer(item.get("Size")) for item in build_cache),
         fallback_reclaimable=sum(
-            _integer(item.get("Size"))
+            clamped_integer(item.get("Size"))
             for item in build_cache
             if not item.get("InUse")
         ),
@@ -127,20 +128,20 @@ def _storage_usage(
 ) -> StorageUsage:
     has_summary = isinstance(summary, dict) and "TotalSize" in summary
     total_count = (
-        _integer(summary.get("TotalCount"))
+        clamped_integer(summary.get("TotalCount"))
         if has_summary
         else fallback_total_count
     )
     active_count = (
-        _integer(summary.get("ActiveCount"))
+        clamped_integer(summary.get("ActiveCount"))
         if has_summary
         else fallback_active_count
     )
     size_bytes = (
-        _integer(summary.get("TotalSize")) if has_summary else fallback_size
+        clamped_integer(summary.get("TotalSize")) if has_summary else fallback_size
     )
     reclaimable_bytes = (
-        _integer(summary.get("Reclaimable"))
+        clamped_integer(summary.get("Reclaimable"))
         if has_summary
         else fallback_reclaimable
     )
@@ -153,13 +154,6 @@ def _storage_usage(
         reclaimable_bytes=reclaimable_bytes,
         reclaimable=_format_bytes(reclaimable_bytes),
     )
-
-
-def _integer(value: Any) -> int:
-    try:
-        return max(int(value or 0), 0)
-    except (TypeError, ValueError):
-        return 0
 
 
 def _format_bytes(size_bytes: int) -> str:

@@ -11,6 +11,7 @@ from docker.errors import NotFound
 from docker.models.containers import Container
 from docker.models.volumes import Volume
 
+from app.coercions import clamped_integer
 from app.volumes.models import (
     ManagedVolume,
     ManagedVolumesResponse,
@@ -63,7 +64,7 @@ def remove_managed_volume(
 
 def prune_managed_volumes(docker_client: DockerClient) -> PruneVolumesResponse:
     result = docker_client.volumes.prune()
-    reclaimed_bytes = _integer(result.get("SpaceReclaimed"))
+    reclaimed_bytes = clamped_integer(result.get("SpaceReclaimed"))
     return PruneVolumesResponse(
         deleted=result.get("VolumesDeleted") or [],
         reclaimed_bytes=reclaimed_bytes,
@@ -119,8 +120,8 @@ def read_volume_file(
     except NotFound as error:
         raise VolumeOperationError(404, "File not found in the volume") from error
 
-    size_bytes = _integer(file_stat.get("size"))
-    mode = _integer(file_stat.get("mode"))
+    size_bytes = clamped_integer(file_stat.get("size"))
+    mode = clamped_integer(file_stat.get("mode"))
     if size_bytes > max_bytes:
         _close_stream(chunks)
         raise VolumeOperationError(
@@ -275,13 +276,6 @@ def _close_stream(stream: Any) -> None:
     close = getattr(stream, "close", None)
     if callable(close):
         close()
-
-
-def _integer(value: Any) -> int:
-    try:
-        return max(int(value or 0), 0)
-    except (TypeError, ValueError):
-        return 0
 
 
 def _format_bytes(size_bytes: int) -> str:

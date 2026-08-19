@@ -16,6 +16,15 @@ from pathlib import Path
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
+def integer_setting(name: str, default: int) -> int:
+    """Return a positive integer setting, or its default value."""
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 def load_env(path: Path | None = None) -> dict[str, str]:
     """Apply the file's assignments and return the ones that were applied.
 

@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from docker.client import DockerClient
 
+from app.coercions import json_object
 from app.controller.store import (
     ChangeRequestRunning,
     ControllerStore,
@@ -113,7 +114,7 @@ def claim_change_request(
     if session is None:
         raise service.DelegationOperationError(404, "Planning session was not found")
     feature_context = _feature_context(
-        _object(session.get("plan_spec_json")) or {},
+        json_object(session.get("plan_spec_json")) or {},
         context.manifest.model_dump(mode="json") if context.manifest else {},
         view,
     )
@@ -557,16 +558,6 @@ def _bounded_json(value: Mapping[str, Any], limit: int = 120_000) -> str:
     return f"{rendered[:limit]}\n[feature context truncated at {limit} characters]"
 
 
-def _object(value: Any) -> dict[str, Any] | None:
-    if not value:
-        return None
-    try:
-        parsed = json.loads(str(value))
-    except (TypeError, ValueError):
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
 def _verification_failure(verification: dict[str, Any]) -> str:
     failed = next(
         (command for command in verification.get("commands", []) if not command.get("passed")),
@@ -593,11 +584,13 @@ def _progress(
     message: str,
     level: str = "info",
 ) -> None:
-    store.event(
+    store.progress_event(
         sandbox_id=sandbox_id,
         run_id=request_id,
         kind="change.progress",
-        payload={"step": step, "message": message[:900], "level": level},
+        step=step,
+        message=message,
+        level=level,
     )
 
 

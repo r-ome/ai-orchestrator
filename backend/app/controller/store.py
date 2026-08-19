@@ -4299,6 +4299,24 @@ class ControllerStore:
                 payload=payload,
             )
 
+    def progress_event(
+        self,
+        *,
+        sandbox_id: str,
+        run_id: str,
+        kind: str,
+        step: str,
+        message: str,
+        level: str = "info",
+    ) -> None:
+        """Record a bounded progress event for one run."""
+        self.event(
+            sandbox_id=sandbox_id,
+            run_id=run_id,
+            kind=kind,
+            payload={"step": step, "message": message[:900], "level": level},
+        )
+
     def events_for_run(
         self,
         run_id: str,

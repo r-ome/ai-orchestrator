@@ -9,6 +9,7 @@ from docker.client import DockerClient
 from docker.errors import NotFound
 from docker.models.containers import Container
 
+from app.coercions import clamped_integer
 from app.containers.models import (
     ContainerDetails,
     ContainerFileDetails,
@@ -78,7 +79,7 @@ def inspect_managed_container(
         created=summary.created,
         started_at=state.get("StartedAt", ""),
         finished_at=state.get("FinishedAt", ""),
-        restart_count=_integer(attrs.get("RestartCount")),
+        restart_count=clamped_integer(attrs.get("RestartCount")),
         platform=attrs.get("Platform", ""),
         ports=summary.ports,
         mounts=mounts,
@@ -136,7 +137,7 @@ def prune_managed_containers(
     docker_client: DockerClient,
 ) -> PruneContainersResponse:
     result = docker_client.containers.prune()
-    reclaimed_bytes = _integer(result.get("SpaceReclaimed"))
+    reclaimed_bytes = clamped_integer(result.get("SpaceReclaimed"))
     return PruneContainersResponse(
         deleted=result.get("ContainersDeleted") or [],
         reclaimed_bytes=reclaimed_bytes,
@@ -176,8 +177,8 @@ def read_container_file(
     except NotFound as error:
         raise ContainerOperationError(404, "File not found in the container") from error
 
-    size_bytes = _integer(file_stat.get("size"))
-    mode = _integer(file_stat.get("mode"))
+    size_bytes = clamped_integer(file_stat.get("size"))
+    mode = clamped_integer(file_stat.get("mode"))
     if size_bytes > max_bytes:
         _close_stream(chunks)
         raise ContainerOperationError(
@@ -268,13 +269,6 @@ def _close_stream(stream: Any) -> None:
 
 def _text(value: Any) -> str:
     return "" if value is None else str(value)
-
-
-def _integer(value: Any) -> int:
-    try:
-        return max(int(value or 0), 0)
-    except (TypeError, ValueError):
-        return 0
 
 
 def _format_bytes(size_bytes: int) -> str:

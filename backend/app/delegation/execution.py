@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from docker.client import DockerClient
 
+from app.coercions import json_object
 from app.controller.store import ControllerStore, RevisionTaken, RunActive
 from app.delegation import service
 from app.delegation.config import get_routing_settings, get_verification_settings
@@ -60,7 +61,7 @@ def build_run_packet(
     )
     entry = _entry(delegation_view, key)
     session = store.planning_session(delegation_view.delegation.session_id)
-    plan = _object((session or {}).get("plan_spec_json"))
+    plan = json_object((session or {}).get("plan_spec_json"))
     context_id = delegation_view.delegation.context_id
     if not context_id:
         raise service.DelegationOperationError(
@@ -338,11 +339,13 @@ def _progress(
     message: str,
     level: str = "info",
 ) -> None:
-    store.event(
+    store.progress_event(
         sandbox_id=sandbox_id,
         run_id=run_id,
         kind="run.progress",
-        payload={"step": step, "message": message[:900], "level": level},
+        step=step,
+        message=message,
+        level=level,
     )
 
 
@@ -1251,16 +1254,6 @@ def _provider(value: Any) -> Any:
         return AgentProvider(str(value)) if value else None
     except ValueError:
         return None
-
-
-def _object(value: Any) -> dict[str, Any] | None:
-    if not value:
-        return None
-    try:
-        parsed = json.loads(str(value))
-    except ValueError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
 
 
 __all__ = ["accept_run", "build_run_packet", "reject_run", "start_run"]

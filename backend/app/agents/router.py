@@ -22,8 +22,6 @@ from app.agents.models import (
 )
 from app.agents.service import (
     AgentOperationError,
-    LABEL_RUN_ID,
-    LABEL_SANDBOX_ID,
     create_agent,
     detach_agent_terminal,
     get_managed_agent_container,
@@ -43,6 +41,7 @@ from app.docker_errors import (
     docker_response,
 )
 from app.docker_terminal import close_stream, read_stream, write_stream
+from app.labels import LABEL_RUN_ID, LABEL_SANDBOX_ID
 from app.controller.store import (
     AgentWriterSessionExists,
     ControllerStore,

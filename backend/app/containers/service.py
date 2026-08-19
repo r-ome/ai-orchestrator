@@ -4,6 +4,7 @@ from typing import Any
 from docker.client import DockerClient
 from docker.models.containers import Container
 
+from app.coercions import clamped_integer
 from app.containers.models import (
     AllContainersResponse,
     ContainerPort,
@@ -128,7 +129,7 @@ def _container_status(container: Container) -> ContainerResourceStatus:
     stats = container.stats(stream=False)
     memory_stats = stats.get("memory_stats") or {}
     memory_details = memory_stats.get("stats") or {}
-    memory_cache = _integer(
+    memory_cache = clamped_integer(
         memory_details.get(
             "inactive_file",
             memory_details.get(
@@ -138,10 +139,10 @@ def _container_status(container: Container) -> ContainerResourceStatus:
         )
     )
     memory_usage_bytes = max(
-        _integer(memory_stats.get("usage")) - memory_cache,
+        clamped_integer(memory_stats.get("usage")) - memory_cache,
         0,
     )
-    memory_limit_bytes = _integer(memory_stats.get("limit"))
+    memory_limit_bytes = clamped_integer(memory_stats.get("limit"))
     memory_percent = (
         round(memory_usage_bytes / memory_limit_bytes * 100, 2)
         if memory_limit_bytes
@@ -163,23 +164,23 @@ def _container_status(container: Container) -> ContainerResourceStatus:
         memory_limit=_format_bytes(memory_limit_bytes),
         memory_percent=memory_percent,
         network_received_bytes=sum(
-            _integer(network.get("rx_bytes")) for network in network_stats
+            clamped_integer(network.get("rx_bytes")) for network in network_stats
         ),
         network_sent_bytes=sum(
-            _integer(network.get("tx_bytes"))
+            clamped_integer(network.get("tx_bytes"))
             for network in (stats.get("networks") or {}).values()
         ),
         block_read_bytes=sum(
-            _integer(operation.get("value"))
+            clamped_integer(operation.get("value"))
             for operation in block_stats
             if str(operation.get("op", "")).lower() == "read"
         ),
         block_write_bytes=sum(
-            _integer(operation.get("value"))
+            clamped_integer(operation.get("value"))
             for operation in block_stats
             if str(operation.get("op", "")).lower() == "write"
         ),
-        pids=_integer((stats.get("pids_stats") or {}).get("current")),
+        pids=clamped_integer((stats.get("pids_stats") or {}).get("current")),
         sampled_at=stats.get("read", ""),
     )
 
@@ -190,13 +191,13 @@ def _cpu_percent(stats: dict[str, Any]) -> float:
     cpu_usage = cpu_stats.get("cpu_usage") or {}
     previous_usage = previous_stats.get("cpu_usage") or {}
 
-    cpu_delta = _integer(cpu_usage.get("total_usage")) - _integer(
+    cpu_delta = clamped_integer(cpu_usage.get("total_usage")) - clamped_integer(
         previous_usage.get("total_usage")
     )
-    system_delta = _integer(cpu_stats.get("system_cpu_usage")) - _integer(
+    system_delta = clamped_integer(cpu_stats.get("system_cpu_usage")) - clamped_integer(
         previous_stats.get("system_cpu_usage")
     )
-    online_cpus = _integer(cpu_stats.get("online_cpus"))
+    online_cpus = clamped_integer(cpu_stats.get("online_cpus"))
     if not online_cpus:
         online_cpus = len(cpu_usage.get("percpu_usage") or []) or 1
 
@@ -206,17 +207,10 @@ def _cpu_percent(stats: dict[str, Any]) -> float:
     return round(cpu_delta / system_delta * online_cpus * 100, 2)
 
 
-def _integer(value: Any) -> int:
-    try:
-        return max(int(value or 0), 0)
-    except (TypeError, ValueError):
-        return 0
-
-
 def _optional_integer(value: Any) -> int | None:
     if value in (None, ""):
         return None
-    return _integer(value)
+    return clamped_integer(value)
 
 
 def _format_bytes(size_bytes: int) -> str:

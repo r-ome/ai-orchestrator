@@ -7,6 +7,7 @@ from uuid import uuid4
 from docker.client import DockerClient
 
 from app.agents.models import AgentProvider
+from app.coercions import json_object
 from app.controller.store import (
     ControllerStore,
     DelegationActive,
@@ -171,7 +172,7 @@ def claim_generation(
             "This sandbox already has an active delegation",
         )
 
-    plan = _object(session.get("plan_spec_json"))
+    plan = json_object(session.get("plan_spec_json"))
     if plan is None:
         raise DelegationOperationError(409, "Planning session has no plan specification")
     context = ready_context(store, session_id)
@@ -251,11 +252,13 @@ def _progress(
     message: str,
     level: str = "info",
 ) -> None:
-    store.event(
+    store.progress_event(
         sandbox_id=sandbox_id,
         run_id=job_id,
         kind="delegation.progress",
-        payload={"step": step, "message": message[:900], "level": level},
+        step=step,
+        message=message,
+        level=level,
     )
 
 
@@ -745,10 +748,10 @@ def _run(store: ControllerStore, row: Mapping[str, Any]) -> WorkItemRun:
         routing_source=row.get("routing_source"),
         task_id=task_id,
         task_status=str(task["status"]) if task else None,
-        result=_object(row.get("result_json")),
+        result=json_object(row.get("result_json")),
         failure_kind=row.get("failure_kind"),
         error=row.get("error"),
-        verification=_object(row.get("verification_json")),
+        verification=json_object(row.get("verification_json")),
         usage=RunUsage(
             input_tokens=row.get("input_tokens"),
             output_tokens=row.get("output_tokens"),
@@ -790,7 +793,7 @@ def _change_request(row: Mapping[str, Any]) -> FeatureChangeRequest:
         provider=str(row["provider"]),
         model=str(row["model"]),
         task_id=row.get("task_id"),
-        verification=_object(row.get("verification_json")),
+        verification=json_object(row.get("verification_json")),
         error=row.get("error"),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
@@ -806,16 +809,6 @@ def _list(value: Any) -> list[Any]:
     except ValueError:
         return []
     return parsed if isinstance(parsed, list) else []
-
-
-def _object(value: Any) -> dict[str, Any] | None:
-    if not value:
-        return None
-    try:
-        parsed = json.loads(str(value))
-    except ValueError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
 
 
 __all__ = [
