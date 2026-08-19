@@ -1,10 +1,11 @@
-from typing import Annotated
+from typing import Annotated, Callable, TypeVar
 
 from docker.client import DockerClient
 from docker.errors import NotFound
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from app.docker_client import get_docker_client
+from app.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
 from app.controller.store import ControllerStore, get_controller_store
 from app.projects.models import (
     RegisterRemoteProjectRequest,
@@ -17,6 +18,24 @@ from app.sandboxes.naming import mirror_volume, validate_mirror_ownership
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+ResponseType = TypeVar("ResponseType")
+
+
+class ProjectOperationError(Exception):
+    def __init__(self, status_code: int, detail: object) -> None:
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(str(detail))
+
+
+_DOCKER_ERRORS = DockerErrorPolicy(
+    domain_errors=(ProjectOperationError,),
+    api_error=PassThroughApiError("Docker rejected the project operation"),
+)
+
+
+def _docker_response(function: Callable[[], ResponseType]) -> ResponseType:
+    return docker_response(function, _DOCKER_ERRORS)
 
 
 def _remote_project(row: dict[str, object]) -> RemoteProject:
@@ -36,7 +55,9 @@ def _remote_project(row: dict[str, object]) -> RemoteProject:
 def list_remote_projects(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> RemoteProjectsResponse:
-    projects = [_remote_project(row) for row in controller_store.v1_projects()]
+    projects = _docker_response(
+        lambda: [_remote_project(row) for row in controller_store.v1_projects()]
+    )
     return RemoteProjectsResponse(count=len(projects), projects=projects)
 
 
@@ -60,21 +81,9 @@ def register_remote_project(
         remote_url = normalize_remote_url(request.remote_url)
     except ValueError as error:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error
-    identifier = project_id_for_remote(remote_url)
-    existed = controller_store.v1_project(identifier) is not None
-    controller_store.register_v1_project(
-        project_id=identifier,
-        remote_url=remote_url,
-        default_branch="",
-        mirror_volume=mirror_volume(identifier),
-        created_at="",
+    row, existed = _docker_response(
+        lambda: _register_remote_project(controller_store, remote_url)
     )
-    row = controller_store.v1_project(identifier)
-    if row is None:
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            "project registration did not persist",
-        )
     if existed:
         response.status_code = status.HTTP_200_OK
     return _remote_project(row)
@@ -85,9 +94,7 @@ def get_remote_project(
     project_id: str,
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> RemoteProject:
-    row = controller_store.v1_project(project_id)
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"no project {project_id!r}")
+    row = _docker_response(lambda: _require_remote_project(controller_store, project_id))
     return _remote_project(row)
 
 
@@ -106,30 +113,67 @@ def delete_remote_project(
     path that takes the lifecycle lease and drains writers. This refuses while
     any sandbox remains rather than cascading into one.
     """
-    row = controller_store.v1_project(project_id)
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"no project {project_id!r}")
-
-    volume_name = str(row.get("mirror_volume") or mirror_volume(project_id))
-    try:
-        controller_store.delete_v1_project(project_id)
-    except ValueError as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-
-    # Re-validate ownership before removing. The volume name is derived, so a
-    # stale or hand-made volume could otherwise be removed on a project's word.
-    removed: str | None = None
-    try:
-        volume = docker_client.volumes.get(volume_name)
-        validate_mirror_ownership(volume, project_id=project_id)
-    except NotFound:
-        pass
-    except ValueError:
-        pass
-    else:
-        volume.remove(force=True)
-        removed = volume_name
+    removed = _docker_response(
+        lambda: _delete_remote_project(docker_client, controller_store, project_id)
+    )
     return RemoveRemoteProjectResponse(
         project_id=project_id,
         removed_mirror_volume=removed,
     )
+
+
+def _register_remote_project(
+    controller_store: ControllerStore,
+    remote_url: str,
+) -> tuple[dict[str, object], bool]:
+    identifier = project_id_for_remote(remote_url)
+    existed = controller_store.v1_project(identifier) is not None
+    controller_store.register_v1_project(
+        project_id=identifier,
+        remote_url=remote_url,
+        default_branch="",
+        mirror_volume=mirror_volume(identifier),
+        created_at="",
+    )
+    row = controller_store.v1_project(identifier)
+    if row is None:
+        raise ProjectOperationError(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "project registration did not persist",
+        )
+    return row, existed
+
+
+def _require_remote_project(
+    controller_store: ControllerStore,
+    project_id: str,
+) -> dict[str, object]:
+    row = controller_store.v1_project(project_id)
+    if row is None:
+        raise ProjectOperationError(status.HTTP_404_NOT_FOUND, f"no project {project_id!r}")
+    return row
+
+
+def _delete_remote_project(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    project_id: str,
+) -> str | None:
+    row = _require_remote_project(controller_store, project_id)
+    volume_name = str(row.get("mirror_volume") or mirror_volume(project_id))
+    try:
+        controller_store.delete_v1_project(project_id)
+    except ValueError as error:
+        raise ProjectOperationError(status.HTTP_409_CONFLICT, str(error)) from error
+
+    # Re-validate ownership before removing. The volume name is derived, so a
+    # stale or hand-made volume could otherwise be removed on a project's word.
+    try:
+        volume = docker_client.volumes.get(volume_name)
+        validate_mirror_ownership(volume, project_id=project_id)
+    except NotFound:
+        return None
+    except ValueError:
+        return None
+    volume.remove(force=True)
+    return volume_name

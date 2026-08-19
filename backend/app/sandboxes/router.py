@@ -1,7 +1,6 @@
 """Sandbox manifest API."""
 
-import json
-from typing import Annotated
+from typing import Annotated, Callable, TypeVar
 
 from docker.client import DockerClient
 from docker.errors import DockerException, NotFound
@@ -14,6 +13,7 @@ from app.controller.store import (
     get_controller_store,
 )
 from app.docker_client import get_docker_client
+from app.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
 from app.projects.remote import normalize_remote_url
 from app.sandboxes.manifest import (
     SandboxManifest,
@@ -38,10 +38,8 @@ from app.sandboxes.service import (
     SandboxInternalFailure,
     SandboxNotFound,
     SandboxValidationError,
-    _base_branch,
     _json_value,
     _optional_string,
-    _sync_strategy,
     publish,
     require_v1,
     sync,
@@ -65,6 +63,25 @@ from app.previews.config import get_preview_settings
 
 
 router = APIRouter(prefix="/sandboxes", tags=["sandboxes"])
+ResponseType = TypeVar("ResponseType")
+
+
+_DOCKER_ERRORS = DockerErrorPolicy(
+    domain_errors=(
+        SandboxNotFound,
+        SandboxConflict,
+        SandboxDependencyFailure,
+        SandboxInternalFailure,
+        SandboxValidationError,
+        SandboxDatabaseError,
+        PublishError,
+    ),
+    api_error=PassThroughApiError("Docker rejected the sandbox operation"),
+)
+
+
+def _docker_response(function: Callable[[], ResponseType]) -> ResponseType:
+    return docker_response(function, _DOCKER_ERRORS)
 
 
 class CreateSandboxRequest(BaseModel):
@@ -264,8 +281,8 @@ def create_or_resolve_sandbox(
             status.HTTP_400_BAD_REQUEST,
             "Sandbox creation requires a Git remote.",
         )
-    try:
-        outcome = service.create_or_resolve(
+    outcome = _docker_response(
+        lambda: service.create_or_resolve(
             docker_client,
             controller_store,
             remote_url=request.remote_url,
@@ -279,17 +296,12 @@ def create_or_resolve_sandbox(
                 else None
             ),
         )
-    except SandboxConflict as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, error.detail) from error
-    except SandboxValidationError as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
-    except SandboxInternalFailure as error:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(error)) from error
-    except SandboxDatabaseError as error:
-        raise HTTPException(error.status_code, error.detail) from error
+    )
     if not outcome.created:
         response.status_code = status.HTTP_200_OK
     return _sandbox_response(controller_store, outcome.sandbox)
+
+
 @router.get("", response_model=SandboxListResponse)
 def list_sandboxes(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
@@ -356,10 +368,12 @@ def get_sandbox(
     sandbox_id: str,
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> SandboxResponse:
-    sandbox = controller_store.sandbox(sandbox_id)
-    if sandbox is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sandbox not found")
-    return _sandbox_response(controller_store, sandbox)
+    return _docker_response(
+        lambda: _sandbox_response(
+            controller_store,
+            _require_sandbox(controller_store, sandbox_id),
+        )
+    )
 
 
 @router.get("/{sandbox_id}/staleness", response_model=SandboxStalenessResponse)
@@ -369,8 +383,22 @@ def get_sandbox_staleness(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> SandboxStalenessResponse:
     """Fetch the shared mirror, then report this sandbox's informational lag."""
+    return _docker_response(
+        lambda: _sandbox_staleness_response(
+            docker_client,
+            controller_store,
+            sandbox_id,
+        )
+    )
+
+
+def _sandbox_staleness_response(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    sandbox_id: str,
+) -> SandboxStalenessResponse:
     sandbox = controller_store.sandbox(sandbox_id)
-    _require_v1(
+    require_v1(
         sandbox,
         sandbox_id,
         "has no canonical mirror or usable base commit; recreate it explicitly to use v1 staleness.",
@@ -378,8 +406,7 @@ def get_sandbox_staleness(
     assert sandbox is not None
     project = controller_store.project(str(sandbox["project_id"]))
     if project is None or not project.get("mirror_volume"):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
+        raise SandboxConflict(
             f"Sandbox '{sandbox_id}' has no project mirror; recreate it explicitly to use v1.",
         )
     base_ref = _required_staleness_value(sandbox, "base_ref", sandbox_id)
@@ -406,10 +433,7 @@ def get_sandbox_staleness(
                 fetch_failure_reason = str(error)
                 project = controller_store.project(str(sandbox["project_id"])) or project
     except SandboxAdmissionError as error:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            lifecycle_conflict_detail(error),
-        ) from error
+        raise SandboxConflict(lifecycle_conflict_detail(error)) from error
     if fetch_failure_reason is None:
         project = controller_store.record_v1_project_mirror_fetch(
             project_id=str(project["id"])
@@ -426,7 +450,7 @@ def get_sandbox_staleness(
         )
     except Exception as error:
         if fetch_failure_reason is None:
-            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(error)) from error
+            raise SandboxInternalFailure(str(error)) from error
         fetch_failure_reason = f"{fetch_failure_reason}; last known mirror state is unavailable: {error}"
         behind_count = None
 
@@ -452,23 +476,14 @@ def sync_sandbox(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> SyncSandboxResponse:
     """Explicitly bring one clean v1 workspace forward from its local mirror."""
-    try:
-        outcome = sync(
+    outcome = _docker_response(
+        lambda: sync(
             docker_client,
             controller_store,
             sandbox_id=sandbox_id,
             stop_blocking_preview=request.stop_blocking_preview,
         )
-    except SandboxNotFound as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-    except SandboxConflict as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, error.detail) from error
-    except SandboxDependencyFailure as error:
-        raise HTTPException(status.HTTP_424_FAILED_DEPENDENCY, str(error)) from error
-    except SandboxInternalFailure as error:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(error)) from error
-    except SandboxDatabaseError as error:
-        raise HTTPException(error.status_code, error.detail) from error
+    )
     response = _sandbox_response(controller_store, outcome.sandbox)
     return SyncSandboxResponse(
         **response.model_dump(),
@@ -491,21 +506,14 @@ def publish_sandbox(
     request: PublishSandboxRequest = PublishSandboxRequest(),
 ) -> PublishSandboxResponse:
     """Push one reviewed branch, then discover or create and verify its PR."""
-    try:
-        outcome = publish(
+    outcome = _docker_response(
+        lambda: publish(
             docker_client,
             controller_store,
             sandbox_id=sandbox_id,
             stop_blocking_preview=request.stop_blocking_preview,
         )
-    except SandboxNotFound as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-    except SandboxConflict as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, error.detail) from error
-    except SandboxDependencyFailure as error:
-        raise HTTPException(status.HTTP_424_FAILED_DEPENDENCY, str(error)) from error
-    except PublishError as error:
-        raise HTTPException(error.status_code, error.detail) from error
+    )
     return PublishSandboxResponse(**outcome.__dict__)
 
 
@@ -514,21 +522,9 @@ def get_sandbox_publication(
     sandbox_id: str,
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> SandboxPublicationResponse:
-    sandbox = controller_store.sandbox(sandbox_id)
-    try:
-        require_v1(
-            sandbox,
-            sandbox_id,
-            "cannot publish to a remote; recreate it explicitly as v1.",
-        )
-    except SandboxNotFound as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-    except SandboxConflict as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, error.detail) from error
-    publication = controller_store.sandbox_publication(sandbox_id)
-    if publication is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sandbox has no publication record")
-    return SandboxPublicationResponse(**publication)
+    return _docker_response(
+        lambda: _sandbox_publication_response(controller_store, sandbox_id)
+    )
 
 
 @router.get("/{sandbox_id}/engine", response_model=EngineDetectionResponse)
@@ -536,12 +532,9 @@ def get_engine_detection(
     sandbox_id: str,
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> EngineDetectionResponse:
-    sandbox = controller_store.sandbox(sandbox_id)
-    _require_v1(sandbox, sandbox_id, "does not support engine confirmation")
-    detection = controller_store.sandbox_engine_detection(sandbox_id)
-    if detection is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Engine detection is not available")
-    return _engine_detection_response(detection)
+    return _docker_response(
+        lambda: _sandbox_engine_detection_response(controller_store, sandbox_id)
+    )
 
 
 @router.post("/{sandbox_id}/confirm-engine", response_model=SandboxResponse)
@@ -552,22 +545,17 @@ def confirm_engine(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> SandboxResponse:
     """Freeze a human-approved engine and resume the creation lifecycle."""
-    try:
-        sandbox = service.confirm_engine(
+    sandbox = _docker_response(
+        lambda: service.confirm_engine(
             docker_client,
             controller_store,
             sandbox_id=sandbox_id,
             confirmation=_engine_confirmation(request),
         )
-    except SandboxNotFound as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-    except SandboxConflict as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, error.detail) from error
-    except SandboxValidationError as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
-    except SandboxDatabaseError as error:
-        raise HTTPException(error.status_code, error.detail) from error
+    )
     return _sandbox_response(controller_store, sandbox)
+
+
 @router.post("/{sandbox_id}/reset-db", response_model=SandboxResponse)
 def reset_database(
     sandbox_id: str,
@@ -576,20 +564,17 @@ def reset_database(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> SandboxResponse:
     """Drop and rebuild from the stored, human-approved command snapshot."""
-    try:
-        sandbox = service.reset_database(
+    sandbox = _docker_response(
+        lambda: service.reset_database(
             docker_client,
             controller_store,
             sandbox_id=sandbox_id,
             stop_blocking_preview=request.stop_blocking_preview,
         )
-    except SandboxNotFound as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-    except SandboxConflict as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, error.detail) from error
-    except SandboxDatabaseError as error:
-        raise HTTPException(error.status_code, error.detail) from error
+    )
     return _sandbox_response(controller_store, sandbox)
+
+
 @router.post("/{sandbox_id}/resume", response_model=SandboxResponse)
 def resume_sandbox(
     sandbox_id: str,
@@ -597,39 +582,29 @@ def resume_sandbox(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> SandboxResponse:
     """Converge safe missing v1 resources without replacing workspace state."""
-    try:
-        sandbox = service.resume(
+    sandbox = _docker_response(
+        lambda: service.resume(
             docker_client,
             controller_store,
             sandbox_id=sandbox_id,
         )
-    except SandboxNotFound as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-    except SandboxConflict as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, error.detail) from error
-    except SandboxDatabaseError as error:
-        raise HTTPException(error.status_code, error.detail) from error
+    )
     return _sandbox_response(controller_store, sandbox)
+
+
 @router.delete("/{sandbox_id}", response_model=DestroySandboxResponse)
 def delete_sandbox(
     sandbox_id: str,
     docker_client: Annotated[DockerClient, Depends(get_docker_client)],
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> DestroySandboxResponse:
-    try:
-        tombstone = service.destroy(
+    tombstone = _docker_response(
+        lambda: service.destroy(
             docker_client,
             controller_store,
             sandbox_id=sandbox_id,
         )
-    except SandboxNotFound as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-    except SandboxConflict as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, error.detail) from error
-    except SandboxValidationError as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
-    except SandboxInternalFailure as error:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(error)) from error
+    )
     return _tombstone_response(tombstone)
 
 
@@ -670,23 +645,48 @@ def _sandbox_response(
     )
 
 
+def _require_sandbox(
+    controller_store: ControllerStore,
+    sandbox_id: str,
+) -> dict[str, object]:
+    sandbox = controller_store.sandbox(sandbox_id)
+    if sandbox is None:
+        raise SandboxNotFound("Sandbox not found")
+    return sandbox
+
+
+def _sandbox_publication_response(
+    controller_store: ControllerStore,
+    sandbox_id: str,
+) -> SandboxPublicationResponse:
+    sandbox = controller_store.sandbox(sandbox_id)
+    require_v1(
+        sandbox,
+        sandbox_id,
+        "cannot publish to a remote; recreate it explicitly as v1.",
+    )
+    publication = controller_store.sandbox_publication(sandbox_id)
+    if publication is None:
+        raise SandboxNotFound("Sandbox has no publication record")
+    return SandboxPublicationResponse(**publication)
+
+
+def _sandbox_engine_detection_response(
+    controller_store: ControllerStore,
+    sandbox_id: str,
+) -> EngineDetectionResponse:
+    sandbox = controller_store.sandbox(sandbox_id)
+    require_v1(sandbox, sandbox_id, "does not support engine confirmation")
+    detection = controller_store.sandbox_engine_detection(sandbox_id)
+    if detection is None:
+        raise SandboxNotFound("Engine detection is not available")
+    return _engine_detection_response(detection)
+
+
 def _value(manifest: SandboxManifest, field: str) -> str | None:
     value = getattr(manifest, field)
     return str(value) if value is not None else None
 
-
-def _require_v1(
-    sandbox: dict[str, object] | None,
-    sandbox_id: str,
-    refusal: str,
-) -> None:
-    if sandbox is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sandbox not found")
-    if sandbox.get("lifecycle_version") != "v1":
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Legacy sandbox '{sandbox_id}' {refusal}",
-        )
 
 
 def _required_staleness_value(
@@ -694,8 +694,7 @@ def _required_staleness_value(
 ) -> str:
     value = sandbox.get(field)
     if value is None or not str(value):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
+        raise SandboxConflict(
             f"Sandbox '{sandbox_id}' has no {field}; recreate it explicitly to use v1 staleness.",
         )
     return str(value)
