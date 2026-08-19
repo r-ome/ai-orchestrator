@@ -40,6 +40,7 @@ from app.sandboxes.engine_detection import (
     normalize_confirmable_engine,
 )
 from app.sandboxes.mirror import (
+    WorkspaceMissing,
     ensure_project_mirror,
     ensure_workspace_import,
     validate_project_mirror,
@@ -851,9 +852,7 @@ def resume_sandbox(
                 )
             except ValueError as error:
                 raise RuntimeError(f"unsafe workspace ownership inconsistency: {error}") from error
-            except RuntimeError as error:
-                if "workspace is missing" not in str(error):
-                    raise
+            except WorkspaceMissing:
                 # A missing workspace is safe to recreate.  It has no worktree
                 # to preserve.  We use the immutable original base, never the
                 # latest mirror head.

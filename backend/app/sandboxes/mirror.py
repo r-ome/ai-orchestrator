@@ -16,6 +16,15 @@ from app.sandboxes.naming import (
 )
 
 
+class WorkspaceMissing(RuntimeError):
+    """The sandbox workspace volume is gone.
+
+    A caller that holds the immutable clone identity can rebuild it, so this
+    is separated from the workspace errors that are not safe to recover from.
+    It stays a `RuntimeError` so an unhandled one still degrades the sandbox.
+    """
+
+
 @dataclass(frozen=True)
 class MirrorPin:
     volume_name: str
@@ -104,7 +113,7 @@ def validate_workspace_import(
     try:
         volume = docker_client.volumes.get(volume_name)
     except NotFound as error:
-        raise RuntimeError("sandbox workspace is missing; use lifecycle resume when available") from error
+        raise WorkspaceMissing("sandbox workspace is missing; use lifecycle resume when available") from error
     validate_ownership(volume, sandbox_id=sandbox_id)
     return volume_name
 
