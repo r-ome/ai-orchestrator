@@ -20,6 +20,9 @@ test = [
     "httpx>=0.28,<1.0",
     "pytest>=8.3,<10.0",
 ]
+dev = [
+    "ruff>=0.16,<0.17",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
@@ -27,3 +30,13 @@ packages = ["app"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.ruff]
+# 88 is ruff's default and matches the code as written: the 99th percentile
+# line is 89 characters, so this width causes no gratuitous rewrapping.
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+# The default rule set. Pinned to ruff 0.16.x above, because the default
+# selection widens between minor releases and would reopen the gate silently.
