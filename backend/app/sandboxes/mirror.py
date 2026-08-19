@@ -6,7 +6,7 @@ from docker.client import DockerClient
 from docker.errors import NotFound
 
 from app.sandboxes.git import GitCredentialSource, clone_mirror_to_workspace, ensure_canonical_mirror, run_git
-from app.sandboxes.naming import (
+from app.platform.naming import (
     mirror_ownership_labels,
     mirror_volume,
     ownership_labels,

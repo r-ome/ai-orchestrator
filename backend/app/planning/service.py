@@ -13,7 +13,7 @@ from docker.client import DockerClient
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
 from app.delegation.config import get_routing_settings
-from app.errors import OperationError
+from app.platform.errors import OperationError
 from app.planning.config import PlanningSettings, reasoning_effort_choices
 from app.planning.feature_status import derive_feature_status
 from app.planning.models import (

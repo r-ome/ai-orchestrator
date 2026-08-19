@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from docker.client import DockerClient
 
-from app.coercions import json_object
+from app.platform.coercions import json_object
 from app.controller.store import ControllerStore, ReviewGenerating, RevisionTaken
 from app.delegation import service
 from app.delegation.config import IntegrationReviewSettings

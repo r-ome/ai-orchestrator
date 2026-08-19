@@ -1,4 +1,4 @@
-from app.errors import OperationError
+from app.platform.errors import OperationError
 
 
 class PreviewOperationError(OperationError):

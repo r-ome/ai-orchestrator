@@ -8,7 +8,7 @@ from docker.errors import DockerException, NotFound
 
 from app.controller.store import ControllerStore, SandboxAdmissionError
 from app.previews.config import get_preview_settings
-from app.projects.remote import project_id_for_remote
+from app.platform.remote import project_id_for_remote
 from app.sandboxes.database import (
     SandboxDatabaseError,
     SandboxMigrationError,
@@ -48,7 +48,7 @@ from app.sandboxes.mirror import (
     verify_workspace_identity,
 )
 from app.sandboxes.models import SandboxLifecycleStatus
-from app.sandboxes.naming import (
+from app.platform.naming import (
     database_name,
     db_data_volume,
     feature_branch,

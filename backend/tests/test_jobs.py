@@ -1,7 +1,7 @@
 import pytest
 from docker.errors import DockerException
 
-from app import jobs
+from app.platform import jobs
 
 
 def test_a_job_runs_off_the_calling_thread() -> None:

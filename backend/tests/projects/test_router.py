@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.controller.store import get_controller_store
 from app.main import app
-from app.sandboxes.naming import mirror_ownership_labels, mirror_volume
+from app.platform.naming import mirror_ownership_labels, mirror_volume
 from conftest import register_ready_v1_sandbox
 
 REMOTE = "https://github.com/owner/repo.git"

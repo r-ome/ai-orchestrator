@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from app.controller.store import ControllerStore
-from app.projects.remote import normalize_remote_url, project_id_for_remote
+from app.platform.remote import normalize_remote_url, project_id_for_remote
 
 
 def test_remote_forms_share_one_normalized_project_identity() -> None:

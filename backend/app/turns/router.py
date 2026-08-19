@@ -16,8 +16,8 @@ from fastapi import APIRouter, Depends, WebSocket
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from app.controller.store import ControllerStore, get_controller_store
-from app.docker_client import get_docker_client
-from app.log_stream import (
+from app.platform.docker_client import get_docker_client
+from app.platform.log_stream import (
     cancel_tasks,
     close_log_stream,
     forward_container_log,

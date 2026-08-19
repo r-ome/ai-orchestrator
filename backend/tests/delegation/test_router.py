@@ -7,9 +7,9 @@ import pytest
 from conftest import register_ready_v1_sandbox
 from fastapi.testclient import TestClient
 
-from app import jobs
+from app.platform import jobs
 from app.controller.store import ControllerStore, get_controller_store
-from app.docker_client import get_docker_client
+from app.platform.docker_client import get_docker_client
 from app.main import app
 
 

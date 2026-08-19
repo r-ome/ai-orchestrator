@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from app.controller.store import projects as store_projects_module
 from app.controller.config import get_controller_settings
 from app.controller.store import get_controller_store
-from app.docker_client import get_docker_client
+from app.platform.docker_client import get_docker_client
 from app.main import app
 from app.sandboxes import lifecycle as sandbox_lifecycle
 from app.sandboxes import service as sandbox_service

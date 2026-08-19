@@ -7,7 +7,7 @@ from typing import Any
 from docker.errors import DockerException
 
 from app.controller.store import ControllerStore
-from app.sandboxes.naming import is_shared_infrastructure
+from app.platform.naming import is_shared_infrastructure
 
 
 RESOURCE_KINDS = ("volume", "container", "network")

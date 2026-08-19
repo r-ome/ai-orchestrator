@@ -9,7 +9,7 @@ import yaml
 from docker.client import DockerClient
 from docker.errors import NotFound
 
-from app.labels import LABEL_DATA_MANAGED, LABEL_PERSISTENT, LABEL_SANDBOX_ID
+from app.platform.labels import LABEL_DATA_MANAGED, LABEL_PERSISTENT, LABEL_SANDBOX_ID
 from app.previews._shared import _safe_relative_path, _slug
 from app.previews.config import PreviewSettings
 from app.previews.detection import ENVIRONMENT_FILE_NAMES, is_detection_file

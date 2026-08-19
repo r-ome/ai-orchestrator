@@ -4,8 +4,8 @@ from docker.client import DockerClient
 from docker.errors import NotFound
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from app.docker_client import get_docker_client
-from app.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
+from app.platform.docker_client import get_docker_client
+from app.platform.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
 from app.controller.store import ControllerStore, get_controller_store
 from app.projects.models import (
     RegisterRemoteProjectRequest,
@@ -13,8 +13,8 @@ from app.projects.models import (
     RemoteProjectsResponse,
     RemoveRemoteProjectResponse,
 )
-from app.projects.remote import normalize_remote_url, project_id_for_remote
-from app.sandboxes.naming import mirror_volume, validate_mirror_ownership
+from app.platform.remote import normalize_remote_url, project_id_for_remote
+from app.platform.naming import mirror_volume, validate_mirror_ownership
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])

@@ -9,7 +9,7 @@ from docker.models.containers import Container
 from app.containers.hardened import HardenedContainerSpec, Rootfs, create_hardened
 from app.controller.store import ControllerStore
 from app.dependency_cache import _data_volume, _volume_context_tar
-from app.labels import LABEL_SANDBOX_ID, LABEL_SERVICE
+from app.platform.labels import LABEL_SANDBOX_ID, LABEL_SERVICE
 from app.previews._shared import _safe_relative_path, _slug
 from app.previews.config import PreviewSettings
 from app.previews.errors import PreviewOperationError

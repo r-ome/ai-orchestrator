@@ -33,15 +33,15 @@ from app.agents.service import (
     start_agent_exec,
     stop_agent,
 )
-from app.docker_client import get_docker_client
-from app.docker_errors import (
+from app.platform.docker_client import get_docker_client
+from app.platform.docker_errors import (
     DOCKER_DAEMON_UNAVAILABLE_DETAIL,
     ConflictApiError,
     DockerErrorPolicy,
     docker_response,
 )
-from app.docker_terminal import close_stream, read_stream, write_stream
-from app.labels import LABEL_RUN_ID, LABEL_SANDBOX_ID
+from app.platform.docker_terminal import close_stream, read_stream, write_stream
+from app.platform.labels import LABEL_RUN_ID, LABEL_SANDBOX_ID
 from app.controller.store import (
     AgentWriterSessionExists,
     ControllerStore,

@@ -5,7 +5,7 @@ from typing import Any
 
 from app.controller.store import ControllerStore
 from app.sandboxes.models import SandboxLifecycleStatus, source_statuses
-from app.sandboxes.naming import validate_feature_key
+from app.platform.naming import validate_feature_key
 
 
 @dataclass(frozen=True)

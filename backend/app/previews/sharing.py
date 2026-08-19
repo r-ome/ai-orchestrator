@@ -7,7 +7,7 @@ from docker.errors import APIError, DockerException, NotFound
 from docker.models.containers import Container
 
 from app.controller.store import ControllerStore
-from app.labels import (
+from app.platform.labels import (
     LABEL_CONTROLLER_MANAGED,
     LABEL_DATA_MANAGED,
     LABEL_KIND,

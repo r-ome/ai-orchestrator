@@ -16,7 +16,7 @@ from app.previews.runtimes import native as preview_native
 from app.delegation.packet import ResolvedVerification
 from app.delegation.verification import VerificationSettings, run_verification
 from app.sandboxes.manifest import SandboxManifest, write_manifest
-from app.sandboxes.naming import (
+from app.platform.naming import (
     database_name,
     db_data_volume,
     network,

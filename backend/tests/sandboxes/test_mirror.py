@@ -10,7 +10,7 @@ import pytest
 from app.controller.config import get_controller_settings
 from app.sandboxes.git import clone_mirror_to_workspace, ensure_canonical_mirror
 from app.sandboxes.mirror import MirrorPin, ensure_project_mirror, ensure_workspace_import
-from app.sandboxes.naming import (
+from app.platform.naming import (
     mirror_ownership_labels,
     mirror_volume,
     ownership_labels,
@@ -128,7 +128,7 @@ def test_workspace_clone_script_uses_no_local_and_strips_remotes_and_hooks() -> 
 def test_workspace_name_with_wrong_ownership_is_not_adopted(
     fake_docker_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from app.sandboxes.naming import workspace_volume
+    from app.platform.naming import workspace_volume
 
     fake_docker_client.volumes.create(
         name=workspace_volume(SANDBOX_ID),

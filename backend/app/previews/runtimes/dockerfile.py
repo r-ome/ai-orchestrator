@@ -6,7 +6,7 @@ from docker.errors import APIError, BuildError
 
 from app.containers.hardened import HardenedContainerSpec, Rootfs, create_hardened
 from app.controller.store import ControllerStore
-from app.labels import LABEL_SANDBOX_ID, LABEL_SERVICE
+from app.platform.labels import LABEL_SANDBOX_ID, LABEL_SERVICE
 from app.previews._shared import _safe_relative_path
 from app.previews.config import PreviewSettings
 from app.previews.errors import PreviewOperationError

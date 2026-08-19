@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, field_validator
 
 from app.controller.store import ControllerStore, get_controller_store
-from app.docker_client import get_docker_client
-from app.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
-from app.projects.remote import normalize_remote_url
+from app.platform.docker_client import get_docker_client
+from app.platform.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
+from app.platform.remote import normalize_remote_url
 from app.sandboxes.manifest import (
     SandboxManifest,
     read_manifest,
@@ -36,7 +36,7 @@ from app.sandboxes.service import (
 from app.sandboxes.publish import (
     PublishError,
 )
-from app.sandboxes.naming import validate_feature_key
+from app.platform.naming import validate_feature_key
 from app.sandboxes.orphans import (
     parse_orphan_resource_key,
     resource_is_claimed,

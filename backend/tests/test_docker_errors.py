@@ -3,7 +3,7 @@ from docker.errors import APIError, ContainerError, DockerException, NotFound
 from fastapi import HTTPException
 
 from app.delegation.router import _DOCKER_ERRORS as DELEGATION_DOCKER_ERRORS
-from app.docker_errors import (
+from app.platform.docker_errors import (
     ConflictApiError,
     DockerErrorPolicy,
     PassThroughApiError,

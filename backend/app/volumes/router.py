@@ -3,8 +3,8 @@ from typing import Annotated, Callable, TypeVar
 from docker.client import DockerClient
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.docker_client import get_docker_client
-from app.docker_errors import ConflictApiError, DockerErrorPolicy, docker_response
+from app.platform.docker_client import get_docker_client
+from app.platform.docker_errors import ConflictApiError, DockerErrorPolicy, docker_response
 from app.volumes.actions import (
     MAX_FILE_BYTES,
     VolumeOperationError,

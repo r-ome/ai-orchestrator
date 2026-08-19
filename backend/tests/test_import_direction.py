@@ -28,17 +28,8 @@ KNOWN_CYCLE = frozenset(
 )
 MODULES_OUTSIDE_KNOWN_CYCLE = frozenset(
     {
-        "coercions",
         "containers",
-        "dirty_state",
-        "docker_client",
-        "docker_errors",
-        "docker_terminal",
-        "env",
-        "errors",
-        "jobs",
-        "labels",
-        "log_stream",
+        "platform",
         "turns",
         "volumes",
     }

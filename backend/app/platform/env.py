@@ -12,8 +12,8 @@ deployment; a container or CI run overrides them the normal way.
 import os
 from pathlib import Path
 
-#: `backend/.env`, two levels up from this file.
-ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+#: `backend/.env`, three levels up from this file.
+ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 
 
 def integer_setting(name: str, default: int) -> int:

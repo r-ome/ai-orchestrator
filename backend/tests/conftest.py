@@ -425,7 +425,7 @@ def override_docker_client(
     fake_docker_client: FakeDockerClient,
 ) -> Iterator[FakeDockerClient]:
     """Installs the shared fake through FastAPI's Docker dependency for router tests."""
-    from app.docker_client import get_docker_client
+    from app.platform.docker_client import get_docker_client
     from app.main import app
 
     def override() -> Iterator[FakeDockerClient]:

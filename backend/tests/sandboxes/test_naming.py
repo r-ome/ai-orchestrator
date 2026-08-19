@@ -2,7 +2,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
-from app.sandboxes.naming import (
+from app.platform.naming import (
     agent_container,
     database_name,
     db_data_volume,

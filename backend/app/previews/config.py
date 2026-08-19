@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 
-from app.env import integer_setting
+from app.platform.env import integer_setting
 
 
 @dataclass(frozen=True)

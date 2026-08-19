@@ -11,7 +11,7 @@ from docker.errors import NotFound
 from docker.models.containers import Container
 from docker.models.volumes import Volume
 
-from app.coercions import clamped_integer
+from app.platform.coercions import clamped_integer
 from app.volumes.models import (
     ManagedVolume,
     ManagedVolumesResponse,
@@ -22,7 +22,7 @@ from app.volumes.models import (
     VolumeFileDetails,
     VolumeFileResponse,
 )
-from app.errors import OperationError
+from app.platform.errors import OperationError
 
 MAX_FILE_BYTES = 1_048_576
 

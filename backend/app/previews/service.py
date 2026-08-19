@@ -41,7 +41,7 @@ from app.dependency_cache import (
     _volume_runtime_files,
     _write_preview_manifest,
 )
-from app.labels import (
+from app.platform.labels import (
     LABEL_EXPIRES_AT,
     LABEL_MANAGED,
     LABEL_RUN_ID,

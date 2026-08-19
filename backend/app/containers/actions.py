@@ -9,7 +9,7 @@ from docker.client import DockerClient
 from docker.errors import NotFound
 from docker.models.containers import Container
 
-from app.coercions import clamped_integer
+from app.platform.coercions import clamped_integer
 from app.containers.models import (
     ContainerDetails,
     ContainerFileDetails,
@@ -22,7 +22,7 @@ from app.containers.models import (
     StopContainerResponse,
 )
 from app.containers.service import container_summary
-from app.errors import OperationError
+from app.platform.errors import OperationError
 
 MAX_FILE_BYTES = 1_048_576
 

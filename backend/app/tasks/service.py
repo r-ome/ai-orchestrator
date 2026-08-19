@@ -13,8 +13,8 @@ from app.controller.store import (
     OpenTaskExists,
     SandboxWriterAdmissionError,
 )
-from app.dirty_state import parse_snapshot, serialize_snapshot, snapshot_shell
-from app.errors import OperationError
+from app.platform.dirty_state import parse_snapshot, serialize_snapshot, snapshot_shell
+from app.platform.errors import OperationError
 from app.previews.config import get_preview_settings
 from app.projects.models import ProjectRegistration
 from app.projects.service import (

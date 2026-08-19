@@ -6,7 +6,7 @@ from typing import Any
 from docker.errors import NotFound
 from fastapi.testclient import TestClient
 
-from app.docker_client import get_docker_client
+from app.platform.docker_client import get_docker_client
 from app.main import app
 
 client = TestClient(app)

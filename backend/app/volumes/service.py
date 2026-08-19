@@ -2,7 +2,7 @@ from typing import Any
 
 from docker.client import DockerClient
 
-from app.coercions import clamped_integer
+from app.platform.coercions import clamped_integer
 from app.volumes.models import (
     DockerStorageStatusResponse,
     RunningVolume,

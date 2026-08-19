@@ -11,14 +11,14 @@ from docker.errors import APIError, ContainerError, NotFound
 
 from app.agents.models import AgentProvider
 from app.controller.store import get_controller_store
-from app.docker_client import get_docker_client
+from app.platform.docker_client import get_docker_client
 from app.main import app
 from app.planning import service as planning_service
 from app.planning.config import PlanningSettings
 from app.planning.models import CreatePlanningSessionRequest
 from app.projects.models import ProjectRegistration
 from app.sandboxes.mirror import MirrorPin
-from app.sandboxes.naming import (
+from app.platform.naming import (
     mirror_ownership_labels,
     mirror_volume,
     ownership_labels,
@@ -30,7 +30,7 @@ from app.sandboxes import publish as sandbox_publish
 from app.sandboxes import database as sandbox_database
 from app.sandboxes.database import sandbox_database_runtime, shared_database_names
 from app.sandboxes.engine_detection import EngineDetection, EngineSignal, NO_DATABASE
-from app.sandboxes.naming import database_name, db_data_volume, network
+from app.platform.naming import database_name, db_data_volume, network
 from app.sandboxes.manifest import (
     read_manifest,
     transition_sandbox_lifecycle,

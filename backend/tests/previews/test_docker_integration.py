@@ -35,7 +35,7 @@ from app.previews.service import (
     stop_preview,
 )
 from app.controller.store import ControllerStore, get_controller_store
-from app.docker_client import get_docker_client
+from app.platform.docker_client import get_docker_client
 from app.main import app
 PROJECT_MANAGED = "orchestrator.project.managed"
 PROJECT_NAME = "orchestrator.project.name"

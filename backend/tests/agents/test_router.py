@@ -17,7 +17,7 @@ from app.agents.service import (
     LABEL_PROVIDER,
     cleanup_agents,
 )
-from app.docker_client import get_docker_client
+from app.platform.docker_client import get_docker_client
 from app.controller.store import get_controller_store
 from app.main import app
 from app.projects.models import ProjectRegistration

@@ -4,11 +4,11 @@ from typing import Annotated, TypeVar
 from docker.client import DockerClient
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app import jobs
+from app.platform import jobs
 from app.agents.service import AgentOperationError
 from app.controller.store import ControllerStore, get_controller_store
-from app.docker_client import get_docker_client
-from app.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
+from app.platform.docker_client import get_docker_client
+from app.platform.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
 from app.implementation_context.config import ContextSettings, get_context_settings
 from app.implementation_context.models import (
     GenerateContextRequest,

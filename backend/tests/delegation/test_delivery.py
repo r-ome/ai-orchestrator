@@ -21,14 +21,14 @@ from app.delegation.models import (
     IntegrationReviewStatus,
     RunStatus,
 )
-from app.dirty_state import DirtyEntry, serialize_snapshot
+from app.platform.dirty_state import DirtyEntry, serialize_snapshot
 from app.previews.config import PreviewSettings
 from app.sandboxes import router as sandbox_router
 from app.sandboxes import service as sandbox_service
 from app.sandboxes.engine_detection import EngineDetection, NO_DATABASE
 from app.sandboxes.manifest import read_manifest, transition_sandbox_lifecycle
 from app.sandboxes.models import SandboxLifecycleStatus
-from app.sandboxes.naming import ownership_labels, workspace_volume
+from app.platform.naming import ownership_labels, workspace_volume
 from conftest import register_ready_v1_sandbox
 
 

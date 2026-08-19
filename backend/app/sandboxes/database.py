@@ -25,7 +25,7 @@ from docker.models.containers import Container
 from docker.types import Mount
 from requests.exceptions import ReadTimeout
 
-from app.labels import (
+from app.platform.labels import (
     LABEL_CONTROLLER_MANAGED,
     LABEL_KIND,
     LABEL_PERSISTENT,
@@ -49,7 +49,7 @@ from app.containers.hardened import (
 from app.containers.images import ensure_image
 from app.controller.store import ControllerStore
 from app.sandboxes.engine_detection import NO_DATABASE
-from app.sandboxes.naming import (
+from app.platform.naming import (
     database_name,
     db_data_volume,
     network as sandbox_network_name,

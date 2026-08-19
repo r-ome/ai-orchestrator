@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.controller.store import ControllerStore, get_controller_store
-from app.docker_client import get_docker_client
+from app.platform.docker_client import get_docker_client
 from app.main import app
 from app.previews.progress import _record_preview_progress
 from app.projects.models import ProjectRegistration

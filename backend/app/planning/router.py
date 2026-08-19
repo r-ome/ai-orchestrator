@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, status
 
 from app.controller.store import ControllerStore, get_controller_store
 from app.delegation.config import get_routing_settings
-from app.docker_client import get_docker_client
-from app.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
+from app.platform.docker_client import get_docker_client
+from app.platform.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
 from app.planning.config import (
     PlanningSettings,
     get_planning_settings,

@@ -186,7 +186,7 @@ class PlanningMixin:
     def interrupted_turns(self) -> dict[str, list[dict[str, Any]]]:
         """Rows whose turn was still in flight, keyed by table.
 
-        A turn now runs on a background thread (see `app.jobs`), and a daemon
+        A turn now runs on a background thread (see `app.platform.jobs`), and a daemon
         thread dies with the process. Nothing then settles the row it claimed,
         so a generating context would block its session's unique index forever
         and a running work item would block its delegation. Startup

@@ -8,7 +8,7 @@ from uuid import uuid4
 from docker.client import DockerClient
 
 from app.agents.models import AgentProvider
-from app.coercions import json_object
+from app.platform.coercions import json_object
 from app.controller.store import (
     ControllerStore,
     DelegationActive,
@@ -42,7 +42,7 @@ from app.delegation.models import (
     delegation_source_statuses,
 )
 from app.delegation.routing import route
-from app.errors import OperationError
+from app.platform.errors import OperationError
 from app.implementation_context.service import ready_context
 from app.planning.config import PlanningSettings
 from app.planning.models import PlanningRole, PlanningStatus

@@ -22,7 +22,7 @@ from app.sandboxes.manifest import (
     write_manifest,
 )
 from app.sandboxes.models import SandboxLifecycleStatus
-from app.sandboxes.naming import mirror_ownership_labels, ownership_labels
+from app.platform.naming import mirror_ownership_labels, ownership_labels
 from app.sandboxes.git import (
     GitNetworkMode,
     clone_mirror_to_workspace,

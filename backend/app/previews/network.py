@@ -7,7 +7,7 @@ from docker.models.containers import Container
 
 from app.containers.hardened import Egress, HardenedContainerSpec, create_hardened
 from app.dependency_cache import _data_volume
-from app.labels import LABEL_SERVICE
+from app.platform.labels import LABEL_SERVICE
 from app.previews.models import PreviewConfiguration, PreviewNetworkAccess
 from app.previews.resources import _ensure_preview_image, _run_preview_command
 

@@ -8,7 +8,7 @@ from docker.client import DockerClient
 
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
-from app.errors import OperationError
+from app.platform.errors import OperationError
 # Models only. `delegation.service` imports this module, so reaching for
 # anything further into that package would close a ring.
 from app.delegation.models import DelegationStatus
@@ -57,7 +57,7 @@ class ContextClaim:
 
     Claiming is separated from running so the HTTP caller gets its 404, 409, or
     the new row's id straight away, while the turn — minutes of container time —
-    goes to `app.jobs`. The claimed row is the job record: progress arrives as
+    goes to `app.platform.jobs`. The claimed row is the job record: progress arrives as
     `context.progress` events on it.
     """
 

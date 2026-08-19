@@ -10,7 +10,7 @@ from conftest import register_ready_v1_sandbox
 from docker.errors import APIError
 
 from app.controller.store import ControllerStore, OpenTaskExists
-from app.dirty_state import DirtyEntry, serialize_snapshot
+from app.platform.dirty_state import DirtyEntry, serialize_snapshot
 from app.projects.models import ProjectRegistration
 from app.tasks.models import (
     TASK_TRANSITIONS,

@@ -20,8 +20,8 @@ from app.controller.store import (
     ControllerStore,
     SandboxWriterAdmissionError,
 )
-from app.errors import OperationError
-from app.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND, LABEL_RUN_ID, LABEL_SANDBOX_ID
+from app.platform.errors import OperationError
+from app.platform.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND, LABEL_RUN_ID, LABEL_SANDBOX_ID
 from app.agents.models import (
     AgentProvider,
     CleanupAgentsResponse,

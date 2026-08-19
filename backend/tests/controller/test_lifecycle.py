@@ -9,7 +9,7 @@ from conftest import register_ready_v1_sandbox
 from app.controller.lifecycle import _settle_interrupted_turns, reconcile_controller_state
 from app.controller.store import ControllerStore
 from app.delegation import service as delegation_service
-from app.sandboxes.naming import ownership_labels
+from app.platform.naming import ownership_labels
 from docker.errors import DockerException
 from conftest import FakeDockerClient
 

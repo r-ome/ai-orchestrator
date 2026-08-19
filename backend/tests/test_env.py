@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.env import load_env
+from app.platform.env import ENV_FILE, load_env
 
 
 def _write(tmp_path: Path, text: str) -> Path:
@@ -45,3 +45,18 @@ def test_comments_blanks_and_malformed_lines_are_skipped(
 
 def test_a_missing_file_is_not_an_error(tmp_path: Path) -> None:
     assert load_env(tmp_path / "absent") == {}
+
+
+def test_env_file_resolves_to_the_backend_directory() -> None:
+    """`ENV_FILE` is derived from `__file__`, so moving the module breaks it.
+
+    Every other test in this file passes an explicit `path`, so none of them
+    touch `ENV_FILE`. Phase 9 moved this module one directory deeper and the
+    constant silently pointed at `backend/app/.env`; `load_env` swallows the
+    resulting `OSError` and returns `{}`, so the whole suite stayed green while
+    the real file stopped loading.
+    """
+    backend = Path(__file__).resolve().parents[1]
+    assert ENV_FILE == backend / ".env"
+    assert ENV_FILE.parent.joinpath("app").is_dir(), "ENV_FILE must sit beside app/"
+

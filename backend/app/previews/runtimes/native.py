@@ -23,7 +23,7 @@ from app.dependency_cache import (
     _lockfile_digest,
     _volume_runtime_files,
 )
-from app.labels import LABEL_SANDBOX_ID, LABEL_SERVICE
+from app.platform.labels import LABEL_SANDBOX_ID, LABEL_SERVICE
 from app.previews._shared import _slug
 from app.previews.config import PreviewSettings
 from app.previews.detection import hashes

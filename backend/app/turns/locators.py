@@ -1,6 +1,6 @@
 """Finding the container that is running one claimed turn.
 
-Every long turn now runs on a background thread (`app.jobs`) and reports
+Every long turn now runs on a background thread (`app.platform.jobs`) and reports
 progress as events on the row it claimed. That tells a reader *that* work is
 happening; the container's own output is what tells them *what* the assigned
 model is doing. Each phase labels its container differently, so this maps a
@@ -15,7 +15,7 @@ from docker.client import DockerClient
 from docker.errors import DockerException
 
 from app.controller.store import ControllerStore
-from app.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND
+from app.platform.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND
 from app.planning.runner import LABEL_ROLE, LABEL_SESSION_ID
 from app.tasks.runner import LABEL_TASK_ID
 

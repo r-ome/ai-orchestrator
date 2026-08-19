@@ -17,7 +17,7 @@ from app.delegation.models import (
     IntegrationReviewStatus,
     RunStatus,
 )
-from app.dirty_state import (
+from app.platform.dirty_state import (
     DirtyEntry,
     deserialize_snapshot,
     legacy_paths,

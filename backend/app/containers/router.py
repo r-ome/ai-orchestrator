@@ -43,14 +43,14 @@ from app.containers.terminal import (
     resize_container_exec,
     start_container_exec,
 )
-from app.docker_client import get_docker_client
-from app.docker_errors import (
+from app.platform.docker_client import get_docker_client
+from app.platform.docker_errors import (
     DOCKER_DAEMON_UNAVAILABLE_DETAIL,
     ConflictApiError,
     DockerErrorPolicy,
     docker_response,
 )
-from app.docker_terminal import close_stream, read_stream, write_stream
+from app.platform.docker_terminal import close_stream, read_stream, write_stream
 
 router = APIRouter(prefix="/containers", tags=["containers"])
 ResponseType = TypeVar("ResponseType")

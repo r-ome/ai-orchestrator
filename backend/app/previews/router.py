@@ -9,14 +9,14 @@ from fastapi import APIRouter, Body, Depends, HTTPException, WebSocket, status
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from app.controller.store import ControllerStore, get_controller_store
-from app.docker_client import get_docker_client
-from app.docker_errors import (
+from app.platform.docker_client import get_docker_client
+from app.platform.docker_errors import (
     DOCKER_DAEMON_UNAVAILABLE_DETAIL,
     DockerErrorPolicy,
     PassThroughApiError,
     docker_response,
 )
-from app.log_stream import (
+from app.platform.log_stream import (
     DockerFrameDemuxer,
     LOG_READ_TIMEOUT_SECONDS,
     cancel_tasks,

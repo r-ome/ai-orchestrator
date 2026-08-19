@@ -7,7 +7,7 @@ from docker.models.containers import Container
 
 from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
 from app.containers.images import ensure_image
-from app.labels import (
+from app.platform.labels import (
     LABEL_CONTROLLER_MANAGED,
     LABEL_DATA_MANAGED,
     LABEL_EXPIRES_AT,
@@ -20,7 +20,7 @@ from app.labels import (
 )
 from app.previews.config import PreviewSettings
 from app.previews.errors import PreviewOperationError
-from app.sandboxes.naming import network as sandbox_network_name
+from app.platform.naming import network as sandbox_network_name
 
 
 PREVIEW_COMMAND_TIMEOUT_SECONDS = 60
