@@ -89,5 +89,3 @@ class EventsMixin:
             (sandbox_id, run_id, kind, _json(payload), _now()),
         )
 
-
-_stores: dict[Path, ControllerStore] = {}

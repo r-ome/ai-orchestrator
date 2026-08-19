@@ -66,7 +66,6 @@ _active_event_sessions: set[str] = set()
 _active_event_sessions_lock = asyncio.Lock()
 _EVENT_POLL_SECONDS = 0.5
 _TERMINAL_STATUSES = {"running", "failed"}
-LOG_READ_TIMEOUT_SECONDS = 0.5
 
 
 _DOCKER_ERRORS = DockerErrorPolicy(
