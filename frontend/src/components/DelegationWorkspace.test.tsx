@@ -107,6 +107,8 @@ function makeDelegation(
     ready: [],
     review: null,
     changes: [],
+    review_superseded: false,
+    feature_approved: false,
     ...overrides,
   }
 }
