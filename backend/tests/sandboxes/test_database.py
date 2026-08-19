@@ -1,7 +1,14 @@
+import base64
+import json
+import threading
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
 
+import app.previews.service as preview_service
+import app.sandboxes.database as sandbox_database
+from app.previews.config import get_preview_settings
 from app.previews.models import (
     PreviewConfiguration,
     PreviewDependencyService,
@@ -28,6 +35,7 @@ from app.sandboxes.database import (
     sqlite_data_volume,
     schema_baseline_hash,
 )
+from conftest import FakeDockerClient
 
 
 def test_mysql_engine_implements_the_small_database_protocol() -> None:
@@ -109,6 +117,281 @@ class _PostgresContainer:
 
     def remove(self, *, force: bool) -> None:
         pass
+
+
+class _CredentialVolumeDocker(FakeDockerClient):
+    """Adds the credential-file semantics that the shared Docker fake omits."""
+
+    def __init__(
+        self,
+        empty_read_barrier: threading.Barrier,
+        *,
+        barrier_timeout: float,
+    ) -> None:
+        super().__init__()
+        self.empty_read_barrier = empty_read_barrier
+        self.barrier_timeout = barrier_timeout
+        self.credential_files: dict[str, dict[str, bytes]] = {}
+        self.write_payloads: list[bytes] = []
+        self.write_scripts: list[str] = []
+        self.maximum_concurrent_empty_reads = 0
+        self._active_empty_reads = 0
+        self._credential_lock = threading.Lock()
+
+    def run_database_command(
+        self,
+        docker_client: object,
+        *,
+        image: str,
+        command: list[str],
+        environment: dict[str, str] | None = None,
+        volumes: dict[str, object] | None = None,
+        network: str | None = None,
+        tmpfs_size: str = "256m",
+    ) -> str:
+        del image
+        del network
+        del tmpfs_size
+        assert docker_client is self
+        assert volumes is not None
+        volume_name = next(iter(volumes))
+        environment = environment or {}
+        script = command[-1]
+
+        if "DATABASE_CREDENTIALS" in environment:
+            filename = environment["DATABASE_CREDENTIAL_FILE"]
+            payload = base64.b64decode(environment["DATABASE_CREDENTIALS"])
+            with self._credential_lock:
+                self.write_payloads.append(payload)
+                self.write_scripts.append(script)
+                files = self.credential_files.setdefault(volume_name, {})
+                if 'ln "$temporary" "$destination"' in script:
+                    files.setdefault(filename, payload)
+                else:
+                    files[filename] = payload
+            return ""
+
+        filename = next(
+            name
+            for name in ("mysql.json", "postgres.json")
+            if f"/credentials/{name}" in script
+        )
+        with self._credential_lock:
+            contents = self.credential_files.get(volume_name, {}).get(filename)
+            if contents is not None:
+                return contents.decode("utf-8")
+            self._active_empty_reads += 1
+            self.maximum_concurrent_empty_reads = max(
+                self.maximum_concurrent_empty_reads,
+                self._active_empty_reads,
+            )
+        try:
+            self.empty_read_barrier.wait(timeout=self.barrier_timeout)
+        except threading.BrokenBarrierError:
+            pass
+        finally:
+            with self._credential_lock:
+                self._active_empty_reads -= 1
+        return ""
+
+
+def _thread_results(
+    *calls: Callable[[], object],
+) -> tuple[list[object], list[BaseException]]:
+    results: list[object] = []
+    errors: list[BaseException] = []
+    result_lock = threading.Lock()
+
+    def run(call: Callable[[], object]) -> None:
+        try:
+            result = call()
+        except BaseException as error:
+            with result_lock:
+                errors.append(error)
+        else:
+            with result_lock:
+                results.append(result)
+
+    threads = [threading.Thread(target=run, args=(call,)) for call in calls]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert all(not thread.is_alive() for thread in threads)
+    return results, errors
+
+
+def test_server_credentials_use_one_atomic_file_across_concurrent_callers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docker = _CredentialVolumeDocker(
+        threading.Barrier(2),
+        barrier_timeout=5,
+    )
+    credentials_volume = docker.volumes.create(name="project-credentials")
+    monkeypatch.setattr(
+        sandbox_database,
+        "_run_database_command",
+        docker.run_database_command,
+    )
+
+    def read_or_create() -> dict[str, str]:
+        return sandbox_database._read_or_create_server_credentials(
+            docker,
+            "postgres:17",
+            credentials_volume,
+            filename="postgres.json",
+            error=sandbox_database.SandboxDatabaseError,
+        )
+
+    results, errors = _thread_results(read_or_create, read_or_create)
+
+    assert errors == []
+    assert len(results) == 2
+    assert results[0] == results[1]
+    files = docker.credential_files[credentials_volume.name]
+    assert list(files) == ["postgres.json"]
+    assert json.loads(files["postgres.json"]) == results[0]
+    assert len(docker.write_payloads) == 2
+    assert len(set(docker.write_payloads)) == 2
+    assert all("umask 077" in script for script in docker.write_scripts)
+    assert all("mktemp /credentials/" in script for script in docker.write_scripts)
+    assert all(
+        'ln "$temporary" "$destination"' in script
+        for script in docker.write_scripts
+    )
+
+
+def test_shared_server_locks_allow_different_projects_to_provision_in_parallel() -> None:
+    barrier = threading.Barrier(2)
+
+    def provision(server_name: str) -> None:
+        with sandbox_database.shared_database_server_lock(server_name):
+            barrier.wait(timeout=5)
+
+    _, errors = _thread_results(
+        lambda: provision("project-one-mysql"),
+        lambda: provision("project-two-mysql"),
+    )
+
+    assert errors == []
+
+
+def test_sandbox_and_preview_shared_server_creation_use_the_same_project_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    name_barrier = threading.Barrier(2)
+    docker = _CredentialVolumeDocker(
+        threading.Barrier(2),
+        barrier_timeout=1,
+    )
+    names = sandbox_database.mysql_shared_database_names("project-123456789")
+
+    def sandbox_names(project_key: str, engine_name: str) -> dict[str, str]:
+        assert project_key == "project-123456789"
+        assert engine_name == "mysql"
+        name_barrier.wait(timeout=5)
+        return names
+
+    def preview_names(project_key: str) -> dict[str, str]:
+        assert project_key == "project-123456789"
+        name_barrier.wait(timeout=5)
+        return names
+
+    monkeypatch.setattr(sandbox_database, "shared_database_names", sandbox_names)
+    monkeypatch.setattr(preview_service, "_shared_database_names", preview_names)
+    monkeypatch.setattr(sandbox_database, "ensure_image", lambda *_: None)
+    monkeypatch.setattr(preview_service, "_ensure_preview_image", lambda *_: None)
+    monkeypatch.setattr(
+        sandbox_database,
+        "_wait_for_server_health",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        preview_service,
+        "_wait_for_mysql_health",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        sandbox_database,
+        "_run_database_command",
+        docker.run_database_command,
+    )
+    settings = get_preview_settings()
+    database = PreviewDependencyService(
+        type=PreviewServiceType.MYSQL,
+        image="mysql:8.4",
+    )
+
+    def from_sandbox() -> object:
+        return sandbox_database._ensure_shared_server(
+            docker,
+            settings,
+            project_id="project-123456789",
+            project_source="/projects/sample",
+            engine_name="mysql",
+        )
+
+    def from_preview() -> object:
+        return preview_service._shared_database_server(
+            docker,
+            settings,
+            project_key="project-123456789",
+            source_path="/projects/sample",
+            database=database,
+            report=lambda *_: None,
+        )
+
+    results, errors = _thread_results(from_sandbox, from_preview)
+
+    assert errors == []
+    assert len(results) == 2
+    sandbox_result = next(result for result in results if hasattr(result, "container"))
+    preview_result = next(result for result in results if isinstance(result, tuple))
+    assert sandbox_result.container is preview_result[0]  # type: ignore[union-attr, index]
+    servers = [
+        container
+        for container in docker.containers.items
+        if container.name == names["container"]
+    ]
+    assert len(servers) == 1
+    assert docker.maximum_concurrent_empty_reads == 1
+    assert len(docker.write_payloads) == 1
+    assert list(docker.credential_files[names["credentials"]]) == ["mysql.json"]
+
+
+def test_sandbox_shared_server_refuses_an_existing_container_with_another_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docker = FakeDockerClient()
+    project_id = "project-123456789"
+    names = sandbox_database.mysql_shared_database_names(project_id)
+    docker.containers.create(
+        name=names["container"],
+        image="mysql:8.0",
+        labels={"orchestrator.shared-database.image": "mysql:8.0"},
+    )
+    monkeypatch.setattr(sandbox_database, "ensure_image", lambda *_: None)
+
+    def unexpected_engine(*_: object) -> object:
+        raise AssertionError("image mismatch must fail before provisioning")
+
+    monkeypatch.setattr(sandbox_database, "database_engine", unexpected_engine)
+
+    with pytest.raises(sandbox_database.SandboxDatabaseError) as error:
+        sandbox_database._ensure_shared_server(
+            docker,
+            get_preview_settings(),
+            project_id=project_id,
+            project_source="/projects/sample",
+            engine_name="mysql",
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == (
+        "This project's shared database runs mysql:8.0; "
+        "the sandbox asks for mysql:8.4"
+    )
 
 
 def test_postgres_engine_uses_a_root_only_client_on_the_shared_network() -> None:

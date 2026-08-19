@@ -12,7 +12,10 @@ import os
 import re
 import secrets
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any, Callable, Protocol, runtime_checkable
 from urllib.parse import quote
 
@@ -62,6 +65,20 @@ DEFAULT_MIGRATION_IMAGE = "node:22-bookworm-slim"
 # now fail after one minute instead of holding a request worker indefinitely.
 DATABASE_COMMAND_TIMEOUT_SECONDS = 60
 DATABASE_COMMAND_MAX_LOG_BYTES = 1_048_576
+_shared_database_locks_guard = Lock()
+_shared_database_locks: dict[str, Lock] = {}
+
+
+@contextmanager
+def shared_database_server_lock(server_name: str) -> Iterator[None]:
+    """Serialize one shared server without blocking unrelated projects."""
+    with _shared_database_locks_guard:
+        lock = _shared_database_locks.get(server_name)
+        if lock is None:
+            lock = Lock()
+            _shared_database_locks[server_name] = lock
+    with lock:
+        yield
 
 
 class SandboxDatabaseError(Exception):
@@ -489,56 +506,14 @@ class MySQLDatabaseEngine:
         error: ErrorFactory,
     ) -> dict[str, str]:
         """Reads MySQL credentials, generating them only on first provision."""
-        output = _run_database_command(
+        return _read_or_create_server_credentials(
             docker_client,
-            image=image,
-            command=[
-                "sh",
-                "-c",
-                "if [ -f /credentials/mysql.json ]; then cat /credentials/mysql.json; fi",
-            ],
-            volumes={credentials_volume.name: {"bind": "/credentials", "mode": "ro"}},
+            image,
+            credentials_volume,
+            filename="mysql.json",
+            create_missing=create_missing,
+            error=error,
         )
-        if output:
-            try:
-                loaded = json.loads(
-                    output
-                )
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise error(409, "Stored persistent database credentials are invalid") from exc
-            if not isinstance(loaded, dict) or any(
-                not isinstance(loaded.get(key), str) or not loaded[key]
-                for key in ("username", "password", "root_password")
-            ):
-                raise error(409, "Stored persistent database credentials are invalid")
-            return loaded
-
-        if not create_missing:
-            raise error(409, "Stored database credentials are missing")
-
-        credentials = {
-            "username": f"preview_{secrets.token_hex(4)}",
-            "password": secrets.token_urlsafe(24),
-            "root_password": secrets.token_urlsafe(32),
-        }
-        encoded = base64.b64encode(
-            json.dumps(credentials, separators=(",", ":")).encode()
-        ).decode("ascii")
-        _run_database_command(
-            docker_client,
-            image=image,
-            command=[
-                "sh",
-                "-c",
-                (
-                    "set -eu; umask 077; printf '%s' \"$DATABASE_CREDENTIALS\" | "
-                    "base64 -d > /credentials/mysql.json"
-                ),
-            ],
-            environment={"DATABASE_CREDENTIALS": encoded},
-            volumes={credentials_volume.name: {"bind": "/credentials", "mode": "rw"}},
-        )
-        return credentials
 
 
 class PostgreSQLDatabaseEngine(MySQLDatabaseEngine):
@@ -825,13 +800,20 @@ def _read_or_create_server_credentials(
 ) -> dict[str, str]:
     """Read engine credentials without exposing a server root password to apps."""
     credential_path = f"/credentials/{filename}"
-    output = _run_database_command(
-        docker_client,
-        image=image,
-        command=["sh", "-c", f"if [ -f {credential_path} ]; then cat {credential_path}; fi"],
-        volumes={credentials_volume.name: {"bind": "/credentials", "mode": "ro"}},
-    )
-    if output:
+
+    def read_stored() -> dict[str, str] | None:
+        output = _run_database_command(
+            docker_client,
+            image=image,
+            command=[
+                "sh",
+                "-c",
+                f"if [ -f {credential_path} ]; then cat {credential_path}; fi",
+            ],
+            volumes={credentials_volume.name: {"bind": "/credentials", "mode": "ro"}},
+        )
+        if not output:
+            return None
         try:
             loaded = json.loads(output)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -842,6 +824,10 @@ def _read_or_create_server_credentials(
         ):
             raise error(409, "Stored persistent database credentials are invalid")
         return loaded
+
+    stored = read_stored()
+    if stored is not None:
+        return stored
     if not create_missing:
         raise error(409, "Stored database credentials are missing")
     credentials = {
@@ -849,19 +835,35 @@ def _read_or_create_server_credentials(
         "password": secrets.token_urlsafe(24),
         "root_password": secrets.token_urlsafe(32),
     }
-    encoded = base64.b64encode(json.dumps(credentials, separators=(",", ":")).encode()).decode("ascii")
+    encoded = base64.b64encode(
+        json.dumps(credentials, separators=(",", ":")).encode()
+    ).decode("ascii")
     _run_database_command(
         docker_client,
         image=image,
         command=[
             "sh",
             "-c",
-            "set -eu; umask 077; printf '%s' \"$DATABASE_CREDENTIALS\" | base64 -d > /credentials/$DATABASE_CREDENTIAL_FILE",
+            (
+                "set -eu; umask 077; "
+                "destination=/credentials/$DATABASE_CREDENTIAL_FILE; "
+                "temporary=$(mktemp /credentials/.${DATABASE_CREDENTIAL_FILE}.XXXXXX); "
+                "trap 'rm -f \"$temporary\"' EXIT; "
+                "printf '%s' \"$DATABASE_CREDENTIALS\" | base64 -d > \"$temporary\"; "
+                "if ! ln \"$temporary\" \"$destination\" 2>/dev/null; then "
+                "[ -f \"$destination\" ] || exit 1; fi"
+            ),
         ],
-        environment={"DATABASE_CREDENTIALS": encoded, "DATABASE_CREDENTIAL_FILE": filename},
+        environment={
+            "DATABASE_CREDENTIALS": encoded,
+            "DATABASE_CREDENTIAL_FILE": filename,
+        },
         volumes={credentials_volume.name: {"bind": "/credentials", "mode": "rw"}},
     )
-    return credentials
+    stored = read_stored()
+    if stored is None:
+        raise error(409, "Stored database credentials are missing")
+    return stored
 
 
 def _run_database_command(
@@ -1387,7 +1389,6 @@ def _ensure_shared_server(
     engine_name: str,
 ) -> _SharedServer:
     image = _database_image(engine_name)
-    ensure_image(docker_client, image)
     names = shared_database_names(project_id, engine_name)
     labels = {
         "orchestrator.managed": "true",
@@ -1399,61 +1400,73 @@ def _ensure_shared_server(
         "orchestrator.preview.service": "database",
         "orchestrator.preview.persistent": "true",
     }
-    network = _shared_resource(
-        docker_client.networks,
-        names["network"],
-        lambda: docker_client.networks.create(
-            names["network"], driver="bridge", internal=True, labels=labels
-        ),
-    )
-    data_volume = _shared_resource(
-        docker_client.volumes,
-        names["data"],
-        lambda: docker_client.volumes.create(
-            name=names["data"], driver="local", labels=labels
-        ),
-    )
-    credentials_volume = _shared_resource(
-        docker_client.volumes,
-        names["credentials"],
-        lambda: docker_client.volumes.create(
-            name=names["credentials"], driver="local", labels=labels
-        ),
-    )
-    try:
-        container = docker_client.containers.get(names["container"])
-        container.reload()
-    except NotFound:
-        container = None
-    provision = database_engine(engine_name, SandboxDatabaseError).provision(
-        DatabaseProvisionRequest(
-            docker_client=docker_client,
-            image=image,
-            database="",
-            container_name=names["container"],
-            labels=labels,
-            data_volume=data_volume.name,
-            credentials_volume=credentials_volume,
-            network_name=network.name,
-            memory_limit=settings.shared_database_memory,
-            nano_cpus=2_000_000_000,
-            pids_limit=512,
-            error=SandboxDatabaseError,
-            shared=True,
-            max_connections=settings.shared_database_max_connections,
-            existing_container=container,
+    with shared_database_server_lock(names["container"]):
+        ensure_image(docker_client, image)
+        network = _shared_resource(
+            docker_client.networks,
+            names["network"],
+            lambda: docker_client.networks.create(
+                names["network"], driver="bridge", internal=True, labels=labels
+            ),
         )
-    )
-    if provision is None or provision.container is None:
-        raise RuntimeError("shared database server provisioning returned no container")
-    container = provision.container
-    if container.status != "running":
-        container.start()
-    _wait_for_server_health(
-        container,
-        engine_name=engine_name,
-        timeout_seconds=settings.prepare_timeout_seconds,
-    )
+        data_volume = _shared_resource(
+            docker_client.volumes,
+            names["data"],
+            lambda: docker_client.volumes.create(
+                name=names["data"], driver="local", labels=labels
+            ),
+        )
+        credentials_volume = _shared_resource(
+            docker_client.volumes,
+            names["credentials"],
+            lambda: docker_client.volumes.create(
+                name=names["credentials"], driver="local", labels=labels
+            ),
+        )
+        try:
+            container = docker_client.containers.get(names["container"])
+            container.reload()
+        except NotFound:
+            container = None
+        if container is not None:
+            stored_image = (
+                (container.attrs.get("Config") or {}).get("Labels") or {}
+            ).get("orchestrator.shared-database.image", "")
+            if stored_image and stored_image != image:
+                raise SandboxDatabaseError(
+                    409,
+                    "This project's shared database runs "
+                    f"{stored_image}; the sandbox asks for {image}",
+                )
+        provision = database_engine(engine_name, SandboxDatabaseError).provision(
+            DatabaseProvisionRequest(
+                docker_client=docker_client,
+                image=image,
+                database="",
+                container_name=names["container"],
+                labels=labels,
+                data_volume=data_volume.name,
+                credentials_volume=credentials_volume,
+                network_name=network.name,
+                memory_limit=settings.shared_database_memory,
+                nano_cpus=2_000_000_000,
+                pids_limit=512,
+                error=SandboxDatabaseError,
+                shared=True,
+                max_connections=settings.shared_database_max_connections,
+                existing_container=container,
+            )
+        )
+        if provision is None or provision.container is None:
+            raise RuntimeError("shared database server provisioning returned no container")
+        container = provision.container
+        if container.status != "running":
+            container.start()
+        _wait_for_server_health(
+            container,
+            engine_name=engine_name,
+            timeout_seconds=settings.prepare_timeout_seconds,
+        )
     return _SharedServer(image, container, credentials_volume, network)
 
 

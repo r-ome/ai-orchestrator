@@ -103,6 +103,7 @@ from app.sandboxes.database import (
     SandboxDatabaseError,
     SandboxDatabaseRuntime,
     sandbox_database_runtime,
+    shared_database_server_lock,
 )
 from app.tasks.models import TaskStatus
 from app.tasks.service import transition_task
@@ -164,8 +165,6 @@ _NODE_RUNTIMES = {"astro", "vite", "nextjs"}
 _DEPENDENCY_READY_MARKER = ".orchestrator-install-complete"
 _COMMIT_PATTERN = re.compile(r"^[0-9a-f]{7,64}$")
 _preview_lock = Lock()
-# Serializes get-or-create of a project's shared server across concurrent starts.
-_shared_database_lock = Lock()
 logger = logging.getLogger("uvicorn.error")
 # Accepts an optional duration_ms kwarg so a step can report zero-duration reuse.
 ProgressReporter = Callable[..., None]
@@ -1776,14 +1775,10 @@ def _shared_database_server(
     database: PreviewDependencyService,
     report: ProgressReporter,
 ) -> tuple[Container, Any, Any]:
-    """Returns the project's shared MySQL server, creating it on first use.
-
-    Held under `_shared_database_lock` so two sandboxes starting at the same
-    moment cannot both create the server.
-    """
+    """Returns the project's shared MySQL server, creating it on first use."""
     names = _shared_database_names(project_key)
     labels = _shared_database_labels(project_key, source_path, database.image)
-    with _shared_database_lock:
+    with shared_database_server_lock(names["container"]):
         report("database-image", f"Checking database image {database.image}")
         _ensure_preview_image(docker_client, database.image)
         network = _shared_network(docker_client, names["network"], labels)
@@ -2144,7 +2139,7 @@ def _stop_idle_shared_server(
     if not _shared_server_is_idle(controller_store, project_key):
         return
     names = _shared_database_names(project_key)
-    with _shared_database_lock:
+    with shared_database_server_lock(names["container"]):
         server = _existing_shared_server(docker_client, names["container"])
         if server is not None:
             try:
