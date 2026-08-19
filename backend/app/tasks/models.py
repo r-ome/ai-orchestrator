@@ -1,3 +1,27 @@
+"""The Task: one coding-agent turn on a temporary branch cut from a sandbox.
+
+The controller cuts the branch, the agent commits to it, the controller verifies
+the branch against git, and then fast-forwards it (accept) or deletes it (reject).
+Acceptance rests on what git shows, never on what the agent reports.
+
+A Task belongs to a **sandbox**, not to a delegation. `tasks.sandbox_id` is its
+only foreign key. Three things open one:
+
+- a work item run, which records `work_item_runs.task_id`;
+- a feature change request, which records `delegation_change_requests.task_id`;
+- a direct `POST /tasks`, with no delegation involved at all.
+
+The delegation side points *at* a Task; it does not own it. Reading the chain the
+other way round is the mistake this docstring exists to prevent.
+
+`one_open_task_per_sandbox` holds a sandbox to one open Task at a time. See
+`OPEN_TASK_STATUSES` below, which must stay identical to that partial index.
+
+Not a "sandbox change". `change` already names a different concept in
+`app/delegation/`: a revision of a feature diff under review
+(`FeatureChangeRequest`), which owns a Task through `task_id`. See CONTEXT.md.
+"""
+
 from collections.abc import Mapping
 from enum import StrEnum
 from typing import Any

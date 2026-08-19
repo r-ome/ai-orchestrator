@@ -46,6 +46,61 @@ The compact per-session record of every unresolved finding and its current state
 **Plan Spec**:
 The final planning-session document with scope, approach, risks, open questions, and reviewer outcome.
 
+**Implementation context**:
+The controller-assembled description of one sandbox's repository: its manifest, its
+resolved commands, and its inventory. Built once per planning session before delegated
+work starts.
+_Avoid_: Repo scan, project context, codebase map
+
+**Delegation**:
+One attempt to implement an approved plan in one sandbox. It owns the work items and
+reads one **Implementation context**.
+_Avoid_: Implementation run, execution, rollout
+
+**Work item**:
+One numbered unit of an approved plan, with its own objective, scope, write scope,
+acceptance criteria, and verification intents.
+_Avoid_: Ticket, subtask, story
+
+**Work item run**:
+One numbered attempt at one **Work item**. A work item may have several; only the
+retained ones decide its state.
+_Avoid_: Retry, execution, job
+
+**Task**:
+One coding-agent turn on a temporary branch cut from a **Sandbox**. The controller cuts
+the branch, the agent commits to it, the controller verifies the branch against git, and
+then fast-forwards it (accept) or deletes it (reject).
+
+A Task belongs to a **Sandbox**, not to a **Delegation**. Three things open one: a **Work
+item run**, a **Feature change request**, or a direct request against the sandbox. Each
+sandbox may hold only one open Task at a time.
+_Avoid_: Job, ticket, work item, sandbox change
+
+**Verification**:
+One run of the commands a **Work item** declared, executed once each in a **Hardened
+run** that invokes no model, stopping at the first failure. Also the evidence that run
+records.
+_Avoid_: Test run, check, CI
+
+### How they nest
+
+Ownership as the schema stores it. A **Task** hangs off the sandbox, and the delegation
+side points at it — it is not owned by the delegation chain.
+
+```text
+Planning session
+  ├── Implementation context   (session, sandbox)
+  └── Delegation               (session, sandbox, context)
+        ├── Work item
+        │     └── Work item run ──────── task_id ──┐
+        └── Feature change request ───── task_id ──┤
+                                                   │
+Sandbox                                            │
+  └── Task  ◄──────────────────────────────────────┘
+        also opened directly against the sandbox, with no delegation
+```
+
 **Hardened run**:
 One execution of one command in one short-lived container under the security
 boundary ADR-0006 sets. The boundary is a constant of the run, never an argument

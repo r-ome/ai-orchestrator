@@ -211,6 +211,16 @@ class FeatureDiff(BaseModel):
     truncated: bool = False
 
 
+# One revision of a feature diff submitted for review after delegated work.
+#
+# This is what `change` means in this package: a numbered revision under review,
+# not an edit to a sandbox. It *owns* a task through `task_id` — the coding-agent
+# turn that produces the revision. A Task is a different concept and lives in
+# `app/tasks/`. See CONTEXT.md.
+#
+# Kept as a comment, not a docstring: pydantic copies a model's docstring into the
+# OpenAPI schema as its `description`, which would publish a repo-internal note to
+# API consumers.
 class FeatureChangeRequest(BaseModel):
     id: str
     delegation_id: str
