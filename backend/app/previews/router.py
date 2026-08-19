@@ -42,12 +42,15 @@ from app.previews.models import (
     StopPreviewRequest,
     StopPreviewResponse,
 )
-from app.previews.service import (
-    database_sharing_state,
+from app.projects.secrets import (
     delete_project_secret,
-    get_current_preview,
     get_project_secrets,
     import_project_secrets,
+    set_project_secrets,
+)
+from app.previews.service import (
+    database_sharing_state,
+    get_current_preview,
     open_preview_log_stream,
     preview_creation_logs,
     preview_logs,
@@ -56,7 +59,6 @@ from app.previews.service import (
     require_preview_proposal,
     restart_preview,
     reuse_preview,
-    set_project_secrets,
     start_preview,
     stop_preview,
 )

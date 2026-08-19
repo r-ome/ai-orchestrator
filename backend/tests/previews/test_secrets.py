@@ -14,9 +14,9 @@ from app.previews.models import (
     PreviewMode,
     PreviewNetworkAccess,
 )
+from app.projects.secrets import _project_secrets_response
 from app.previews.service import (
     _environment_status,
-    _project_secrets_response,
     _compose_service_environment,
     _secret_environment,
 )

@@ -31,13 +31,13 @@ from app.agents.models import (
     ReplaceAgentRequest,
     StopAgentResponse,
 )
-from app.previews.config import get_preview_settings
-from app.previews.errors import PreviewOperationError
-from app.previews.service import (
+from app.dependency_cache import (
     _dependency_volume,
     _lockfile_digest,
     _volume_runtime_files,
 )
+from app.previews.config import get_preview_settings
+from app.previews.errors import PreviewOperationError
 from app.projects.service import (
     ProjectOperationError,
     ensure_sandbox_registered,

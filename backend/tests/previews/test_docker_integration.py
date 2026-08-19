@@ -21,13 +21,13 @@ from app.previews.models import (
     PreviewRuntime,
     StartPreviewRequest,
 )
+from app.dependency_cache import _volume_runtime_files
 from app.previews.resources import _labels, _remove_resources
 from app.previews.service import (
     _available_host_port,
     _start_compose,
     _start_dockerfile,
     _start_native,
-    _volume_runtime_files,
     preview_creation_logs,
     preview_logs,
     propose_preview,
