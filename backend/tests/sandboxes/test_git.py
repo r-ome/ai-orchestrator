@@ -7,8 +7,8 @@ from uuid import uuid4
 
 import docker
 import pytest
-from requests.exceptions import ReadTimeout
 from docker.errors import ContainerError, ImageNotFound
+from requests.exceptions import ReadTimeout
 
 from app.controller.config import get_controller_settings
 from app.sandboxes.git import (
@@ -22,14 +22,13 @@ from app.sandboxes.git import (
     clone_mirror_to_workspace,
     count_mirror_staleness,
     fetch_canonical_mirror,
+    provision_git_write_token,
     push_mirror_to_remote,
     push_workspace_to_mirror,
-    provision_git_write_token,
     remote_branch_sha,
     run_git,
     run_git_with_write_credentials,
 )
-
 
 requires_docker = pytest.mark.skipif(
     os.getenv("RUN_DOCKER_PREVIEW_TESTS") != "1",

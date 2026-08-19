@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 
 from app.agents.models import AgentProvider
@@ -17,7 +16,6 @@ from app.delegation.models import (
 from app.implementation_context.models import ContextStatus
 from app.planning.config import PlanningSettings
 from app.planning.runner import PlanningTurnError, TurnResult
-
 
 DELEGATOR_SETTINGS = DelegatorSettings(
     model="claude-sonnet-5",

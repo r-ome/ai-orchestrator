@@ -4,13 +4,13 @@ from pathlib import Path
 import pytest
 
 from app.controller.store import ControllerStore
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.sandboxes.manifest import (
     SandboxManifest,
     read_manifest,
     transition_sandbox_lifecycle,
     write_manifest,
 )
-from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 
 
 def _store_with_sandbox(tmp_path: Path) -> ControllerStore:

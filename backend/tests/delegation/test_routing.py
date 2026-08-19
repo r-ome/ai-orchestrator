@@ -9,7 +9,6 @@ from app.delegation.routing import (
     route,
 )
 
-
 CLAUDE = ProviderModels(
     low_model="cheap",
     medium_model="standard",

@@ -3,7 +3,6 @@
 from collections.abc import Mapping
 from typing import Any
 
-
 OUTCOMES = ("passed", "failed", "not_run")
 MAX_ENTRY = 2000
 

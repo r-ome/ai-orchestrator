@@ -3,6 +3,16 @@ from pathlib import Path
 import pytest
 
 from app.controller.store import ControllerStore
+from app.delegation.packet import ResolvedVerification
+from app.delegation.verification import VerificationSettings, run_verification
+from app.platform.naming import (
+    database_name,
+    db_data_volume,
+    network,
+    ownership_labels,
+    workspace_volume,
+)
+from app.previews import resources as preview_resources
 from app.previews.config import PreviewSettings
 from app.previews.models import (
     PreviewConfiguration,
@@ -11,18 +21,8 @@ from app.previews.models import (
     PreviewNetworkAccess,
     PreviewRuntime,
 )
-from app.previews import resources as preview_resources
 from app.previews.runtimes import native as preview_native
-from app.delegation.packet import ResolvedVerification
-from app.delegation.verification import VerificationSettings, run_verification
 from app.sandboxes.manifest import SandboxManifest, write_manifest
-from app.platform.naming import (
-    database_name,
-    db_data_volume,
-    network,
-    ownership_labels,
-    workspace_volume,
-)
 
 
 def _managed_database(

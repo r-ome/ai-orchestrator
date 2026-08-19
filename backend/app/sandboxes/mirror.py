@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from docker.client import DockerClient
 from docker.errors import NotFound
 
-from app.sandboxes.git import GitCredentialSource, clone_mirror_to_workspace, ensure_canonical_mirror, run_git
 from app.platform.naming import (
     mirror_ownership_labels,
     mirror_volume,
@@ -13,6 +12,12 @@ from app.platform.naming import (
     validate_mirror_ownership,
     validate_ownership,
     workspace_volume,
+)
+from app.sandboxes.git import (
+    GitCredentialSource,
+    clone_mirror_to_workspace,
+    ensure_canonical_mirror,
+    run_git,
 )
 
 

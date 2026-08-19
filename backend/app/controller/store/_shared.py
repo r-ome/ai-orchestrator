@@ -3,6 +3,7 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
+
 def _ensure_immutable_manifest_value(
     *,
     field: str,

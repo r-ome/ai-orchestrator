@@ -53,7 +53,6 @@ from app.sandboxes.database import (
     shared_database_server_lock,
 )
 
-
 # Raised at approval and again at attach, so one wording covers both.
 _SHARED_DATA_UNAVAILABLE = (
     "shared_data is unavailable; each managed sandbox owns its database"

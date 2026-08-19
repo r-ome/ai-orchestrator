@@ -8,15 +8,18 @@ import docker
 import pytest
 
 from app.controller.config import get_controller_settings
-from app.sandboxes.git import clone_mirror_to_workspace, ensure_canonical_mirror
-from app.sandboxes.mirror import MirrorPin, ensure_project_mirror, ensure_workspace_import
 from app.platform.naming import (
     mirror_ownership_labels,
     mirror_volume,
     ownership_labels,
     sandbox_id_for,
 )
-
+from app.sandboxes.git import clone_mirror_to_workspace, ensure_canonical_mirror
+from app.sandboxes.mirror import (
+    MirrorPin,
+    ensure_project_mirror,
+    ensure_workspace_import,
+)
 
 PROJECT_ID = "a" * 32
 SANDBOX_ID = sandbox_id_for(PROJECT_ID, "mirror-import")

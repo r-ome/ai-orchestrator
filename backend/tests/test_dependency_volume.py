@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from conftest import register_ready_v1_sandbox
 from docker.errors import NotFound
 
 from app.agents.config import AgentSettings
@@ -27,8 +28,6 @@ from app.previews.dependency_cache import (
 )
 from app.previews.errors import PreviewOperationError
 from app.projects.models import ProjectRegistration
-from conftest import register_ready_v1_sandbox
-
 
 # --- _lockfile_digest -------------------------------------------------------
 

@@ -9,7 +9,6 @@ from app.previews.config import PreviewSettings
 from app.previews.errors import PreviewOperationError
 from app.previews.resources import _run_preview_command
 
-
 # The env files a preview must never read. Same pair the copy-time exclusion
 # used, so a live preview loses nothing the copied workspace already hid.
 _MASKED_ENVIRONMENT_NAMES = (".env", ".env.local")

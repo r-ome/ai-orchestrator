@@ -14,7 +14,6 @@ from docker.errors import DockerException
 
 from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
 
-
 MANIFEST_FILES = (
     "package.json",
     "Makefile",

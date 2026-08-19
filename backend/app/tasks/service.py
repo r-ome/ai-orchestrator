@@ -19,10 +19,9 @@ from app.previews.config import get_preview_settings
 from app.projects.models import ProjectRegistration
 from app.projects.service import (
     ProjectOperationError,
-    ensure_sandbox_registered,
     ensure_git_baseline,
+    ensure_sandbox_registered,
     inspect_registered_project,
-    project_id,
 )
 from app.sandboxes.git import run_git
 from app.tasks.config import CodingTurnSettings
@@ -32,18 +31,17 @@ if TYPE_CHECKING:  # pragma: no cover - types only
 from app.tasks.models import (
     DEFAULT_BASE_BRANCH,
     OPEN_TASK_STATUSES,
+    TERMINAL_TASK_STATUSES,
     ReportTaskRequest,
     RunTaskRequest,
     StartTaskRequest,
-    TERMINAL_TASK_STATUSES,
     Task,
     TaskRunResponse,
-    TaskStatus,
     TasksResponse,
+    TaskStatus,
     TurnUsageView,
     source_statuses,
 )
-
 
 TASK_BRANCH_PREFIX = "task/"
 _TASK_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")

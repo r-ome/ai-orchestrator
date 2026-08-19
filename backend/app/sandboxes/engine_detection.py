@@ -22,7 +22,6 @@ from docker.errors import DockerException
 from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
 from app.previews.detection import prisma_schema_providers
 
-
 MAX_FILE_BYTES = 200_000
 MAX_LOG_BYTES = 16 * 1_048_576
 _SECTION = "@@@ENGINE_FILE:"
@@ -237,7 +236,7 @@ def _backend_matches(content: bytes, pattern: str) -> list[str]:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
         return []
-    return [match.group(1) if match.lastindex else match.group(0) for match in re.finditer(pattern, text, re.I)]
+    return [match.group(1) if match.lastindex else match.group(0) for match in re.finditer(pattern, text, re.IGNORECASE)]
 
 
 def _rails_engines(content: bytes) -> list[str]:

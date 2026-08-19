@@ -7,7 +7,6 @@ from uuid import uuid4
 
 from docker.client import DockerClient
 
-from app.platform.coercions import json_object
 from app.controller.store import ControllerStore, RevisionTaken, RunActive
 from app.delegation import service
 from app.delegation.config import get_routing_settings, get_verification_settings
@@ -29,6 +28,7 @@ from app.delegation.verification import (
 )
 from app.implementation_context.models import ContextStatus
 from app.implementation_context.service import ContextOperationError, get_context
+from app.platform.coercions import json_object
 from app.tasks.config import CodingTurnSettings
 from app.tasks.models import RunTaskRequest, StartTaskRequest, TaskRunResponse
 from app.tasks.runner import CodingTurnError

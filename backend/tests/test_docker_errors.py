@@ -3,13 +3,13 @@ from docker.errors import APIError, ContainerError, DockerException, NotFound
 from fastapi import HTTPException
 
 from app.delegation.router import _DOCKER_ERRORS as DELEGATION_DOCKER_ERRORS
+from app.implementation_context.router import _DOCKER_ERRORS as CONTEXT_DOCKER_ERRORS
 from app.platform.docker_errors import (
     ConflictApiError,
     DockerErrorPolicy,
     PassThroughApiError,
     docker_response,
 )
-from app.implementation_context.router import _DOCKER_ERRORS as CONTEXT_DOCKER_ERRORS
 
 
 class DomainError(Exception):

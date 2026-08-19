@@ -6,7 +6,6 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any
 
-
 SNAPSHOT_VERSION = 1
 _MARKER = f"snapshot-version {SNAPSHOT_VERSION}"
 

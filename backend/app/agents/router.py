@@ -28,10 +28,16 @@ from app.agents.service import (
     inspect_agent,
     inspect_agent_exec,
     list_agents,
-    resize_agent_exec,
     replace_agent,
+    resize_agent_exec,
     start_agent_exec,
     stop_agent,
+)
+from app.controller.store import (
+    AgentWriterSessionExists,
+    ControllerStore,
+    SandboxWriterAdmissionError,
+    get_controller_store,
 )
 from app.platform.docker_client import get_docker_client
 from app.platform.docker_errors import (
@@ -42,12 +48,6 @@ from app.platform.docker_errors import (
 )
 from app.platform.docker_terminal import close_stream, read_stream, write_stream
 from app.platform.labels import LABEL_RUN_ID, LABEL_SANDBOX_ID
-from app.controller.store import (
-    AgentWriterSessionExists,
-    ControllerStore,
-    SandboxWriterAdmissionError,
-    get_controller_store,
-)
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 ResponseType = TypeVar("ResponseType")

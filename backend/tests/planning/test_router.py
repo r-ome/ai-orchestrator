@@ -1,18 +1,16 @@
 from typing import Any
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 from fastapi.testclient import TestClient
 
 from app.controller.store import get_controller_store
-from app.platform.docker_client import get_docker_client
 from app.main import app
-from app.planning.config import get_planning_settings
 from app.planning import service
+from app.planning.config import get_planning_settings
+from app.platform.docker_client import get_docker_client
 from app.projects.models import ProjectRegistration
 from app.projects.service import managed_project_key, project_id
-
 
 PROJECT_ID = project_id("/projects/sample")
 PROJECT = ProjectRegistration(

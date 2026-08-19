@@ -5,7 +5,6 @@ from pathlib import Path
 
 import docker
 import pytest
-
 from conftest import register_ready_v1_sandbox
 
 from app.agents.models import AgentProvider
@@ -16,7 +15,6 @@ from app.implementation_context.models import ContextStatus, GenerateContextRequ
 from app.implementation_context.service import generate_context
 from app.planning.config import PlanningSettings
 from app.projects.service import inspect_registered_project, project_id
-
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_DOCKER_CONTEXT_TESTS") != "1",

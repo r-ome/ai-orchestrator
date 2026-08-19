@@ -8,7 +8,6 @@ from uuid import uuid4
 
 from docker.client import DockerClient
 
-from app.platform.coercions import json_object
 from app.controller.store import ControllerStore, ReviewGenerating, RevisionTaken
 from app.delegation import service
 from app.delegation.config import IntegrationReviewSettings
@@ -27,6 +26,7 @@ from app.delegation.models import (
 from app.planning.config import PlanningSettings
 from app.planning.models import PlanningRole
 from app.planning.runner import TurnRequest, run_planning_turn, run_validated_turn
+from app.platform.coercions import json_object
 from app.previews.config import get_preview_settings
 
 

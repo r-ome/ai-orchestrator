@@ -2,7 +2,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 
 from app.controller.store import ControllerStore

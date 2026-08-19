@@ -9,7 +9,6 @@ from uuid import uuid4
 
 from docker.client import DockerClient
 
-from app.platform.coercions import json_object
 from app.controller.store import (
     ChangeRequestRunning,
     ControllerStore,
@@ -26,6 +25,7 @@ from app.delegation.models import (
 from app.delegation.packet import ResolvedVerification
 from app.delegation.verification import run_verification
 from app.implementation_context.service import ContextOperationError, get_context
+from app.platform.coercions import json_object
 from app.tasks.config import CodingTurnSettings
 from app.tasks.models import RunTaskRequest, StartTaskRequest
 from app.tasks.service import (

@@ -12,11 +12,11 @@ import os
 import re
 import secrets
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 from urllib.parse import quote
 
 from docker.client import DockerClient
@@ -25,18 +25,6 @@ from docker.models.containers import Container
 from docker.types import Mount
 from requests.exceptions import ReadTimeout
 
-from app.platform.labels import (
-    LABEL_CONTROLLER_MANAGED,
-    LABEL_KIND,
-    LABEL_PERSISTENT,
-    LABEL_PROJECT_ID,
-    LABEL_PROJECT_SOURCE,
-    LABEL_SERVICE,
-    LABEL_SHARED_DATABASE,
-    LABEL_SHARED_DATABASE_IMAGE,
-)
-from app.previews.config import PreviewSettings
-from app.previews.models import PreviewConfiguration, PreviewDependencyService
 from app.containers.hardened import (
     Capabilities,
     Capture,
@@ -48,16 +36,29 @@ from app.containers.hardened import (
 )
 from app.containers.images import ensure_image
 from app.controller.store import ControllerStore
-from app.sandboxes.engine_detection import NO_DATABASE
+from app.platform.labels import (
+    LABEL_CONTROLLER_MANAGED,
+    LABEL_KIND,
+    LABEL_PERSISTENT,
+    LABEL_PROJECT_ID,
+    LABEL_PROJECT_SOURCE,
+    LABEL_SERVICE,
+    LABEL_SHARED_DATABASE,
+    LABEL_SHARED_DATABASE_IMAGE,
+)
 from app.platform.naming import (
     database_name,
     db_data_volume,
-    network as sandbox_network_name,
     ownership_labels,
     validate_ownership,
     workspace_volume,
 )
-
+from app.platform.naming import (
+    network as sandbox_network_name,
+)
+from app.previews.config import PreviewSettings
+from app.previews.models import PreviewConfiguration, PreviewDependencyService
+from app.sandboxes.engine_detection import NO_DATABASE
 
 ErrorFactory = Callable[[int, str], Exception]
 MYSQL_PORT = 3306

@@ -15,7 +15,6 @@ from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
 
-
 # This known-bad baseline must shrink as later architecture phases land.
 KNOWN_CYCLE = frozenset(
     {

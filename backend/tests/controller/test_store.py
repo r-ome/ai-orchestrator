@@ -7,7 +7,6 @@ import app.controller.store as store_module
 import app.controller.store.migrations as migrations_module
 from app.controller.store import ControllerStore
 
-
 SANDBOX_LIFECYCLE_COLUMNS = {
     "lifecycle_version": ("TEXT", 0, None),
     "feature_key": ("TEXT", 0, None),
@@ -371,7 +370,7 @@ def test_planning_sessions_for_project_includes_latest_feature_facts(tmp_path: P
     assert len(rows) == 1
     assert {
         key: rows[0][key]
-        for key in {
+        for key in (
             "context_status",
             "delegation_status",
             "review_status",
@@ -381,7 +380,7 @@ def test_planning_sessions_for_project_includes_latest_feature_facts(tmp_path: P
             "pr_number",
             "pr_state",
             "pr_merged_at",
-        }
+        )
     } == {
         "context_status": "ready",
         "delegation_status": "running",

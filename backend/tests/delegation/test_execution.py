@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 
 from app.controller.store import ControllerStore, RunActive
@@ -20,7 +19,6 @@ from app.planning.models import PlanningStatus
 from app.tasks.config import CodingTurnSettings
 from app.tasks.models import Task, TaskRunResponse, TaskStatus, TurnUsageView
 from app.tasks.service import TaskOperationError
-
 
 SETTINGS = CodingTurnSettings(
     timeout_seconds=900,

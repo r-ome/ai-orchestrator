@@ -15,16 +15,14 @@ from app.delegation.models import (
     WorkItemState,
 )
 from app.delegation.routing import ProviderModels, RoutingSettings
-
 from tests.delegation.test_execution import (
     SETTINGS,
-    _Tasks,
     _delegation,
     _item,
+    _Tasks,
     store,  # noqa: F401 - imported so pytest resolves the fixture here
     tasks,  # noqa: F401 - same
 )
-
 
 CAP = DriverSettings(max_seconds=7200)
 CODEX_FIRST = RoutingSettings(

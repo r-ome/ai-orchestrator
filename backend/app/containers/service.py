@@ -4,7 +4,6 @@ from typing import Any
 from docker.client import DockerClient
 from docker.models.containers import Container
 
-from app.platform.coercions import clamped_integer
 from app.containers.models import (
     AllContainersResponse,
     ContainerPort,
@@ -13,6 +12,7 @@ from app.containers.models import (
     RunningContainer,
     RunningContainersResponse,
 )
+from app.platform.coercions import clamped_integer
 
 
 def list_running_containers(

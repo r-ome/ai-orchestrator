@@ -22,7 +22,6 @@ from app.previews.models import (
     ProtectedFileChange,
 )
 
-
 COMPOSE_NAMES = (
     "compose.yaml",
     "compose.yml",

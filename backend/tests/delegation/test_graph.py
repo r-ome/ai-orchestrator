@@ -12,7 +12,6 @@ from app.delegation.graph import (
 )
 from app.delegation.models import RunStatus, WorkItemState
 
-
 KINDS = frozenset({"test", "lint", "build"})
 
 

@@ -9,7 +9,9 @@ from uuid import uuid4
 
 import docker
 import pytest
+from conftest import register_ready_v1_sandbox
 
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.delegation import delivery, service
 from app.delegation.models import (
     ChangeRequestStatus,
@@ -19,15 +21,12 @@ from app.delegation.models import (
     RunStatus,
 )
 from app.platform.dirty_state import DirtyEntry, serialize_snapshot
+from app.platform.naming import ownership_labels, workspace_volume
 from app.previews.config import PreviewSettings
 from app.sandboxes import router as sandbox_router
 from app.sandboxes import service as sandbox_service
-from app.sandboxes.engine_detection import EngineDetection, NO_DATABASE
+from app.sandboxes.engine_detection import NO_DATABASE, EngineDetection
 from app.sandboxes.manifest import read_manifest, transition_sandbox_lifecycle
-from app.controller.store.lifecycle_status import SandboxLifecycleStatus
-from app.platform.naming import ownership_labels, workspace_volume
-from conftest import register_ready_v1_sandbox
-
 
 BASE = "1" * 40
 MIDDLE = "2" * 40

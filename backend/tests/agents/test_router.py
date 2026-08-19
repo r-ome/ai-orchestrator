@@ -1,9 +1,9 @@
 from collections.abc import Iterator
 from threading import Event
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from conftest import register_ready_v1_sandbox
 from docker.errors import NotFound
 from fastapi.testclient import TestClient
 
@@ -17,12 +17,11 @@ from app.agents.service import (
     LABEL_PROVIDER,
     cleanup_agents,
 )
-from app.platform.docker_client import get_docker_client
 from app.controller.store import get_controller_store
 from app.main import app
+from app.platform.docker_client import get_docker_client
 from app.projects.models import ProjectRegistration
 from app.projects.service import ProjectOperationError
-from conftest import register_ready_v1_sandbox
 
 client = TestClient(app)
 

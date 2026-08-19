@@ -1,23 +1,36 @@
 """Sandbox manifest API."""
 
-from typing import Annotated, Callable, TypeVar
+from collections.abc import Callable
+from typing import Annotated, TypeVar
 
 from docker.client import DockerClient
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, field_validator
 
 from app.controller.store import ControllerStore, get_controller_store
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.platform.docker_client import get_docker_client
-from app.platform.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
+from app.platform.docker_errors import (
+    DockerErrorPolicy,
+    PassThroughApiError,
+    docker_response,
+)
+from app.platform.naming import validate_feature_key
 from app.platform.remote import normalize_remote_url
+from app.sandboxes import service
+from app.sandboxes.database import SandboxDatabaseError
+from app.sandboxes.engine_detection import normalize_confirmable_engine
 from app.sandboxes.manifest import (
     SandboxManifest,
     read_manifest,
 )
-from app.controller.store.lifecycle_status import SandboxLifecycleStatus
-from app.sandboxes.database import SandboxDatabaseError
-from app.sandboxes.engine_detection import normalize_confirmable_engine
-from app.sandboxes import service
+from app.sandboxes.orphans import (
+    parse_orphan_resource_key,
+    resource_is_claimed,
+)
+from app.sandboxes.publish import (
+    PublishError,
+)
 from app.sandboxes.service import (
     EngineConfirmation,
     SandboxConflict,
@@ -32,16 +45,6 @@ from app.sandboxes.service import (
     require_v1,
     sync,
 )
-
-from app.sandboxes.publish import (
-    PublishError,
-)
-from app.platform.naming import validate_feature_key
-from app.sandboxes.orphans import (
-    parse_orphan_resource_key,
-    resource_is_claimed,
-)
-
 
 router = APIRouter(prefix="/sandboxes", tags=["sandboxes"])
 ResponseType = TypeVar("ResponseType")

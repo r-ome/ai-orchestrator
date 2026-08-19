@@ -6,11 +6,11 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
+from app.planning import service
 from app.planning.config import PlanningSettings
 from app.planning.models import (
     CreatePlanningSessionRequest,
@@ -19,10 +19,8 @@ from app.planning.models import (
     PlanningStatus,
 )
 from app.planning.runner import PlanningTurnError, TurnResult
-from app.planning import service
 from app.planning.service import PlanningOperationError, TurnKind
 from app.projects.models import ProjectRegistration
-
 
 PROJECT = ProjectRegistration(
     sandbox_id="sandbox-1",

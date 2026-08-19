@@ -32,7 +32,6 @@ from app.turns.locators import (
     running_containers,
 )
 
-
 router = APIRouter(tags=["turns"])
 
 _EVENT_POLL_SECONDS = 0.5

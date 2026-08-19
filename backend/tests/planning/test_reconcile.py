@@ -2,8 +2,8 @@ from pathlib import Path
 
 from conftest import register_ready_v1_sandbox
 
-from app.startup import reconcile_controller_state
 from app.controller.store import ControllerStore
+from app.startup import reconcile_controller_state
 
 
 def test_reconcile_settles_an_interrupted_turn_and_releases_it(

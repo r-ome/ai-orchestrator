@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pytest
 
-
 AGENT_IMAGES = Path(__file__).resolve().parents[2] / "agent-images"
 
 

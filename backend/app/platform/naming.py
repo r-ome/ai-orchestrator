@@ -1,10 +1,9 @@
 """Deterministic names for managed v1 sandbox resources."""
 
-from collections.abc import Mapping
 import re
+from collections.abc import Mapping
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
-
 
 _OWNERSHIP_SANDBOX_ID = "orchestrator.sandbox.id"
 _OWNERSHIP_PROJECT_ID = "orchestrator.project.id"

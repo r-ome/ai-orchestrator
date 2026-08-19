@@ -5,8 +5,8 @@ from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
+from conftest import FakeDockerClient
 
-import app.previews.service as preview_service
 import app.previews.sharing as preview_sharing
 import app.sandboxes.database as sandbox_database
 from app.previews.config import get_preview_settings
@@ -25,19 +25,18 @@ from app.sandboxes.database import (
     MYSQL_DATABASE,
     POSTGRESQL_DATABASE,
     SQLITE_DATABASE,
+    SQLITE_DATABASE_PATH,
     DatabaseConnectionRequest,
     DatabaseDropRequest,
     DatabaseEngine,
     DatabaseProvisionRequest,
     DatabaseSchemaProvisionRequest,
-    SQLITE_DATABASE_PATH,
     postgres_drop_statements,
     postgres_provision_statements,
     postgres_shared_database_names,
-    sqlite_data_volume,
     schema_baseline_hash,
+    sqlite_data_volume,
 )
-from conftest import FakeDockerClient
 
 
 def test_mysql_engine_implements_the_small_database_protocol() -> None:

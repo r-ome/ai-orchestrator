@@ -15,6 +15,9 @@ from app.containers.hardened import (
     create_hardened,
 )
 from app.controller.store import ControllerStore
+from app.platform.labels import LABEL_SANDBOX_ID, LABEL_SERVICE
+from app.previews._shared import _slug
+from app.previews.config import PreviewSettings
 from app.previews.dependency_cache import (
     _DEPENDENCY_READY_MARKER,
     _data_volume,
@@ -23,9 +26,6 @@ from app.previews.dependency_cache import (
     _lockfile_digest,
     _volume_runtime_files,
 )
-from app.platform.labels import LABEL_SANDBOX_ID, LABEL_SERVICE
-from app.previews._shared import _slug
-from app.previews.config import PreviewSettings
 from app.previews.detection import hashes
 from app.previews.errors import PreviewOperationError
 from app.previews.health import _wait_for_container_health, _wait_for_mysql_health
@@ -67,7 +67,6 @@ from app.sandboxes.database import (
     sandbox_database_runtime,
 )
 from app.sandboxes.git import run_git
-
 
 # Controller metadata a preview has no business reading. A directory, so tmpfs
 # masks it.

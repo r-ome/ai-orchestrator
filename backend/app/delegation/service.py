@@ -8,7 +8,6 @@ from uuid import uuid4
 from docker.client import DockerClient
 
 from app.agents.models import AgentProvider
-from app.platform.coercions import json_object
 from app.controller.store import (
     ControllerStore,
     DelegationActive,
@@ -23,16 +22,16 @@ from app.delegation.config import (
 from app.delegation.models import (
     ACTIVE_DELEGATION_STATUSES,
     TERMINAL_DELEGATION_STATUSES,
+    ChangeRequestStatus,
     Delegation,
     DelegationStatus,
     DelegationView,
-    ChangeRequestStatus,
     FeatureChangeRequest,
     GenerateDelegationOutcome,
     GenerateDelegationRequest,
-    ItemRouting,
     IntegrationReview,
     IntegrationReviewStatus,
+    ItemRouting,
     RunStatus,
     RunUsage,
     VerificationIntent,
@@ -42,7 +41,6 @@ from app.delegation.models import (
     delegation_source_statuses,
 )
 from app.delegation.routing import route
-from app.platform.errors import OperationError
 from app.implementation_context.service import ready_context
 from app.planning.config import PlanningSettings
 from app.planning.models import PlanningRole, PlanningStatus
@@ -51,7 +49,8 @@ from app.planning.runner import (
     run_planning_turn,
     run_validated_turn,
 )
-
+from app.platform.coercions import json_object
+from app.platform.errors import OperationError
 
 _DELEGATABLE_SESSION_STATUSES = {
     PlanningStatus.PLAN_READY.value,
@@ -863,8 +862,8 @@ def _list(value: Any) -> list[Any]:
 __all__ = [
     "ACTIVE_DELEGATION_STATUSES",
     "DelegationOperationError",
-    "confirmed_command_kinds",
     "clear_routing",
+    "confirmed_command_kinds",
     "create_revision",
     "generate_revision",
     "list_delegations",

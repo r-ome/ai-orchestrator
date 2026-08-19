@@ -1,6 +1,7 @@
 import asyncio
 import json
-from typing import Annotated, Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Annotated, Any, TypeVar
 
 from docker.client import DockerClient
 from docker.errors import DockerException, NotFound

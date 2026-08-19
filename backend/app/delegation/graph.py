@@ -5,7 +5,6 @@ from typing import Any
 
 from app.delegation.models import Complexity, RunStatus, WorkItemState
 
-
 MAX_ITEMS = 60
 REQUIRED_TEXT = ("title", "objective", "scope")
 

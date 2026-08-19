@@ -22,7 +22,6 @@ import docker
 from docker.client import DockerClient
 from docker.errors import DockerException
 
-
 logger = logging.getLogger(__name__)
 
 _threads: set[threading.Thread] = set()

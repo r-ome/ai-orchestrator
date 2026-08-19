@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 
 from app.agents.models import AgentProvider
@@ -14,14 +13,13 @@ from app.planning import service
 from app.planning.config import PlanningSettings
 from app.planning.models import (
     CreatePlanningSessionRequest,
-    PlanSpec,
     PlanningRole,
     PlanningStatus,
+    PlanSpec,
 )
 from app.planning.runner import TurnRequest, TurnResult
 from app.planning.service import TurnKind
 from app.projects.models import ProjectRegistration
-
 
 TEST_MODEL = "test-model"
 

@@ -1,12 +1,10 @@
 import os
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
 import docker
 import pytest
-
 from conftest import register_ready_v1_sandbox
 from docker.errors import ContainerError, NotFound
 
@@ -16,7 +14,6 @@ from app.agents.service import create_agent, stop_agent
 from app.controller.store import ControllerStore
 from app.projects.models import ProjectRegistration
 from app.projects.service import ensure_git_baseline
-
 
 requires_docker = pytest.mark.skipif(
     os.getenv("RUN_DOCKER_PREVIEW_TESTS") != "1",

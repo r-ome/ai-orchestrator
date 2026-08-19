@@ -3,6 +3,7 @@ from typing import Any
 
 from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 
+
 class SandboxAdmissionError(RuntimeError):
     """Base error for persisted sandbox admission conflicts."""
 

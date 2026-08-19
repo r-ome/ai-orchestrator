@@ -5,7 +5,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 MAX_ARCHITECTURE = 12
 MAX_PATTERNS = 12
 MAX_CONSTRAINTS = 10

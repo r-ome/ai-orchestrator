@@ -22,7 +22,6 @@ from app.sandboxes.git import (
     remote_branch_sha,
 )
 
-
 GITHUB_API_URL = "https://api.github.com"
 _GITHUB_API_TIMEOUT_SECONDS = 15
 

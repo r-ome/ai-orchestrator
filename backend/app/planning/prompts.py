@@ -2,7 +2,6 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-
 CLARIFIER_SCHEMA = """{
   \"message\": \"one short paragraph to the human\",
   \"questions\": [\"two or three, each one sentence; never more than three\"],

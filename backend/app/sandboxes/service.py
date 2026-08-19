@@ -7,8 +7,20 @@ from docker.client import DockerClient
 from docker.errors import DockerException, NotFound
 
 from app.controller.store import ControllerStore, SandboxAdmissionError
-from app.previews.config import get_preview_settings
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
+from app.platform.naming import (
+    database_name,
+    db_data_volume,
+    feature_branch,
+    is_shared_infrastructure,
+    mirror_volume,
+    orphan_ownership_sandbox_id,
+    sandbox_id_for,
+    validate_ownership,
+    workspace_volume,
+)
 from app.platform.remote import project_id_for_remote
+from app.previews.config import get_preview_settings
 from app.sandboxes.database import (
     SandboxDatabaseError,
     SandboxMigrationError,
@@ -16,7 +28,11 @@ from app.sandboxes.database import (
     provision_sandbox_database,
     sandbox_database_runtime,
 )
-from app.sandboxes.engine_detection import NO_DATABASE, discover_engine, discover_schema_baseline_files
+from app.sandboxes.engine_detection import (
+    NO_DATABASE,
+    discover_engine,
+    discover_schema_baseline_files,
+)
 from app.sandboxes.git import (
     count_mirror_staleness,
     create_workspace_safety_ref,
@@ -46,18 +62,6 @@ from app.sandboxes.mirror import (
     validate_project_mirror,
     validate_workspace_import,
     verify_workspace_identity,
-)
-from app.controller.store.lifecycle_status import SandboxLifecycleStatus
-from app.platform.naming import (
-    database_name,
-    db_data_volume,
-    feature_branch,
-    is_shared_infrastructure,
-    mirror_volume,
-    orphan_ownership_sandbox_id,
-    sandbox_id_for,
-    validate_ownership,
-    workspace_volume,
 )
 from app.sandboxes.orphans import parse_orphan_resource_key, resource_is_claimed
 from app.sandboxes.publish import (

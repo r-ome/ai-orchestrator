@@ -4,7 +4,6 @@ import re
 from urllib.parse import urlsplit
 from uuid import NAMESPACE_URL, uuid5
 
-
 _SCP_REMOTE = re.compile(
     r"^(?:[^@/:]+@)?(?P<host>[^/:]+):(?P<path>.+)$"
 )
@@ -30,8 +29,7 @@ def normalize_remote_url(raw: str) -> str:
         path = parsed.path
 
     path = path.strip("/")
-    if path.endswith(".git"):
-        path = path[:-4]
+    path = path.removesuffix(".git")
     if not host or not path:
         raise ValueError("remote URL must include a host and repository path")
     # Canonicalizing to HTTPS also removes any username or token from SSH/HTTP input.

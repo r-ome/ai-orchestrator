@@ -1,45 +1,45 @@
-from dataclasses import replace
 import inspect
 import os
-from pathlib import Path
-from uuid import UUID, uuid4
+from dataclasses import replace
+from uuid import uuid4
 
 import docker
 import pytest
-from fastapi.testclient import TestClient
+from conftest import mark_sandbox_legacy, register_ready_v1_sandbox
 from docker.errors import APIError, ContainerError, NotFound
+from fastapi.testclient import TestClient
 
 from app.agents.models import AgentProvider
 from app.controller.store import get_controller_store
-from app.platform.docker_client import get_docker_client
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.main import app
 from app.planning import service as planning_service
 from app.planning.config import PlanningSettings
 from app.planning.models import CreatePlanningSessionRequest
-from app.projects.models import ProjectRegistration
-from app.sandboxes.mirror import MirrorPin
+from app.platform.docker_client import get_docker_client
 from app.platform.naming import (
+    database_name,
+    db_data_volume,
     mirror_ownership_labels,
     mirror_volume,
+    network,
     ownership_labels,
     workspace_volume,
 )
+from app.projects.models import ProjectRegistration
+from app.sandboxes import database as sandbox_database
+from app.sandboxes import publish as sandbox_publish
 from app.sandboxes import router as sandbox_router
 from app.sandboxes import service as sandbox_service
-from app.sandboxes import publish as sandbox_publish
-from app.sandboxes import database as sandbox_database
 from app.sandboxes.database import sandbox_database_runtime, shared_database_names
-from app.sandboxes.engine_detection import EngineDetection, EngineSignal, NO_DATABASE
-from app.platform.naming import database_name, db_data_volume, network
+from app.sandboxes.engine_detection import NO_DATABASE, EngineDetection, EngineSignal
 from app.sandboxes.manifest import (
     read_manifest,
     transition_sandbox_lifecycle,
     write_manifest,
 )
-from app.controller.store.lifecycle_status import SandboxLifecycleStatus
-from app.sandboxes.publish import PullRequest, PublishError, PublishOutcome
-from conftest import mark_sandbox_legacy, register_ready_v1_sandbox
-
+from app.sandboxes.mirror import MirrorPin
+from app.sandboxes.publish import PublishError, PublishOutcome, PullRequest
 
 REMOTE = "https://github.com/owner/repo.git"
 FEATURE_KEY = "add-sandbox-api"

@@ -2,7 +2,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 from docker.errors import NotFound
 from pydantic import ValidationError
@@ -30,7 +29,6 @@ from app.previews.sharing import (
     _sharing_state,
     _validate_sharing,
 )
-
 
 PROJECT_KEY = "1f2e3d4c5b6a7988"
 OWNER = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

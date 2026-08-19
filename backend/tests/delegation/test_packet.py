@@ -4,7 +4,6 @@ from typing import Any
 from app.delegation.packet import UpstreamResult, build_packet, render
 from app.delegation.results import validate_result_payload
 
-
 PLAN = {
     "scope": "Add tags to posts",
     "approach": "Schema, helpers, then pages",

@@ -9,12 +9,12 @@ from docker.errors import APIError, ImageNotFound, NotFound
 
 from app.controller.config import get_controller_settings
 from app.controller.store import ControllerStore
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.sandboxes.manifest import (
     SandboxManifest,
     transition_sandbox_lifecycle,
     write_manifest,
 )
-from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -425,8 +425,8 @@ def override_docker_client(
     fake_docker_client: FakeDockerClient,
 ) -> Iterator[FakeDockerClient]:
     """Installs the shared fake through FastAPI's Docker dependency for router tests."""
-    from app.platform.docker_client import get_docker_client
     from app.main import app
+    from app.platform.docker_client import get_docker_client
 
     def override() -> Iterator[FakeDockerClient]:
         yield fake_docker_client

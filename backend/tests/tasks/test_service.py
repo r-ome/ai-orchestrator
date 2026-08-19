@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 from docker.errors import APIError
 
@@ -29,7 +28,6 @@ from app.tasks.service import (
     start_task,
     transition_task,
 )
-
 
 BASE_COMMIT = "a" * 40
 NEXT_COMMIT = "b" * 40

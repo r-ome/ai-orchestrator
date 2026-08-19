@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 from app.agents.models import AgentProvider
 
-
 COMMAND_KINDS = ("build", "test", "lint", "typecheck", "format")
 
 

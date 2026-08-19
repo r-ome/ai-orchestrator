@@ -9,7 +9,6 @@ from docker.errors import DockerException
 from app.controller.store import ControllerStore
 from app.platform.naming import is_shared_infrastructure
 
-
 RESOURCE_KINDS = ("volume", "container", "network")
 
 

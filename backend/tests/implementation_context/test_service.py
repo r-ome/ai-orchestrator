@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 
 from app.agents.models import AgentProvider
@@ -18,7 +17,6 @@ from app.implementation_context.validators import validate_context_payload
 from app.planning.config import PlanningSettings
 from app.planning.models import PlanningStatus
 from app.planning.runner import PlanningTurnError, TurnResult
-
 
 CONTEXT_SETTINGS = ContextSettings(
     model="claude-sonnet-5",

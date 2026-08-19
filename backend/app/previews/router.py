@@ -1,7 +1,6 @@
 import asyncio
-from collections.abc import Iterable
-from socket import SHUT_RDWR
-from typing import Annotated, Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import Annotated, Any, TypeVar
 
 from docker.client import DockerClient
 from docker.errors import DockerException
@@ -17,12 +16,10 @@ from app.platform.docker_errors import (
     docker_response,
 )
 from app.platform.log_stream import (
-    DockerFrameDemuxer,
     LOG_READ_TIMEOUT_SECONDS,
     cancel_tasks,
     close_log_stream,
     forward_container_log,
-    read_log_chunk,
     set_log_read_timeout,
 )
 from app.previews.config import PreviewSettings, get_preview_settings
@@ -42,12 +39,6 @@ from app.previews.models import (
     StopPreviewRequest,
     StopPreviewResponse,
 )
-from app.projects.secrets import (
-    delete_project_secret,
-    get_project_secrets,
-    import_project_secrets,
-    set_project_secrets,
-)
 from app.previews.service import (
     get_current_preview,
     open_preview_log_stream,
@@ -62,7 +53,12 @@ from app.previews.service import (
     stop_preview,
 )
 from app.previews.sharing import database_sharing_state
-
+from app.projects.secrets import (
+    delete_project_secret,
+    get_project_secrets,
+    import_project_secrets,
+    set_project_secrets,
+)
 
 router = APIRouter(prefix="/projects/{project_name}", tags=["previews"])
 ResponseType = TypeVar("ResponseType")

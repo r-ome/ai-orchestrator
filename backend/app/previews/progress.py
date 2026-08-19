@@ -7,7 +7,6 @@ from typing import Any
 from app.controller.store import ControllerStore
 from app.previews._shared import _now
 
-
 logger = logging.getLogger("uvicorn.error")
 # Accepts an optional duration_ms kwarg so a step can report zero-duration reuse.
 ProgressReporter = Callable[..., None]

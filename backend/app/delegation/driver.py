@@ -55,7 +55,6 @@ from app.delegation.routing import RoutingSettings
 from app.delegation.verification import VerificationSettings
 from app.tasks.config import CodingTurnSettings
 
-
 logger = logging.getLogger(__name__)
 
 # The statuses from which the driver may start more work. A delegation halted

@@ -5,8 +5,8 @@ from uuid import uuid4
 
 import docker
 import pytest
-
 from conftest import register_ready_v1_sandbox
+
 from app.controller.store import ControllerStore
 from app.projects.models import ProjectRegistration
 from app.tasks.models import ReportTaskRequest, StartTaskRequest, TaskStatus
@@ -19,7 +19,6 @@ from app.tasks.service import (
     start_task,
     transition_task,
 )
-
 
 requires_docker = pytest.mark.skipif(
     os.getenv("RUN_DOCKER_PREVIEW_TESTS") != "1",

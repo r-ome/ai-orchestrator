@@ -2,13 +2,12 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 from fastapi.testclient import TestClient
 
 from app.controller.store import ControllerStore, get_controller_store
-from app.platform.docker_client import get_docker_client
 from app.main import app
+from app.platform.docker_client import get_docker_client
 from app.turns.locators import TurnNotFound, locate
 
 

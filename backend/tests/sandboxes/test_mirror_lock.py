@@ -3,13 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from app.startup import reconcile_controller_state
 from app.controller.store import ControllerStore, SandboxLeaseHeldError
 from app.sandboxes.lifecycle import (
     LockOrderError,
     lifecycle_lease,
     project_mirror_lock,
 )
+from app.startup import reconcile_controller_state
 
 
 def _store(tmp_path: Path) -> ControllerStore:

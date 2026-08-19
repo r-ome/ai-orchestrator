@@ -1,18 +1,22 @@
-import os
 import json
+import os
 import threading
 import time
 import urllib.request
-from uuid import uuid4
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import docker
 import pytest
 import yaml
 from fastapi.testclient import TestClient
 
+from app.controller.store import ControllerStore, get_controller_store
+from app.main import app
+from app.platform.docker_client import get_docker_client
 from app.previews.config import PreviewSettings
+from app.previews.dependency_cache import _volume_runtime_files
 from app.previews.models import (
     PreviewAction,
     PreviewConfiguration,
@@ -21,7 +25,6 @@ from app.previews.models import (
     PreviewRuntime,
     StartPreviewRequest,
 )
-from app.previews.dependency_cache import _volume_runtime_files
 from app.previews.resources import _labels, _remove_resources
 from app.previews.runtimes.compose import _start_compose
 from app.previews.runtimes.dockerfile import _start_dockerfile
@@ -34,9 +37,7 @@ from app.previews.service import (
     start_preview,
     stop_preview,
 )
-from app.controller.store import ControllerStore, get_controller_store
-from app.platform.docker_client import get_docker_client
-from app.main import app
+
 PROJECT_MANAGED = "orchestrator.project.managed"
 PROJECT_NAME = "orchestrator.project.name"
 LABEL_SOURCE = "orchestrator.project.source"

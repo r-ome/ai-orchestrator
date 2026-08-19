@@ -13,34 +13,39 @@ from docker.client import DockerClient
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
 from app.delegation.config import get_routing_settings
-from app.platform.errors import OperationError
 from app.planning.config import PlanningSettings, reasoning_effort_choices
 from app.planning.feature_status import derive_feature_status
 from app.planning.models import (
     TERMINAL_PLANNING_STATUSES,
     CreatePlanningSessionRequest,
     FindingStatus,
-    PlanSpec,
+    PlanningFinding,
     PlanningMessage,
     PlanningMessageRaw,
     PlanningMessageRequest,
-    PlanningFinding,
     PlanningRole,
     PlanningSession,
     PlanningSessionDetail,
     PlanningSessionsResponse,
     PlanningStatus,
+    PlanSpec,
     source_statuses,
 )
-from app.planning.prompts import clarifier_prompt, feature_brief, planner_prompt, reviewer_prompt
+from app.planning.prompts import (
+    clarifier_prompt,
+    feature_brief,
+    planner_prompt,
+    reviewer_prompt,
+)
 from app.planning.runner import (
     PlanningTurnError,
-    TurnRequest,
     TurnOutcome,
+    TurnRequest,
     TurnResult,
     run_planning_turn,
     run_validated_turn,
 )
+from app.platform.errors import OperationError
 from app.projects.service import (
     ProjectOperationError,
     ensure_sandbox_registered,
@@ -155,11 +160,11 @@ def list_sessions(
     sessions = [
         _session_model(session)
         for session in controller_store.planning_sessions_for_project(
-            (
+            
                 project.source_path.removeprefix("managed:")
                 if project.source_path.startswith("managed:")
                 else project_id(project.source_path)
-            )
+            
         )
     ]
     return PlanningSessionsResponse(count=len(sessions), sessions=sessions)
@@ -942,9 +947,7 @@ def _validate_planner_payload(payload: dict[str, Any]) -> list[str]:
         if not isinstance(value, str):
             errors.append(f"planner {name} must be a string")
     components = payload.get("components")
-    if not isinstance(components, list):
-        errors.append("planner components must be a list of named components")
-    elif any(
+    if not isinstance(components, list) or any(
         not isinstance(item, dict)
         or not isinstance(item.get("name"), str)
         or not isinstance(item.get("responsibility", ""), str)
@@ -952,9 +955,7 @@ def _validate_planner_payload(payload: dict[str, Any]) -> list[str]:
     ):
         errors.append("planner components must be a list of named components")
     risks = payload.get("risks")
-    if not isinstance(risks, list):
-        errors.append("planner risks must be a list of valid risks")
-    elif any(
+    if not isinstance(risks, list) or any(
         not isinstance(item, dict)
         or not isinstance(item.get("severity"), str)
         or not isinstance(item.get("text"), str)
@@ -967,9 +968,7 @@ def _validate_planner_payload(payload: dict[str, Any]) -> list[str]:
     # Absent is legal: the round-one schema omits the field, because there is no
     # ledger to respond to yet.
     responses = payload.get("finding_responses", [])
-    if not isinstance(responses, list):
-        errors.append("planner finding_responses must be valid responses")
-    elif any(
+    if not isinstance(responses, list) or any(
         not isinstance(item, dict)
         or not isinstance(item.get("finding_id"), str)
         or not isinstance(item.get("status"), str)

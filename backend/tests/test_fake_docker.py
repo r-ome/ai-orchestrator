@@ -1,7 +1,6 @@
 import pytest
-from docker.errors import APIError, ImageNotFound, NotFound
-
 from conftest import FakeDockerClient
+from docker.errors import APIError, ImageNotFound, NotFound
 
 
 def test_label_filtering_requires_every_requested_label(

@@ -18,10 +18,9 @@ from app.platform.labels import (
     LABEL_SANDBOX_ID,
     LABEL_SERVICE,
 )
+from app.platform.naming import network as sandbox_network_name
 from app.previews.config import PreviewSettings
 from app.previews.errors import PreviewOperationError
-from app.platform.naming import network as sandbox_network_name
-
 
 PREVIEW_COMMAND_TIMEOUT_SECONDS = 60
 PREVIEW_COMMAND_MAX_LOG_BYTES = 1_048_576

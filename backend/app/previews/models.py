@@ -1,10 +1,8 @@
 import re
 from enum import StrEnum
-
 from typing import Annotated
 
 from pydantic import BaseModel, Field, model_validator
-
 
 ENVIRONMENT_VARIABLE_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 

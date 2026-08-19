@@ -13,8 +13,8 @@ from pathlib import Path
 
 import docker
 import pytest
-
 from conftest import register_ready_v1_sandbox
+
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
 from app.projects.models import ProjectRegistration

@@ -10,6 +10,15 @@ from docker.models.containers import Container
 from docker.models.volumes import Volume
 
 from app.agents.config import AgentSettings
+from app.agents.models import (
+    AgentProvider,
+    CleanupAgentsResponse,
+    CodingAgent,
+    CodingAgentsResponse,
+    CreateAgentRequest,
+    ReplaceAgentRequest,
+    StopAgentResponse,
+)
 from app.containers.hardened import (
     Egress,
     HardenedContainerSpec,
@@ -21,27 +30,23 @@ from app.controller.store import (
     SandboxWriterAdmissionError,
 )
 from app.platform.errors import OperationError
-from app.platform.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND, LABEL_RUN_ID, LABEL_SANDBOX_ID
-from app.agents.models import (
-    AgentProvider,
-    CleanupAgentsResponse,
-    CodingAgent,
-    CodingAgentsResponse,
-    CreateAgentRequest,
-    ReplaceAgentRequest,
-    StopAgentResponse,
+from app.platform.labels import (
+    LABEL_CONTROLLER_MANAGED,
+    LABEL_KIND,
+    LABEL_RUN_ID,
+    LABEL_SANDBOX_ID,
 )
+from app.previews.config import get_preview_settings
 from app.previews.dependency_cache import (
     _dependency_volume,
     _lockfile_digest,
     _volume_runtime_files,
 )
-from app.previews.config import get_preview_settings
 from app.previews.errors import PreviewOperationError
 from app.projects.service import (
     ProjectOperationError,
-    ensure_sandbox_registered,
     ensure_git_baseline,
+    ensure_sandbox_registered,
     inspect_registered_project,
 )
 from app.sandboxes.database import SandboxDatabaseError, sandbox_database_runtime

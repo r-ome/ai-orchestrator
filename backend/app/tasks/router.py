@@ -1,11 +1,16 @@
-from typing import Annotated, Callable, TypeVar
+from collections.abc import Callable
+from typing import Annotated, TypeVar
 
 from docker.client import DockerClient
 from fastapi import APIRouter, Depends, Query, status
 
 from app.controller.store import ControllerStore, get_controller_store
 from app.platform.docker_client import get_docker_client
-from app.platform.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
+from app.platform.docker_errors import (
+    DockerErrorPolicy,
+    PassThroughApiError,
+    docker_response,
+)
 from app.tasks.config import CodingTurnSettings, get_coding_turn_settings
 from app.tasks.models import (
     ReportTaskRequest,
@@ -27,7 +32,6 @@ from app.tasks.service import (
     start_task,
     verify_task,
 )
-
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 ResponseType = TypeVar("ResponseType")

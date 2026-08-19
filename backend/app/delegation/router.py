@@ -4,10 +4,13 @@ from typing import Annotated, Any, TypeVar
 from docker.client import DockerClient
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 
-from app.platform import jobs
 from app.agents.service import AgentOperationError
 from app.controller.store import ControllerStore, get_controller_store
-from app.platform.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
+from app.delegation.change_requests import (
+    claim_change_request,
+    execute_change_request,
+    fail_change_claim,
+)
 from app.delegation.config import (
     DelegatorSettings,
     DriverSettings,
@@ -17,13 +20,8 @@ from app.delegation.config import (
     get_integration_review_settings,
     get_verification_settings,
 )
-from app.delegation.driver import drive_delegation
-from app.delegation.change_requests import (
-    claim_change_request,
-    execute_change_request,
-    fail_change_claim,
-)
 from app.delegation.delivery import feature_diff
+from app.delegation.driver import drive_delegation
 from app.delegation.execution import (
     accept_run,
     build_run_packet,
@@ -51,12 +49,11 @@ from app.delegation.models import (
     StartRunRequest,
 )
 from app.delegation.packet import Packet
-from app.delegation.verification import VerificationSettings
 from app.delegation.service import (
     DelegationOperationError,
     claim_generation,
-    create_revision,
     clear_routing,
+    create_revision,
     execute_generation,
     fail_generation_claim,
     list_delegations,
@@ -64,13 +61,19 @@ from app.delegation.service import (
     transition,
     view,
 )
-from app.platform.docker_client import get_docker_client
+from app.delegation.verification import VerificationSettings
 from app.planning.config import PlanningSettings, get_planning_settings
 from app.planning.runner import PlanningTurnError
+from app.platform import jobs
+from app.platform.docker_client import get_docker_client
+from app.platform.docker_errors import (
+    DockerErrorPolicy,
+    PassThroughApiError,
+    docker_response,
+)
 from app.previews.config import PreviewSettings, get_preview_settings
 from app.tasks.config import CodingTurnSettings, get_coding_turn_settings
 from app.tasks.runner import CodingTurnError
-
 
 router = APIRouter(
     prefix="/projects/{project_name}/planning/sessions/{session_id}/delegations",

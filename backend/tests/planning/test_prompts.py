@@ -1,15 +1,15 @@
 from app.agents.models import AgentProvider
 from app.planning.config import PlanningSettings
-from app.planning.runner import turn_model
 from app.planning.prompts import (
+    _PLAN_FIELDS,
     JSON_INSTRUCTION,
     PLANNER_SCHEMA,
-    _PLAN_FIELDS,
     clarifier_prompt,
     planner_prompt,
     render_plan,
     reviewer_prompt,
 )
+from app.planning.runner import turn_model
 
 
 def test_clarifier_prompt_contains_earlier_messages_in_order() -> None:

@@ -2,9 +2,7 @@ import pytest
 
 from app.delegation.service import DelegationOperationError
 from app.previews.config import PreviewSettings
-from app.sandboxes import git
-from app.sandboxes import publish
-
+from app.sandboxes import git, publish
 
 HEAD = "b" * 40
 

@@ -16,7 +16,6 @@ from fastapi import WebSocket
 
 from app.platform.docker_terminal import close_stream, raw_socket, read_stream
 
-
 LOG_READ_TIMEOUT_SECONDS = 0.5
 
 

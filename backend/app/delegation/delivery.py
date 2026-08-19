@@ -14,7 +14,6 @@ from app.delegation.models import (
     DelegationView,
     FeatureDiff,
     FeatureDiffFile,
-    IntegrationReviewStatus,
     RunStatus,
 )
 from app.platform.dirty_state import (
@@ -28,7 +27,6 @@ from app.platform.dirty_state import (
 from app.previews.config import PreviewSettings
 from app.sandboxes.git import run_git
 from app.tasks.models import TaskStatus
-
 
 _COMMIT_PATTERN = re.compile(r"^[0-9a-f]{7,64}$")
 _BRANCH_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")

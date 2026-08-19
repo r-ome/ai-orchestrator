@@ -3,7 +3,6 @@ from types import SimpleNamespace
 from app.delegation.packet import ResolvedVerification
 from app.delegation.verification import VerificationSettings, run_verification
 
-
 SETTINGS = VerificationSettings(
     image="verification-image",
     timeout_seconds=60,

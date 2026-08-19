@@ -7,7 +7,6 @@ from typing import Any
 from app.implementation_context.inventory import CommandInventory
 from app.implementation_context.models import COMMAND_KINDS
 
-
 WORKSPACE = "/workspace"
 
 

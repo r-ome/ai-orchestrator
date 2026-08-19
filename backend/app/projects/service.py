@@ -4,12 +4,11 @@ from docker.client import DockerClient
 from docker.errors import NotFound
 
 from app.controller.store import ControllerStore
-from app.platform.errors import OperationError
-from app.projects.models import ProjectRegistration
 from app.controller.store.lifecycle_status import SandboxLifecycleStatus
-from app.sandboxes.git import run_git
+from app.platform.errors import OperationError
 from app.platform.naming import validate_ownership
-
+from app.projects.models import ProjectRegistration
+from app.sandboxes.git import run_git
 
 # Directories the controller and its agents create inside a sandbox. They are
 # not the project's files and must never reach a task branch or a review diff.

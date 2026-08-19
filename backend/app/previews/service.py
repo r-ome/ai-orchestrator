@@ -1,62 +1,33 @@
-import io
 import json
-import re
-import secrets
-import shlex
 import socket
-import time
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from threading import Lock
 from typing import Any
 from uuid import uuid4
 
-import yaml
 from docker.client import DockerClient
 from docker.errors import (
-    APIError,
-    BuildError,
     DockerException,
 )
 from docker.models.containers import Container
-from docker.types import Mount
-from requests.exceptions import ReadTimeout
 
-from app.containers.hardened import (
-    Egress,
-    HardenedContainerSpec,
-    Rootfs,
-    create_hardened,
-)
-from app.controller.config import get_controller_settings
 from app.controller.store import ControllerStore, SandboxWriterAdmissionError
-from app.previews.dependency_cache import (
-    _DEPENDENCY_READY_MARKER,
-    _data_volume,
-    _dependency_volume,
-    _dependency_volume_ready,
-    _lockfile_digest,
-    _run_volume_name,
-    _volume_context_tar,
-    _volume_environment_files,
-    _volume_runtime_files,
-    _write_preview_manifest,
-)
 from app.platform.labels import (
-    LABEL_EXPIRES_AT,
-    LABEL_MANAGED,
-    LABEL_RUN_ID,
-    LABEL_SANDBOX_ID,
     LABEL_SERVICE,
 )
-from app.previews.config import PreviewSettings
 from app.previews._shared import (
     _expiry,
     _now,
     _project_key,
     _ready_project,
-    _safe_relative_path,
-    _slug,
     _time_after,
+)
+from app.previews.config import PreviewSettings
+from app.previews.dependency_cache import (
+    _run_volume_name,
+    _volume_environment_files,
+    _volume_runtime_files,
+    _write_preview_manifest,
 )
 from app.previews.detection import (
     capture_source_runtime_files,
@@ -67,73 +38,43 @@ from app.previews.detection import (
     proposal_digest,
 )
 from app.previews.errors import PreviewOperationError
-from app.previews.health import _wait_for_container_health, _wait_for_mysql_health
+from app.previews.health import _wait_for_mysql_health
 from app.previews.models import (
     PreviewAction,
     PreviewConfiguration,
     PreviewContainer,
-    PreviewDependencyService,
     PreviewEnvironmentSource,
     PreviewKind,
     PreviewLogs,
     PreviewMode,
-    PreviewNetworkAccess,
-    PreviewPersistence,
     PreviewProgressEvent,
     PreviewProposal,
     PreviewRun,
-    PreviewRuntime,
     PreviewSharing,
     StartPreviewRequest,
     StopPreviewResponse,
 )
 from app.previews.progress import (
-    ProgressReporter,
-    _ignore_progress,
     _record_preview_progress,
-    _timed_step,
+)
+from app.previews.resources import (
+    _labels,
+    _preview_containers,
+    _remove_resources,
+    _resources_for_run,
 )
 from app.previews.runtimes.compose import _start_compose
 from app.previews.runtimes.dockerfile import _start_dockerfile
 from app.previews.runtimes.native import _COMMIT_PATTERN, _export_commit, _start_native
-from app.previews.resources import (
-    PREVIEW_COMMAND_MAX_LOG_BYTES,
-    PREVIEW_COMMAND_TIMEOUT_SECONDS,
-    _disconnect_foreign_endpoints,
-    _ensure_preview_image,
-    _existing_volume,
-    _labels,
-    _preview_containers,
-    _preview_images,
-    _preview_networks,
-    _preview_volumes,
-    _remove_resources,
-    _resources_for_run,
-    _run_preview_command,
-    _validate_built_image,
-)
 from app.previews.sharing import (
-    _attach_shared_database,
-    _connect_sandbox_database_endpoint,
-    _database_engine,
     _managed_preview_database,
     _release_shared_database,
     _restart_shared_database,
     _sharing_state,
     _validate_sharing,
 )
-from app.sandboxes.git import run_git
-from app.sandboxes.database import (
-    DatabaseConnectionRequest,
-    DatabaseMigrationRequest,
-    DatabaseProvisionRequest,
-    SandboxDatabaseError,
-    SandboxDatabaseRuntime,
-    sandbox_database_runtime,
-)
 from app.tasks.models import TaskStatus
 from app.tasks.service import transition_task
-
 
 SHARED_DATABASE_PREFIX = "orchestrator-shared-db-"
 _preview_lock = Lock()

@@ -9,6 +9,7 @@ from app.controller.store import ControllerStore
 from app.platform.labels import LABEL_SANDBOX_ID, LABEL_SERVICE
 from app.previews._shared import _safe_relative_path
 from app.previews.config import PreviewSettings
+from app.previews.dependency_cache import _volume_context_tar
 from app.previews.errors import PreviewOperationError
 from app.previews.models import PreviewConfiguration, PreviewNetworkAccess
 from app.previews.network import (
@@ -25,7 +26,6 @@ from app.previews.sharing import (
     _connect_sandbox_database_endpoint,
     _managed_preview_database,
 )
-from app.previews.dependency_cache import _volume_context_tar
 
 
 def _start_dockerfile(

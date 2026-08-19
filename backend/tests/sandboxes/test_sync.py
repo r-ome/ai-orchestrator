@@ -1,28 +1,23 @@
-from dataclasses import replace
 import os
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import docker
 import pytest
+from conftest import mark_sandbox_legacy, register_ready_v1_sandbox
 from fastapi.testclient import TestClient
 
 from app.controller.store import get_controller_store
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.main import app
+from app.platform.naming import mirror_ownership_labels, ownership_labels
 from app.sandboxes import database as sandbox_database
 from app.sandboxes import lifecycle as sandbox_lifecycle
 from app.sandboxes import service as sandbox_service
 from app.sandboxes.engine_detection import EngineDetection, EngineSignal
-from app.sandboxes.manifest import (
-    SandboxManifest,
-    read_manifest,
-    transition_sandbox_lifecycle,
-    write_manifest,
-)
-from app.controller.store.lifecycle_status import SandboxLifecycleStatus
-from app.platform.naming import mirror_ownership_labels, ownership_labels
 from app.sandboxes.git import (
     GitNetworkMode,
     clone_mirror_to_workspace,
@@ -34,8 +29,12 @@ from app.sandboxes.git import (
     run_git,
     sync_workspace_from_mirror,
 )
-from conftest import mark_sandbox_legacy, register_ready_v1_sandbox
-
+from app.sandboxes.manifest import (
+    SandboxManifest,
+    read_manifest,
+    transition_sandbox_lifecycle,
+    write_manifest,
+)
 
 PROJECT_ID = "sync-project"
 SANDBOX_ID = "sync-sandbox"

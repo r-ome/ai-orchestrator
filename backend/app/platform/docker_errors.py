@@ -1,9 +1,9 @@
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, TypeVar
+from typing import TypeVar
 
 from docker.errors import APIError, ContainerError, DockerException, NotFound
 from fastapi import HTTPException, status
-
 
 ResponseType = TypeVar("ResponseType")
 DOCKER_DAEMON_UNAVAILABLE_DETAIL = "Docker daemon is unavailable"

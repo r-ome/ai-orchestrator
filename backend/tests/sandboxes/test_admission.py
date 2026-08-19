@@ -2,9 +2,10 @@ import sqlite3
 import threading
 from pathlib import Path
 from typing import Any
-import pytest
 
+import pytest
 from conftest import register_ready_v1_sandbox
+
 from app.controller.store import (
     ActiveAgentRunExists,
     AgentWriterSessionExists,

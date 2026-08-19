@@ -5,7 +5,6 @@ from ._shared import _now, _row
 from .errors import SandboxLeaseHeldError
 
 
-
 class ProjectsMixin:
     """Owns projects, project_secrets, and project_mirror_locks tables."""
 

@@ -4,26 +4,24 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 
 from app.controller.store import ControllerStore, DelegationActive, RunActive
 from app.delegation import service
 from app.delegation.models import (
     ACTIVE_DELEGATION_STATUSES,
-    ChangeRequestStatus,
     DELEGATION_TRANSITIONS,
     TERMINAL_DELEGATION_STATUSES,
+    ChangeRequestStatus,
     DelegationStatus,
     IntegrationReviewStatus,
     RunStatus,
-    WorkItemState,
     SetRoutingRequest,
+    WorkItemState,
 )
 from app.delegation.routing import ProviderModels, RoutingSettings
 from app.implementation_context.models import ContextStatus
 from app.planning.models import PlanningStatus
-
 
 PLAN = {
     "title": "Do it",

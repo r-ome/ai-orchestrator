@@ -3,11 +3,10 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 
-from app.controller.store import ControllerStore
 import app.controller.store as store_module
+from app.controller.store import ControllerStore
 
 
 def _store(tmp_path: Path) -> ControllerStore:

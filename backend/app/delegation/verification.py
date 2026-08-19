@@ -7,8 +7,8 @@ from typing import Any
 from docker.errors import DockerException
 
 from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
-from app.delegation.packet import ResolvedVerification
 from app.controller.store import ControllerStore
+from app.delegation.packet import ResolvedVerification
 from app.platform.errors import OperationError
 from app.sandboxes.database import (
     SandboxDatabaseError,

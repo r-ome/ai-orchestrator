@@ -3,14 +3,13 @@ import time
 from collections.abc import Iterator
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.controller.store import ControllerStore, get_controller_store
-from app.platform.docker_client import get_docker_client
 from app.main import app
+from app.platform.docker_client import get_docker_client
 from app.previews.progress import _record_preview_progress
 from app.projects.models import ProjectRegistration
 from app.projects.service import managed_project_key
@@ -209,10 +208,9 @@ def test_events_websocket_closes_when_proposal_is_unknown(
 ) -> None:
     _configure(monkeypatch, sandbox_id="sandbox-missing")
 
-    with pytest.raises(WebSocketDisconnect) as excinfo:
-        with client.websocket_connect(
-            "/projects/events-sandbox-1/preview-proposals/does-not-exist/events"
-        ):
-            pass
+    with pytest.raises(WebSocketDisconnect) as excinfo, client.websocket_connect(
+        "/projects/events-sandbox-1/preview-proposals/does-not-exist/events"
+    ):
+        pass
 
     assert excinfo.value.code == 4404

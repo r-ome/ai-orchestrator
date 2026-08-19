@@ -3,6 +3,7 @@ from collections.abc import Callable, Mapping
 
 from ._shared import _now
 
+
 def _violates(error: sqlite3.IntegrityError, index: str) -> bool:
     message = str(error)
     if message == f"UNIQUE constraint failed: index '{index}'":

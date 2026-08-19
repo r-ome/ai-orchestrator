@@ -2,8 +2,13 @@ import time
 from pathlib import Path
 
 from conftest import register_ready_v1_sandbox
+
 from app.controller.store import ControllerStore
-from app.previews.progress import _ignore_progress, _record_preview_progress, _timed_step
+from app.previews.progress import (
+    _ignore_progress,
+    _record_preview_progress,
+    _timed_step,
+)
 from app.previews.service import (
     _preview_log_response,
 )

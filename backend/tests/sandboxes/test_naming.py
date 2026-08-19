@@ -16,7 +16,6 @@ from app.platform.naming import (
     workspace_volume,
 )
 
-
 PROJECT_ID = "a" * 32
 FEATURE_KEY = "add-sandbox-manifest"
 

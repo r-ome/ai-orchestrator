@@ -8,7 +8,6 @@ from app.implementation_context.inventory import (
     parse_inventory,
 )
 
-
 NODE = {
     "package.json": json.dumps(
         {"scripts": {"build": "astro build", "test": "vitest", "lint": "eslint ."}}

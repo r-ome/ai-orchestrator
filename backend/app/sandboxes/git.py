@@ -4,11 +4,11 @@ import os
 import re
 import shutil
 import tempfile
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from collections.abc import Mapping
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterator, Protocol
+from typing import Protocol
 
 from docker.client import DockerClient
 from docker.errors import ContainerError

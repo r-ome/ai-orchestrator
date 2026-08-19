@@ -1,16 +1,17 @@
 import json
 import re
 import shlex
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from app.agents.config import get_agent_settings
 from app.agents.models import AgentProvider
 from app.agents.service import credential_volume
 from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
-from app.platform.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND
 from app.planning.config import PlanningSettings
 from app.planning.models import PlanningRole
+from app.platform.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND
 
 PLANNING_WORKSPACE = "/workspace"
 PLANNING_CREDENTIALS = "/auth"

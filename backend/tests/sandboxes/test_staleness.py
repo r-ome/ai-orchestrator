@@ -5,18 +5,17 @@ from uuid import uuid4
 
 import docker
 import pytest
+from conftest import mark_sandbox_legacy, register_ready_v1_sandbox
 from fastapi.testclient import TestClient
 
-from app.controller.store import projects as store_projects_module
 from app.controller.config import get_controller_settings
 from app.controller.store import get_controller_store
-from app.platform.docker_client import get_docker_client
+from app.controller.store import projects as store_projects_module
 from app.main import app
+from app.platform.docker_client import get_docker_client
 from app.sandboxes import lifecycle as sandbox_lifecycle
 from app.sandboxes import service as sandbox_service
 from app.sandboxes.manifest import SandboxManifest, write_manifest
-from conftest import mark_sandbox_legacy, register_ready_v1_sandbox
-
 
 PROJECT_ID = "staleness-project"
 SANDBOX_ID = "staleness-sandbox"

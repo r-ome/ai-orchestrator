@@ -5,7 +5,6 @@ from typing import Any
 
 from app.implementation_context.models import COMMAND_KINDS
 
-
 MAX_MODULES = 60
 MAX_SYMBOLS = 80
 MAX_EXCERPT = 2000

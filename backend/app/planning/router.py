@@ -1,12 +1,11 @@
-from typing import Annotated, Callable, TypeVar
+from collections.abc import Callable
+from typing import Annotated, TypeVar
 
 from docker.client import DockerClient
 from fastapi import APIRouter, Depends, status
 
 from app.controller.store import ControllerStore, get_controller_store
 from app.delegation.config import get_routing_settings
-from app.platform.docker_client import get_docker_client
-from app.platform.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
 from app.planning.config import (
     PlanningSettings,
     get_planning_settings,
@@ -34,7 +33,12 @@ from app.planning.service import (
     post_message,
     proceed_without_confirmation,
 )
-
+from app.platform.docker_client import get_docker_client
+from app.platform.docker_errors import (
+    DockerErrorPolicy,
+    PassThroughApiError,
+    docker_response,
+)
 
 router = APIRouter(prefix="/projects/{project_name}/planning", tags=["planning"])
 ResponseType = TypeVar("ResponseType")

@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-
 DEFAULT_CONTROLLER_DATA_DIRECTORY = Path(__file__).resolve().parents[2] / ".controller-data"
 DEFAULT_GIT_SECRET_DIRECTORY = Path.home() / ".orchestrator" / "run-secrets"
 

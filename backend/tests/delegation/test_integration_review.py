@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 
 from app.controller.store import ControllerStore, ReviewGenerating
@@ -17,7 +16,6 @@ from app.delegation.models import (
 )
 from app.planning.config import get_planning_settings
 from app.planning.runner import TurnResult
-
 
 PLAN = {
     "title": "Feature",

@@ -8,7 +8,7 @@ from docker.client import DockerClient
 
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
-from app.platform.errors import OperationError
+
 # Models only. `delegation.service` imports this module, so reaching for
 # anything further into that package would close a ring.
 from app.delegation.models import DelegationStatus
@@ -24,8 +24,8 @@ from app.implementation_context.models import (
     COMMAND_KINDS,
     ContextManifest,
     ContextStatus,
-    GenerateContextRequest,
     GenerateContextOutcome,
+    GenerateContextRequest,
     ImplementationContext,
     ResolvedCommand,
 )
@@ -33,13 +33,12 @@ from app.implementation_context.validators import validate_context_payload
 from app.planning.config import PlanningSettings
 from app.planning.models import PlanningRole, PlanningStatus
 from app.planning.runner import (
-    TurnRequest,
     TurnOutcome,
-    TurnResult,
+    TurnRequest,
     run_planning_turn,
     run_validated_turn,
 )
-
+from app.platform.errors import OperationError
 
 _CONTEXT_SESSION_STATUSES = {
     PlanningStatus.PLAN_READY.value,
@@ -558,7 +557,7 @@ __all__ = [
     "fail_claim",
     "generate_context",
     "get_context",
+    "parse_inventory",
     "ready_context",
     "session_context",
-    "parse_inventory",
 ]

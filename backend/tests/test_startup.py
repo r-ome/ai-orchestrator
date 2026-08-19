@@ -3,16 +3,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import FakeDockerClient, register_ready_v1_sandbox
+from docker.errors import DockerException
 
-from conftest import register_ready_v1_sandbox
-
-from app.startup import _settle_interrupted_turns, reconcile_controller_state
 from app.controller.store import ControllerStore
 from app.delegation import service as delegation_service
 from app.platform.naming import ownership_labels
-from docker.errors import DockerException
-from conftest import FakeDockerClient
-
+from app.startup import _settle_interrupted_turns, reconcile_controller_state
 
 PLAN = {
     "title": "Feature",

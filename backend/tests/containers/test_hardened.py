@@ -7,21 +7,20 @@ from docker.errors import DockerException
 
 from app.containers.hardened import (
     AUTO_REMOVE,
-    Capabilities,
-    HardenedContainerSpec,
-    Rootfs,
-    create_hardened,
     CAP_DROP,
     INIT,
     PIDS_LIMIT,
     READ_ONLY,
     SECURITY_OPT,
+    Capabilities,
     Capture,
     Egress,
+    HardenedContainerSpec,
     HardenedRunSpec,
+    Rootfs,
+    create_hardened,
     run_hardened,
 )
-
 
 # Each later migration deletes a line. An empty set means the migration is complete.
 _NOT_YET_MIGRATED: set[str] = set()

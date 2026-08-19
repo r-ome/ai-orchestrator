@@ -8,12 +8,12 @@ from docker.errors import DockerException
 
 from app.controller.config import ControllerSettings
 from app.controller.store import ControllerStore
-from app.platform.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND, LABEL_RUN_ID, LABEL_RUN_ID as AGENT_RUN_ID
 from app.planning.models import PlanningStatus
 from app.planning.service import transition_planning_session
+from app.platform.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND, LABEL_RUN_ID
+from app.platform.labels import LABEL_RUN_ID as AGENT_RUN_ID
 from app.previews.service import expire_previews
 from app.sandboxes.orphans import discover_orphans
-
 
 _RESTART_REASON = "The backend restarted while this turn was running"
 LIFECYCLE_LEASE_STALE_SECONDS = 60

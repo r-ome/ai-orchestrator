@@ -29,7 +29,6 @@ from docker.errors import DockerException
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import ReadTimeout
 
-
 #: The ADR-0006 boundary. These are constants rather than spec fields so that
 #: weakening one is not expressible at a call site. The two sequences are
 #: tuples, and every run copies them into a fresh list, so one caller cannot

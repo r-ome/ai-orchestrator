@@ -3,7 +3,6 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 
 from app.controller.store import ActiveAgentRunExists, ControllerStore
@@ -16,13 +15,13 @@ from app.previews.detection import (
     parse_environment_pairs,
     schema_environment_names,
 )
+from app.previews.errors import PreviewOperationError
 from app.previews.models import (
     PreviewConfiguration,
     PreviewMode,
     PreviewPersistence,
     PreviewRuntime,
 )
-from app.previews.errors import PreviewOperationError
 from app.previews.progress import _record_preview_progress
 from app.previews.runtimes.compose import (
     _compose_environment,
@@ -30,7 +29,6 @@ from app.previews.runtimes.compose import (
     _validate_compose_service,
 )
 from app.previews.runtimes.native import _native_runtime_environment
-from app.previews.service import _environment_status
 
 
 def test_compose_wins_when_project_also_has_a_dockerfile() -> None:

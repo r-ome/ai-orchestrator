@@ -3,14 +3,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from conftest import register_ready_v1_sandbox
 from fastapi.testclient import TestClient
 
-from app.platform import jobs
 from app.controller.store import ControllerStore, get_controller_store
-from app.platform.docker_client import get_docker_client
 from app.main import app
+from app.platform import jobs
+from app.platform.docker_client import get_docker_client
 
 
 def _item(key: str, **overrides: Any) -> dict[str, Any]:

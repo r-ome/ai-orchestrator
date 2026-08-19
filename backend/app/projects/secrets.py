@@ -3,9 +3,9 @@ from typing import Any
 from docker.client import DockerClient
 
 from app.controller.store import ControllerStore
-from app.previews.dependency_cache import _volume_environment_files
 from app.previews._shared import _project_key, _ready_project
 from app.previews.config import PreviewSettings
+from app.previews.dependency_cache import _volume_environment_files
 from app.previews.detection import parse_environment_pairs
 from app.previews.models import (
     ENVIRONMENT_VARIABLE_PATTERN,
@@ -14,6 +14,7 @@ from app.previews.models import (
     ProjectSecrets,
     SetProjectSecretsRequest,
 )
+
 
 def get_project_secrets(
     docker_client: DockerClient,
