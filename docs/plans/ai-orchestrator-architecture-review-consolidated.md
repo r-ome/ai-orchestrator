@@ -430,6 +430,18 @@ Concrete symptoms:
 - `sandboxes/lifecycle.py` imports a **private** function across a package boundary from `tasks.service`;
 - `controller/`, nominally persistence/reconciliation, imports multiple domain packages that import it back.
 
+> **Third symptom resolved by Phase 9, 19 Aug 2026, `main` @ `4889bed`.** `controller/` no
+> longer imports any domain package. Two edges caused it: `controller/store/` imported
+> `SandboxLifecycleStatus` from `app.sandboxes.models`, and `controller/lifecycle.py` reached
+> into `planning`, `previews`, `sandboxes` and `tasks`. The first moved to
+> `controller/store/lifecycle_status.py`; the second was startup composition, not store code,
+> and moved to `app/startup.py`. `app/controller/` now imports only `app.controller` and
+> `app.platform`, and left the import cycle.
+>
+> The other two symptoms stand. The cycle is **8 nodes**, down from 10, and the rest is real
+> domain-to-domain coupling that no directory move reaches — all 47 of the original edges ran
+> between domain packages. Breaking it needs signature changes.
+
 This means there is no safe reading order. Local reasoning is much harder than it should be.
 
 ## 5.2 Two god modules (**confirmed**)
@@ -467,6 +479,14 @@ Several of those concerns are not preview-specific at all.
 > acted on. Project-secrets CRUD moved to the projects domain. Dependency caching moved to
 > `app/dependency_cache.py`, which still imports eight names from `app.previews.*` and is
 > therefore not yet neutral; Phase 9 moves it into `platform/`.
+>
+> > **Corrected by Phase 9, 19 Aug 2026, `main` @ `4889bed`.** It did not move to `platform/`.
+> > Dependency caching is **not** neutral mechanics: all 14 of its top-level members are
+> > private or constants, and it imports `PreviewConfiguration`, `PreviewSettings` and
+> > `PreviewOperationError` and writes preview manifests. Moving it to `platform/` would have
+> > dragged five preview modules down with it. It moved to `app/previews/dependency_cache.py`
+> > instead, which makes those eight imports intra-package and cuts the cycle from 10 nodes
+> > to 9.
 
 ## 5.3 The sandbox router is a service in disguise (**confirmed**)
 

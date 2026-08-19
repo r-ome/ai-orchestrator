@@ -4,14 +4,18 @@
 **Verified against:** `main` @ `30e7ca9`, 19 Aug 2026
 **Baseline at verification:** `backend/.venv/bin/python -m pytest -q` → 818 passed, 43 skipped, 26.1s
 
-> **Progress, 19 Aug 2026 — `main` @ `e7e84cc`.** Phases 0, 1, 2, 3.1, 3.2, 3.3, 4, 5, 6, 7
-> and 8 are done. Phase 3.4 is partially done and deliberately stopped; see its status block.
-> Phase 9 is next, and its prerequisites (Phases 1, 5, 7) are all met. Current suite:
-> **backend 834 passed, 43 skipped; frontend 74 passed**.
+> **Progress, 19 Aug 2026 — `main` @ `4889bed`.** Phases 0, 1, 2, 3.1, 3.2, 3.3, 4, 5, 6, 7,
+> 8 and 9 are done. Phase 3.4 is partially done and deliberately stopped; see its status block.
+> Phase 10 is next. Current suite: **backend 835 passed, 43 skipped; frontend 74 passed**.
+>
+> Phase 9 built the `platform` layer and cut the module import cycle from **10 nodes to 8**.
+> It did **not** reach the "no cycles" goal its own text states, and that goal is not
+> reachable by the means the plan describes. See its status block.
 >
 > Phase 8 left `previews/service.py` at 1,097 lines, down from 3,704, across 15 modules rather
-> than the 7 the plan named. It did **not** add `PreviewStatus`, and `app/dependency_cache.py`
-> is extracted but not yet neutral — both carry into Phase 9. See its status block.
+> than the 7 the plan named. It did **not** add `PreviewStatus`, which is still open.
+> `app/dependency_cache.py` was extracted but not neutral; Phase 9 resolved that by moving it
+> into `previews/` rather than into `platform/`. See both status blocks.
 >
 > Phase 6 added the frontend's first real tests: 1 file and 1 test became 4 files and 74. It
 > also found and fixed a backend defect the plan did not anticipate; see its status block.
@@ -651,11 +655,74 @@ Then tighten the Phase 0.1 test from "does not grow" to "no cycles".
 
 *Prerequisites: Phases 1, 5, 7.*
 
-> **Prerequisites are met as of 19 Aug 2026.** Phases 1, 5 and 7 are all done. Phase 7 also
-> leaves a worked example to copy: the `controller/store/` package is a directed acyclic
-> import graph with `_shared`, `errors`, `schema` and `queries` as leaves and nothing
-> importing the facade. That is the shape the `platform → store → domain → api` direction
-> needs at package scale.
+> **Status: done, 19 Aug 2026, `main` @ `4889bed`.** Five commits, `9680877` through `4889bed`.
+> Backend **835 passed, 43 skipped**. No frontend file changed, so `npm test` (74) and
+> `npm run build` are unchanged from Phase 6 and were not re-run.
+>
+> **The cycle went from 10 nodes to 8. The plan's "no cycles" goal was not reached and is not
+> reachable this way.** The plan assumed moving neutral mechanics into `platform/` would break
+> the cycle. It does not remove a single cycle edge. Every module the plan named for `platform/`
+> — `labels`, `env`, `errors`, `jobs`, `log_stream`, `docker_client`, `docker_errors` — was
+> **already acyclic**. All 47 edges inside the cycle run between domain packages. The residual
+> 8-node cycle (`agents`, `delegation`, `implementation_context`, `planning`, `previews`,
+> `projects`, `sandboxes`, `tasks`) is genuine mutual domain coupling. No directory move
+> touches it; breaking it needs signature changes, which is a phase of its own.
+>
+> **The Phase 0.1 guard was measuring the wrong set.** It built its node set from
+> `child.is_dir() and (child/"__init__.py").is_file()`, so root-level modules were invisible
+> and it reported 9 packages. Widening it to all app-level modules revealed the true baseline
+> of **10**, including a real `previews` <-> `dependency_cache` cycle. Tightening the test
+> without widening it first would have passed while that cycle stood. The guard is now
+> "no growth from 8", not "no cycles" — the plan's wording is wrong and is corrected here.
+>
+> **The plan's module list was wrong again, for the third phase running.** Corrections:
+>
+> | Plan said | Reality |
+> |---|---|
+> | dependency caches to `platform/` | **Wrong layer.** All 14 members are private or constants, and it imports `PreviewConfiguration`, `PreviewSettings` and `PreviewOperationError` and writes preview manifests. It is preview mechanics. Moved into `previews/` instead, which deletes the node and cuts the cycle 10 to 9. |
+> | 9 modules named for `platform/` | 12 moved. The plan missed `sandboxes/naming.py` (176) and `projects/remote.py` (43), both with zero `app.` imports. |
+> | not mentioned | `sandboxes/models.py` (115) was the store-layer inversion: `controller/store/` imported it from a domain package. Moved to `controller/store/lifecycle_status.py`. |
+> | "move startup reconciliation composition out of `controller/`" | Correct, and it was the single edge holding `controller` in the cycle. `controller/lifecycle.py` (253) to `app/startup.py`, cutting 9 to 8. |
+>
+> **Measured line counts** for the 12 modules moved into `platform/`: `coercions` 23,
+> `dirty_state` 145, `docker_client` 21, `docker_errors` 81, `docker_terminal` 53, `env` 60,
+> `errors` 14, `jobs` 129, `labels` 19, `log_stream` 150, `naming` 176, `remote` 43 — 914 total,
+> across 111 import sites. Phase footprint: 102 files, +211/-166.
+>
+> **Layer directions now hold.** `app/platform/` imports only `app.platform`. `app/controller/`
+> imports only `app.controller` and `app.platform`. `app/startup.py` composes downward and is
+> imported by `app/main.py` alone.
+>
+> **One defect, found by the oracle and invisible to the suite.** `app/env.py` derived
+> `ENV_FILE` as `Path(__file__).resolve().parent.parent`. One directory deeper that became
+> `backend/app/.env`, which does not exist; `load_env` swallows the `OSError` and returns `{}`,
+> so `backend/.env` would have stopped loading in silence. All 834 tests passed with the config
+> file dead, because every test in `tests/test_env.py` passes an explicit `path` and none touch
+> `ENV_FILE`. Fixed, and pinned by `test_env_file_resolves_to_the_backend_directory`, which was
+> mutation-tested against the reverted fix. **Any module move that changes a file's depth must
+> be checked for `__file__`-derived constants.**
+>
+> **Findings left open, all pre-existing:**
+> - `tests/planning/test_reconcile.py::test_reconcile_fails_and_releases_running_turn_when_docker_is_down`
+>   passes with its Docker patch deleted and a live daemon running. Its assertions all concern
+>   `_settle_interrupted_turns`, which runs before any Docker call. The test never exercises the
+>   premise in its name.
+> - The deferred `from app.tasks.service import ...` inside `_reject_abandoned_tasks` in
+>   `app/startup.py` may now be safe to hoist to module scope, since the cycle it plausibly
+>   dodged is cut. Unproven, and a behaviour change, so it did not ride in a move commit.
+> - `tests/controller/test_lifecycle.py` now tests startup composition and arguably belongs at
+>   `tests/test_startup.py`. Not moved.
+> - `PreviewStatus` from Phase 8 is still not added.
+>
+> **Method note.** A source, constant and OpenAPI oracle over 131 modules ran against every
+> slice, mutation-tested 6 of 6 first — including a negative control proving a legitimate
+> cross-module move is invisible to it. Slices 3, 4 and 5 were byte-identical moves by its
+> measure. Monkeypatch retargets must be verified by **deleting** the patch, not by aiming it
+> at a module that binds no such name: the latter raises from `monkeypatch.setattr` itself and
+> so fails for the wrong reason, which produced one incorrect "load-bearing" verdict.
+>
+> **Superseded prerequisite note.** Phases 1, 5 and 7 were all done before this phase started.
+> `controller/store/` was the worked example the plan named; `previews/` became a second one.
 
 ---
 
