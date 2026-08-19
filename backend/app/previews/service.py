@@ -42,6 +42,21 @@ from app.containers.hardened import (
 from app.containers.images import ensure_image
 from app.controller.config import get_controller_settings
 from app.controller.store import ControllerStore, SandboxWriterAdmissionError
+from app.labels import (
+    LABEL_CONTROLLER_MANAGED,
+    LABEL_DATA_MANAGED,
+    LABEL_EXPIRES_AT,
+    LABEL_KIND,
+    LABEL_MANAGED,
+    LABEL_PERSISTENT,
+    LABEL_PROJECT_ID,
+    LABEL_PROJECT_SOURCE,
+    LABEL_RUN_ID,
+    LABEL_SANDBOX_ID,
+    LABEL_SERVICE,
+    LABEL_SHARED_DATABASE,
+    LABEL_SHARED_DATABASE_IMAGE,
+)
 from app.previews.config import PreviewSettings
 from app.previews.detection import (
     ENVIRONMENT_FILE_NAMES,
@@ -109,19 +124,6 @@ from app.tasks.models import TaskStatus
 from app.tasks.service import transition_task
 
 
-LABEL_MANAGED = "orchestrator.preview.managed"
-LABEL_DATA_MANAGED = "orchestrator.preview.data-managed"
-LABEL_CONTROLLER_MANAGED = "orchestrator.managed"
-LABEL_SANDBOX_ID = "orchestrator.sandbox.id"
-LABEL_RUN_ID = "orchestrator.run.id"
-LABEL_KIND = "orchestrator.kind"
-LABEL_SERVICE = "orchestrator.preview.service"
-LABEL_EXPIRES_AT = "orchestrator.preview.expires-at"
-LABEL_PERSISTENT = "orchestrator.preview.persistent"
-LABEL_PROJECT_ID = "orchestrator.project.id"
-LABEL_SHARED_DATABASE = "orchestrator.shared-database"
-LABEL_SHARED_DATABASE_IMAGE = "orchestrator.shared-database.image"
-LABEL_PROJECT_SOURCE = "orchestrator.project.source"
 PREVIEW_CONTAINER_PREFIX = "orchestrator-preview-"
 SHARED_DATABASE_PREFIX = "orchestrator-shared-db-"
 MAX_CONTEXT_BYTES = 512 * 1024 * 1024

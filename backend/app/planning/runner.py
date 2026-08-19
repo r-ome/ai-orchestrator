@@ -8,9 +8,9 @@ from app.agents.config import get_agent_settings
 from app.agents.models import AgentProvider
 from app.agents.service import credential_volume
 from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
+from app.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND
 from app.planning.config import PlanningSettings
 from app.planning.models import PlanningRole
-from app.previews.service import LABEL_CONTROLLER_MANAGED, LABEL_KIND
 
 PLANNING_WORKSPACE = "/workspace"
 PLANNING_CREDENTIALS = "/auth"

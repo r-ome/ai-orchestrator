@@ -15,7 +15,7 @@ from docker.client import DockerClient
 from docker.errors import DockerException
 
 from app.controller.store import ControllerStore
-from app.previews.service import LABEL_CONTROLLER_MANAGED, LABEL_KIND
+from app.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND
 from app.planning.runner import LABEL_ROLE, LABEL_SESSION_ID
 from app.tasks.runner import LABEL_TASK_ID
 

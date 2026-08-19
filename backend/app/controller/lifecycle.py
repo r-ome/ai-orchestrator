@@ -9,14 +9,10 @@ from docker.errors import DockerException
 from app.agents.service import LABEL_RUN_ID as AGENT_RUN_ID
 from app.controller.config import ControllerSettings
 from app.controller.store import ControllerStore
+from app.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND, LABEL_RUN_ID
 from app.planning.models import PlanningStatus
 from app.planning.service import transition_planning_session
-from app.previews.service import (
-    LABEL_CONTROLLER_MANAGED,
-    LABEL_KIND,
-    LABEL_RUN_ID,
-    expire_previews,
-)
+from app.previews.service import expire_previews
 from app.sandboxes.orphans import discover_orphans
 
 
