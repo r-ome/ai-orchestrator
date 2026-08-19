@@ -33,7 +33,7 @@ def test_preparing_row_exists_before_any_docker_resource_is_created(
         ready=True,
     )
     monkeypatch.setattr(
-        "app.previews.service.inspect_registered_project",
+        "app.previews._shared.inspect_registered_project",
         lambda *_: project,
     )
     config = PreviewConfiguration(

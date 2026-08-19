@@ -21,10 +21,9 @@ from app.previews.models import (
     PreviewRuntime,
     StartPreviewRequest,
 )
+from app.previews.resources import _labels, _remove_resources
 from app.previews.service import (
     _available_host_port,
-    _labels,
-    _remove_resources,
     _start_compose,
     _start_dockerfile,
     _start_native,

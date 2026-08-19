@@ -19,8 +19,8 @@ from app.agents.config import AgentSettings
 from app.agents.models import AgentProvider, CreateAgentRequest
 from app.agents.service import create_agent
 from app.controller.store import ControllerStore
+from app.previews.errors import PreviewOperationError
 from app.previews.service import (
-    PreviewOperationError,
     _dependency_volume,
     _dependency_volume_name,
     _dependency_volume_ready,

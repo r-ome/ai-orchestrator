@@ -11,7 +11,7 @@ from starlette.websockets import WebSocketDisconnect
 from app.controller.store import ControllerStore, get_controller_store
 from app.docker_client import get_docker_client
 from app.main import app
-from app.previews.service import _record_preview_progress
+from app.previews.progress import _record_preview_progress
 from app.projects.models import ProjectRegistration
 from app.projects.service import managed_project_key
 
@@ -48,7 +48,7 @@ def _configure(monkeypatch: pytest.MonkeyPatch, *, sandbox_id: str) -> Controlle
     app.dependency_overrides[get_docker_client] = lambda: StubDockerClient()
     project = _ready_project(sandbox_id)
     monkeypatch.setattr(
-        "app.previews.service.inspect_registered_project",
+        "app.previews._shared.inspect_registered_project",
         lambda *_: project,
     )
     monkeypatch.setattr(

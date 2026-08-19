@@ -22,11 +22,11 @@ from app.previews.models import (
     PreviewPersistence,
     PreviewRuntime,
 )
+from app.previews.errors import PreviewOperationError
+from app.previews.progress import _record_preview_progress
 from app.previews.service import (
-    PreviewOperationError,
     _compose_environment,
     _native_runtime_environment,
-    _record_preview_progress,
     _service_order,
     _validate_compose_service,
 )

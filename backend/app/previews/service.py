@@ -2,16 +2,12 @@ import base64
 import hashlib
 import io
 import json
-import logging
 import re
 import secrets
 import shlex
 import socket
 import tarfile
 import time
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from threading import Lock
 from typing import Any
@@ -22,7 +18,6 @@ from docker.client import DockerClient
 from docker.errors import (
     APIError,
     BuildError,
-    ContainerError,
     DockerException,
     NotFound,
 )
@@ -31,18 +26,13 @@ from docker.types import Mount
 from requests.exceptions import ReadTimeout
 
 from app.containers.hardened import (
-    Capture,
     Egress,
     HardenedContainerSpec,
-    HardenedRunSpec,
     Rootfs,
     create_hardened,
-    run_hardened,
 )
-from app.containers.images import ensure_image
 from app.controller.config import get_controller_settings
 from app.controller.store import ControllerStore, SandboxWriterAdmissionError
-from app.errors import OperationError
 from app.labels import (
     LABEL_CONTROLLER_MANAGED,
     LABEL_DATA_MANAGED,
@@ -59,6 +49,15 @@ from app.labels import (
     LABEL_SHARED_DATABASE_IMAGE,
 )
 from app.previews.config import PreviewSettings
+from app.previews._shared import (
+    _expiry,
+    _now,
+    _project_key,
+    _ready_project,
+    _safe_relative_path,
+    _slug,
+    _time_after,
+)
 from app.previews.detection import (
     ENVIRONMENT_FILE_NAMES,
     capture_source_runtime_files,
@@ -70,6 +69,7 @@ from app.previews.detection import (
     parse_environment_pairs,
     proposal_digest,
 )
+from app.previews.errors import PreviewOperationError
 from app.previews.models import (
     ENVIRONMENT_VARIABLE_PATTERN,
     DatabaseSharingState,
@@ -96,13 +96,30 @@ from app.previews.models import (
     StartPreviewRequest,
     StopPreviewResponse,
 )
-from app.projects.service import (
-    ProjectOperationError,
-    inspect_registered_project,
-    managed_project_key,
+from app.previews.progress import (
+    ProgressReporter,
+    _ignore_progress,
+    _record_preview_progress,
+    _timed_step,
+)
+from app.previews.resources import (
+    PREVIEW_COMMAND_MAX_LOG_BYTES,
+    PREVIEW_COMMAND_TIMEOUT_SECONDS,
+    _decode_preview_archive,
+    _disconnect_foreign_endpoints,
+    _ensure_preview_image,
+    _existing_volume,
+    _labels,
+    _preview_containers,
+    _preview_images,
+    _preview_networks,
+    _preview_volumes,
+    _remove_resources,
+    _resources_for_run,
+    _run_preview_command,
+    _validate_built_image,
 )
 from app.sandboxes.git import run_git
-from app.sandboxes.naming import network as sandbox_network_name
 from app.sandboxes.database import (
     MYSQL_DATABASE,
     DatabaseConnectionRequest,
@@ -130,8 +147,6 @@ SHARED_DATABASE_PREFIX = "orchestrator-shared-db-"
 MAX_CONTEXT_BYTES = 512 * 1024 * 1024
 # Inspection commands were previously unbounded.  The archive cap covers a
 # 512 MiB Docker build context after base64 encoding, which stays text-safe.
-PREVIEW_COMMAND_TIMEOUT_SECONDS = 60
-PREVIEW_COMMAND_MAX_LOG_BYTES = 1_048_576
 PREVIEW_ARCHIVE_MAX_LOG_BYTES = 716_000_000
 # Raised at approval and again at attach, so one wording covers both.
 _SHARED_DATA_UNAVAILABLE = (
@@ -168,13 +183,6 @@ _NODE_RUNTIMES = {"astro", "vite", "nextjs"}
 _DEPENDENCY_READY_MARKER = ".orchestrator-install-complete"
 _COMMIT_PATTERN = re.compile(r"^[0-9a-f]{7,64}$")
 _preview_lock = Lock()
-logger = logging.getLogger("uvicorn.error")
-# Accepts an optional duration_ms kwarg so a step can report zero-duration reuse.
-ProgressReporter = Callable[..., None]
-
-
-class PreviewOperationError(OperationError):
-    """A preview operation failed."""
 
 
 def propose_preview(
@@ -978,85 +986,6 @@ def _preview_log_response(
         events=events,
         logs=logs,
     )
-
-
-def _record_preview_progress(
-    controller_store: ControllerStore,
-    *,
-    sandbox_id: str,
-    proposal_id: str,
-    preview_id: str,
-    status: str,
-    step: str,
-    message: str,
-    level: str = "info",
-    duration_ms: int | None = None,
-    started_at: str | None = None,
-) -> None:
-    limited_message = message[-16_384:]
-    log_method = logger.error if level == "error" else logger.info
-    log_method(
-        "Preview %s proposal %s [%s] %s",
-        preview_id,
-        proposal_id,
-        step,
-        limited_message,
-    )
-    payload: dict[str, Any] = {
-        "preview_id": preview_id,
-        "status": status,
-        "level": level,
-        "step": step,
-        "message": limited_message,
-    }
-    if duration_ms is not None:
-        payload["duration_ms"] = duration_ms
-    if started_at is not None:
-        payload["started_at"] = started_at
-    controller_store.event(
-        sandbox_id=sandbox_id,
-        run_id=proposal_id,
-        kind="preview.progress",
-        payload=payload,
-    )
-
-
-def _ignore_progress(
-    step: str,
-    message: str,
-    duration_ms: int | None = None,
-    started_at: str | None = None,
-) -> None:
-    del step, message, duration_ms, started_at
-
-
-@contextmanager
-def _timed_step(
-    report: ProgressReporter,
-    step: str,
-    message: str,
-) -> Iterator[Callable[[str], None]]:
-    """Times one preview-preparation step.
-
-    Emits a start event carrying `started_at`, then a completion event
-    carrying `duration_ms`. Yields a callable the caller can use to give the
-    completion event a result-specific message; called with an empty string,
-    the completion event reuses `message`. Emits nothing on failure — the
-    caller's own error handling already records a `failed` step.
-    """
-    started_at = _now()
-    started = time.monotonic()
-    report(step, message, started_at=started_at)
-    completion_message = message
-
-    def finish(text: str) -> None:
-        nonlocal completion_message
-        if text:
-            completion_message = text
-
-    yield finish
-    duration_ms = int((time.monotonic() - started) * 1000)
-    report(step, completion_message, duration_ms=duration_ms, started_at=started_at)
 
 
 def expire_previews(
@@ -2097,13 +2026,6 @@ def _release_shared_database(
     outcome["pending_cleanup"] = not applied
     _stop_idle_shared_server(docker_client, controller_store, project_key)
     return outcome
-
-
-def _existing_volume(docker_client: DockerClient, name: str) -> Any | None:
-    try:
-        return docker_client.volumes.get(name)
-    except NotFound:
-        return None
 
 
 def _shared_server_is_idle(
@@ -3179,70 +3101,6 @@ def _command(value: Any) -> str | list[str] | None:
     raise PreviewOperationError(422, "Compose command or entrypoint is invalid")
 
 
-def _ensure_preview_image(docker_client: DockerClient, image: str) -> None:
-    try:
-        ensure_image(docker_client, image)
-    except DockerException as error:
-        raise PreviewOperationError(424, f"Preview image '{image}' is unavailable") from error
-
-
-def _run_preview_command(
-    docker_client: DockerClient,
-    *,
-    image: str,
-    command: list[str],
-    environment: dict[str, str] | None = None,
-    volumes: dict[str, Any] | None = None,
-    tmpfs_size: str = "256m",
-    max_log_bytes: int = PREVIEW_COMMAND_MAX_LOG_BYTES,
-) -> str:
-    """Run one isolated preview helper and retain Docker's failed-run error."""
-    result = run_hardened(
-        docker_client,
-        HardenedRunSpec(
-            image=image,
-            command=command,
-            environment=environment or {},
-            volumes=volumes or {},
-            egress=Egress.DENIED,
-            tmpfs_size=tmpfs_size,
-            capture=Capture.SEPARATE,
-            timeout_seconds=PREVIEW_COMMAND_TIMEOUT_SECONDS,
-            max_log_bytes=max_log_bytes,
-        ),
-    )
-    if result.timed_out:
-        raise PreviewOperationError(
-            408,
-            f"Preview helper command exceeded {PREVIEW_COMMAND_TIMEOUT_SECONDS} seconds",
-        )
-    if result.exit_code != 0:
-        raise ContainerError(None, result.exit_code, command, image, result.stderr)
-    return result.stdout
-
-
-def _decode_preview_archive(output: str) -> bytes:
-    try:
-        return base64.b64decode(output, validate=True)
-    except ValueError as error:
-        raise PreviewOperationError(502, "Sandbox inspection returned invalid data") from error
-
-
-def _validate_built_image(image: Any, settings: PreviewSettings) -> None:
-    image.reload()
-    size = int(image.attrs.get("Size") or 0)
-    if size <= settings.maximum_built_image_bytes:
-        return
-    try:
-        image.remove(force=True)
-    except DockerException:
-        pass
-    raise PreviewOperationError(
-        422,
-        f"Built preview image exceeds {settings.maximum_built_image_bytes} bytes",
-    )
-
-
 def _network(
     docker_client: DockerClient,
     run_id: str,
@@ -3433,157 +3291,6 @@ def _data_volume(
     )
 
 
-def _labels(
-    sandbox_id: str,
-    run_id: str,
-    expires_at: str | None,
-) -> dict[str, str]:
-    return {
-        LABEL_MANAGED: "true",
-        LABEL_CONTROLLER_MANAGED: "true",
-        LABEL_SANDBOX_ID: sandbox_id,
-        LABEL_RUN_ID: run_id,
-        LABEL_KIND: "preview",
-        LABEL_EXPIRES_AT: expires_at or "",
-    }
-
-
-def _preview_containers(
-    docker_client: DockerClient,
-    run_id: str,
-    *,
-    all: bool,
-) -> list[Container]:
-    return docker_client.containers.list(
-        all=all,
-        filters={"label": [f"{LABEL_MANAGED}=true", f"{LABEL_RUN_ID}={run_id}"]},
-    )
-
-
-def _preview_networks(docker_client: DockerClient, run_id: str) -> list[Any]:
-    return docker_client.networks.list(
-        filters={"label": [f"{LABEL_MANAGED}=true", f"{LABEL_RUN_ID}={run_id}"]}
-    )
-
-
-def _preview_volumes(docker_client: DockerClient, run_id: str) -> list[Any]:
-    return docker_client.volumes.list(
-        filters={
-            "label": [f"{LABEL_DATA_MANAGED}=true", f"{LABEL_RUN_ID}={run_id}"]
-        }
-    )
-
-
-def _preview_images(docker_client: DockerClient, run_id: str) -> list[Any]:
-    return docker_client.images.list(
-        filters={
-            "label": [f"{LABEL_MANAGED}=true", f"{LABEL_RUN_ID}={run_id}"]
-        }
-    )
-
-
-def _resources_for_run(docker_client: DockerClient, run_id: str) -> dict[str, Any]:
-    containers = _preview_containers(docker_client, run_id, all=True)
-    borrowed_networks: list[Any] = []
-    if containers:
-        labels = (containers[0].attrs.get("Config") or {}).get("Labels") or {}
-        sandbox_id = str(labels.get(LABEL_SANDBOX_ID) or "")
-        if sandbox_id:
-            try:
-                borrowed_networks.append(
-                    docker_client.networks.get(sandbox_network_name(sandbox_id))
-                )
-            except NotFound:
-                pass
-    return {
-        "containers": containers,
-        "networks": _preview_networks(docker_client, run_id),
-        "volumes": _preview_volumes(docker_client, run_id),
-        "images": _preview_images(docker_client, run_id),
-        "borrowed_networks": borrowed_networks,
-    }
-
-
-def _disconnect_foreign_endpoints(network: Any) -> None:
-    """Detaches containers the run does not own, such as a shared database.
-
-    Docker refuses to remove a network that still has endpoints, and the shared
-    server outlives the run, so it is disconnected instead of removed.
-    """
-    try:
-        network.reload()
-    except DockerException:
-        return
-    for container_id in (network.attrs.get("Containers") or {}):
-        try:
-            network.disconnect(container_id, force=True)
-        except DockerException:
-            continue
-
-
-def _remove_resources(
-    resources: dict[str, Any],
-    *,
-    remove_data_volumes: bool,
-) -> dict[str, int]:
-    counts = {"containers": 0, "networks": 0, "volumes": 0, "images": 0}
-    for network in resources.get("borrowed_networks") or []:
-        for container in resources.get("containers") or []:
-            try:
-                network.disconnect(container, force=True)
-            except DockerException:
-                continue
-    for container in resources.get("containers") or []:
-        try:
-            # Docker removes anonymous volumes only; named sandbox and mirror volumes survive.
-            container.remove(force=True, v=True)
-            counts["containers"] += 1
-        except NotFound:
-            counts["containers"] += 1
-        except DockerException:
-            continue
-    for network in resources.get("networks") or []:
-        _disconnect_foreign_endpoints(network)
-        try:
-            network.remove()
-            counts["networks"] += 1
-        except NotFound:
-            counts["networks"] += 1
-        except DockerException:
-            continue
-    for volume in resources.get("volumes") or []:
-        labels = volume.attrs.get("Labels") or {}
-        if labels.get(LABEL_PERSISTENT) == "true":
-            continue
-        database_data = labels.get(LABEL_SERVICE) in {
-            "database",
-            "database-credentials",
-        }
-        if not remove_data_volumes and not database_data:
-            continue
-        try:
-            volume.remove(force=True)
-            counts["volumes"] += 1
-        except NotFound:
-            counts["volumes"] += 1
-        except DockerException:
-            continue
-    for image in resources.get("images") or []:
-        try:
-            image.remove(force=True)
-            counts["images"] += 1
-        except (AttributeError, NotFound):
-            try:
-                image_id = getattr(image, "id", str(image))
-                image.client.images.remove(image=image_id, force=True)
-                counts["images"] += 1
-            except (AttributeError, DockerException):
-                continue
-        except DockerException:
-            continue
-    return counts
-
-
 def _run_from_record(
     docker_client: DockerClient,
     project_name: str,
@@ -3638,28 +3345,6 @@ def _container_service(container: Container) -> str:
     return str(labels.get(LABEL_SERVICE) or "app")
 
 
-def _ready_project(
-    docker_client: DockerClient,
-    project_name: str,
-    controller_store: ControllerStore,
-) -> Any:
-    try:
-        project = inspect_registered_project(
-            docker_client,
-            project_name,
-            controller_store,
-        )
-    except ProjectOperationError as error:
-        raise PreviewOperationError(error.status_code, error.detail) from error
-    if not project.ready:
-        raise PreviewOperationError(409, f"Project '{project_name}' is not ready")
-    return project
-
-
-def _project_key(project: Any) -> str:
-    return managed_project_key(str(project.source_path))
-
-
 def _original_baseline(project: Any, settings: PreviewSettings) -> dict[str, bytes]:
     try:
         return capture_source_runtime_files(
@@ -3675,30 +3360,3 @@ def _available_host_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as candidate:
         candidate.bind(("127.0.0.1", 0))
         return int(candidate.getsockname()[1])
-
-
-def _safe_relative_path(value: str, *, field: str, allow_dot: bool = False) -> str:
-    path = PurePosixPath(value)
-    if path.is_absolute() or ".." in path.parts:
-        raise PreviewOperationError(422, f"{field} must stay inside the sandbox")
-    text = path.as_posix()
-    if not text or (text == "." and not allow_dot):
-        raise PreviewOperationError(422, f"{field} is required")
-    return text
-
-
-def _slug(value: str) -> str:
-    return re.sub(r"[^a-z0-9_.-]+", "-", value.casefold()).strip("-._") or "data"
-
-
-def _expiry(minutes: int) -> str | None:
-    return None if minutes == 0 else _time_after(minutes=minutes)
-
-
-def _time_after(*, seconds: int = 0, minutes: int = 0) -> str:
-    value = datetime.now(UTC) + timedelta(seconds=seconds, minutes=minutes)
-    return value.isoformat().replace("+00:00", "Z")
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")

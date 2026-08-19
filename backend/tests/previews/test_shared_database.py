@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.controller.store import ControllerStore
 from app.previews.detection import proposal_digest
+from app.previews.errors import PreviewOperationError
 from app.previews.models import (
     PreviewConfiguration,
     PreviewDependencyService,
@@ -20,7 +21,6 @@ from app.previews.models import (
     PreviewSharing,
 )
 from app.previews.service import (
-    PreviewOperationError,
     _attach_shared_database,
     _identifier,
     _release_shared_database,

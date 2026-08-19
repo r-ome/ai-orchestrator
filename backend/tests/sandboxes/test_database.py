@@ -9,6 +9,7 @@ import pytest
 import app.previews.service as preview_service
 import app.sandboxes.database as sandbox_database
 from app.previews.config import get_preview_settings
+from app.previews.errors import PreviewOperationError
 from app.previews.models import (
     PreviewConfiguration,
     PreviewDependencyService,
@@ -18,7 +19,7 @@ from app.previews.models import (
     PreviewServiceType,
     PreviewSharing,
 )
-from app.previews.service import PreviewOperationError, _validate_sharing
+from app.previews.service import _validate_sharing
 from app.sandboxes.database import (
     MYSQL_DATABASE,
     POSTGRESQL_DATABASE,

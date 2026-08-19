@@ -32,8 +32,8 @@ from app.agents.models import (
     StopAgentResponse,
 )
 from app.previews.config import get_preview_settings
+from app.previews.errors import PreviewOperationError
 from app.previews.service import (
-    PreviewOperationError,
     _dependency_volume,
     _lockfile_digest,
     _volume_runtime_files,

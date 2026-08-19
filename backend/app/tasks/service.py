@@ -747,7 +747,8 @@ def _stop_task_preview(
     """
     # Imported here because app.previews.service imports transition_task from
     # this module; a module-level import would close the cycle.
-    from app.previews.service import PreviewOperationError, stop_preview
+    from app.previews.errors import PreviewOperationError
+    from app.previews.service import stop_preview
 
     active = controller_store.active_preview(task.sandbox_id)
     if active is None or str(active.get("task_id") or "") != task.id:

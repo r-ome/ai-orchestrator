@@ -26,6 +26,7 @@ from app.log_stream import (
     set_log_read_timeout,
 )
 from app.previews.config import PreviewSettings, get_preview_settings
+from app.previews.errors import PreviewOperationError
 from app.previews.models import (
     ImportProjectSecretsResponse,
     KeepAliveRequest,
@@ -42,7 +43,6 @@ from app.previews.models import (
     StopPreviewResponse,
 )
 from app.previews.service import (
-    PreviewOperationError,
     database_sharing_state,
     delete_project_secret,
     get_current_preview,

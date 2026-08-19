@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from app.controller.store import ControllerStore
 from app.previews.detection import parse_environment_pairs, proposal_digest
+from app.previews.errors import PreviewOperationError
 from app.previews.models import (
     ImportProjectSecretsResponse,
     PreviewConfiguration,
@@ -14,7 +15,6 @@ from app.previews.models import (
     PreviewNetworkAccess,
 )
 from app.previews.service import (
-    PreviewOperationError,
     _environment_status,
     _project_secrets_response,
     _compose_service_environment,

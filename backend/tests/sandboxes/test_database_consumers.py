@@ -12,6 +12,7 @@ from app.previews.models import (
     PreviewRuntime,
 )
 from app.previews import service as preview_service
+from app.previews import resources as preview_resources
 from app.delegation.packet import ResolvedVerification
 from app.delegation.verification import VerificationSettings, run_verification
 from app.sandboxes.manifest import SandboxManifest, write_manifest
@@ -136,7 +137,7 @@ def test_task_archive_preview_mounts_the_same_sandbox_sqlite_database(
             container_port=3000,
             network_access=PreviewNetworkAccess.INTERNET,
         ),
-        preview_service._labels(sandbox_id, run_id, None),
+        preview_resources._labels(sandbox_id, run_id, None),
         run_id,
         43000,
         controller_store=store,
@@ -162,7 +163,7 @@ def test_task_archive_preview_mounts_the_same_sandbox_sqlite_database(
     }
     assert not any("-database" in volume.name for volume in resources["volumes"])
 
-    preview_service._remove_resources(resources, remove_data_volumes=True)
+    preview_resources._remove_resources(resources, remove_data_volumes=True)
 
     assert fake_docker_client.volumes.get(db_data_volume(sandbox_id)).removed is False
     assert fake_docker_client.networks.get(network(sandbox_id)).removed is False
@@ -228,7 +229,7 @@ def test_server_preview_borrows_and_disconnects_the_persistent_sandbox_network(
             container_port=3000,
             network_access=PreviewNetworkAccess.INTERNET,
         ),
-        preview_service._labels(sandbox_id, run_id, None),
+        preview_resources._labels(sandbox_id, run_id, None),
         run_id,
         43001,
         controller_store=store,
@@ -243,7 +244,7 @@ def test_server_preview_borrows_and_disconnects_the_persistent_sandbox_network(
         call for call in calls if str(call.get("name", "")).endswith("-app")
     )["environment"]
 
-    preview_service._remove_resources(resources, remove_data_volumes=True)
+    preview_resources._remove_resources(resources, remove_data_volumes=True)
 
     assert sandbox_network.connections == []
     assert sandbox_network.removed is False
