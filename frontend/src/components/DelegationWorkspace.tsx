@@ -37,6 +37,7 @@ import {
   EMPTY_DATA,
   selectDisabledTabs,
   selectPhaseTab,
+  selectReviewState,
   selectTabs,
   selectTurnToWatch,
   selectWorkspaceRows,
@@ -945,26 +946,12 @@ export function DelegationPanel({
   } = workspace
 
   const [changeInstructions, setChangeInstructions] = useState('')
-  const latestChange = delegation?.changes[delegation.changes.length - 1] ?? null
-  const runningChange =
-    delegation?.changes.find((change) => change.status === 'running') ?? null
-  const latestIncorporatedChange =
-    delegation?.changes
-      .slice()
-      .reverse()
-      .find(
-        (change) => change.status === 'awaiting_review' || change.status === 'completed',
-      ) ?? null
-  const reviewPredatesChange = Boolean(
-    latestIncorporatedChange &&
-      delegation?.review?.settled_at &&
-      latestIncorporatedChange.created_at > delegation.review.settled_at,
-  )
-
-  const featureApproved =
-    delegation?.review?.status === 'completed' &&
-    delegation.review.approved === true &&
-    !reviewPredatesChange
+  const {
+    latestChange,
+    runningChange,
+    reviewPredatesChange,
+    featureApproved,
+  } = selectReviewState(delegation)
 
   return (
     <div className="agent-delegation-workspace">

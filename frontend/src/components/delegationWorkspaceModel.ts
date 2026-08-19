@@ -34,6 +34,20 @@ export interface WorkspaceRows {
   runningChange: DelegationView['changes'][number] | null
 }
 
+export interface ReviewState {
+  latestChange: DelegationView['changes'][number] | null
+  runningChange: DelegationView['changes'][number] | null
+  latestIncorporatedChange: DelegationView['changes'][number] | null
+  reviewPredatesChange: boolean
+  featureApproved: boolean
+}
+
+function selectRunningChange(
+  delegation: DelegationView | null,
+): DelegationView['changes'][number] | null {
+  return delegation?.changes.find((change) => change.status === 'running') ?? null
+}
+
 export function selectWorkspaceRows(data: WorkspaceData | null): WorkspaceRows {
   const sessionContext = data?.context ?? null
   const delegation = data?.delegation ?? null
@@ -44,7 +58,37 @@ export function selectWorkspaceRows(data: WorkspaceData | null): WorkspaceRows {
     delegation,
     generatingContext: sessionContext?.status === 'generating' ? sessionContext : null,
     runningItem: delegation?.items.find((entry) => entry.state === 'running') ?? null,
-    runningChange: delegation?.changes.find((change) => change.status === 'running') ?? null,
+    runningChange: selectRunningChange(delegation),
+  }
+}
+
+export function selectReviewState(delegation: DelegationView | null): ReviewState {
+  const latestChange = delegation?.changes[delegation.changes.length - 1] ?? null
+  const runningChange = selectRunningChange(delegation)
+  const latestIncorporatedChange =
+    delegation?.changes
+      .slice()
+      .reverse()
+      .find(
+        (change) => change.status === 'awaiting_review' || change.status === 'completed',
+      ) ?? null
+  const reviewPredatesChange = Boolean(
+    latestIncorporatedChange &&
+      delegation?.review?.settled_at &&
+      latestIncorporatedChange.created_at > delegation.review.settled_at,
+  )
+
+  const featureApproved =
+    delegation?.review?.status === 'completed' &&
+    delegation.review.approved === true &&
+    !reviewPredatesChange
+
+  return {
+    latestChange,
+    runningChange,
+    latestIncorporatedChange,
+    reviewPredatesChange,
+    featureApproved,
   }
 }
 

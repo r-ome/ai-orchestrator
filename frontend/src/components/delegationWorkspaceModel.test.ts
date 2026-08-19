@@ -11,6 +11,7 @@ import {
   selectCompletedItems,
   selectDisabledTabs,
   selectPhaseTab,
+  selectReviewState,
   selectTabs,
   selectTurnToWatch,
   selectWorkspaceRows,
@@ -191,6 +192,83 @@ describe('selectWorkspaceRows', () => {
       context: null,
       generatingContext: context,
     })
+  })
+})
+
+describe('selectReviewState', () => {
+  it('returns an empty review state without a delegation', () => {
+    expect(selectReviewState(null)).toEqual({
+      latestChange: null,
+      runningChange: null,
+      latestIncorporatedChange: null,
+      reviewPredatesChange: false,
+      featureApproved: false,
+    })
+  })
+
+  it('selects the last incorporated change and keeps a later review requirement', () => {
+    const firstIncorporatedChange = makeChange({
+      id: 'change-awaiting-review',
+      status: 'awaiting_review',
+      created_at: '2026-08-18T00:00:00Z',
+    })
+    const lastIncorporatedChange = makeChange({
+      id: 'change-completed',
+      status: 'completed',
+      created_at: '2026-08-22T00:00:00Z',
+    })
+    const runningChange = makeChange({
+      id: 'change-running',
+      status: 'running',
+      created_at: '2026-08-23T00:00:00Z',
+    })
+    const latestChange = makeChange({
+      id: 'change-failed',
+      status: 'failed',
+      created_at: '2026-08-24T00:00:00Z',
+    })
+    const delegation = makeDelegation({
+      review: makeReview({ approved: true, settled_at: '2026-08-20T00:00:00Z' }),
+      changes: [
+        firstIncorporatedChange,
+        lastIncorporatedChange,
+        runningChange,
+        latestChange,
+      ],
+    })
+
+    expect(selectReviewState(delegation)).toEqual({
+      latestChange,
+      runningChange,
+      latestIncorporatedChange: lastIncorporatedChange,
+      reviewPredatesChange: true,
+      featureApproved: false,
+    })
+  })
+
+  it('approves a completed review when its incorporated change is earlier', () => {
+    expect(
+      selectReviewState(
+        makeDelegation({
+          review: makeReview({ approved: true, settled_at: '2026-08-20T00:00:00Z' }),
+          changes: [makeChange({ created_at: '2026-08-18T00:00:00Z' })],
+        }),
+      ).featureApproved,
+    ).toBe(true)
+  })
+
+  it.each([
+    ['generating'],
+    ['failed'],
+  ] as const)('does not approve a %s review that still carries approved', (status) => {
+    expect(
+      selectReviewState(
+        makeDelegation({
+          review: makeReview({ status, approved: true, settled_at: null }),
+          changes: [],
+        }),
+      ).featureApproved,
+    ).toBe(false)
   })
 })
 
