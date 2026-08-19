@@ -47,7 +47,7 @@ from app.sandboxes.mirror import (
     validate_workspace_import,
     verify_workspace_identity,
 )
-from app.sandboxes.models import SandboxLifecycleStatus
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.platform.naming import (
     database_name,
     db_data_volume,

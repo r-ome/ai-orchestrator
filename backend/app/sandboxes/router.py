@@ -14,7 +14,7 @@ from app.sandboxes.manifest import (
     SandboxManifest,
     read_manifest,
 )
-from app.sandboxes.models import SandboxLifecycleStatus
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.sandboxes.database import SandboxDatabaseError
 from app.sandboxes.engine_detection import normalize_confirmable_engine
 from app.sandboxes import service

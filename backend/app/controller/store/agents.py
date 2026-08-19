@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Any
 
-from app.sandboxes.models import SandboxLifecycleStatus
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 
 from ._shared import _now, _row
 from .errors import ActiveAgentRunExists, AgentWriterSessionExists, SandboxWriterAdmissionError
@@ -226,4 +226,3 @@ class AgentsMixin:
                 lifecycle_status=SandboxLifecycleStatus(str(lifecycle_status)),
                 desired_state=str(desired_state),
             )
-

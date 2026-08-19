@@ -14,7 +14,7 @@ from app.sandboxes.manifest import (
     transition_sandbox_lifecycle,
     write_manifest,
 )
-from app.sandboxes.models import SandboxLifecycleStatus
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 
 
 def pytest_configure(config: pytest.Config) -> None:

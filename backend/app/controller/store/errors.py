@@ -1,7 +1,7 @@
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from app.sandboxes.models import SandboxLifecycleStatus
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 
 class SandboxAdmissionError(RuntimeError):
     """Base error for persisted sandbox admission conflicts."""

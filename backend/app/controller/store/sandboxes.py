@@ -4,7 +4,7 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any
 
-from app.sandboxes.models import SandboxLifecycleStatus, source_statuses
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus, source_statuses
 
 from ._shared import _ensure_immutable_manifest_value, _now, _row
 from .errors import (

@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from app.controller.store import ControllerStore
-from app.sandboxes.models import SandboxLifecycleStatus, source_statuses
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus, source_statuses
 from app.platform.naming import validate_feature_key
 
 

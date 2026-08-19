@@ -1,4 +1,4 @@
-from app.sandboxes.models import (
+from app.controller.store.lifecycle_status import (
     SANDBOX_LIFECYCLE_TRANSITIONS,
     SandboxLifecycleStatus,
     source_statuses,

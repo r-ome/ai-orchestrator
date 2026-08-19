@@ -36,7 +36,7 @@ from app.sandboxes.manifest import (
     transition_sandbox_lifecycle,
     write_manifest,
 )
-from app.sandboxes.models import SandboxLifecycleStatus
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.sandboxes.publish import PullRequest, PublishError, PublishOutcome
 from conftest import mark_sandbox_legacy, register_ready_v1_sandbox
 

@@ -27,7 +27,7 @@ from app.sandboxes import router as sandbox_router
 from app.sandboxes import service as sandbox_service
 from app.sandboxes.engine_detection import EngineDetection, NO_DATABASE
 from app.sandboxes.manifest import read_manifest, transition_sandbox_lifecycle
-from app.sandboxes.models import SandboxLifecycleStatus
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.platform.naming import ownership_labels, workspace_volume
 from conftest import register_ready_v1_sandbox
 

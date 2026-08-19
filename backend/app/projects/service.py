@@ -6,7 +6,7 @@ from docker.errors import NotFound
 from app.controller.store import ControllerStore
 from app.platform.errors import OperationError
 from app.projects.models import ProjectRegistration
-from app.sandboxes.models import SandboxLifecycleStatus
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.sandboxes.git import run_git
 from app.platform.naming import validate_ownership
 

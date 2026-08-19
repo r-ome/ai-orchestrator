@@ -10,7 +10,7 @@ from app.sandboxes.manifest import (
     transition_sandbox_lifecycle,
     write_manifest,
 )
-from app.sandboxes.models import SandboxLifecycleStatus
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 
 
 def _store_with_sandbox(tmp_path: Path) -> ControllerStore:

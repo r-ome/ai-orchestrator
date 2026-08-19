@@ -21,7 +21,7 @@ from app.sandboxes.manifest import (
     transition_sandbox_lifecycle,
     write_manifest,
 )
-from app.sandboxes.models import SandboxLifecycleStatus
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.platform.naming import mirror_ownership_labels, ownership_labels
 from app.sandboxes.git import (
     GitNetworkMode,
