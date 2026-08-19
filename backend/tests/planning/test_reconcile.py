@@ -1,16 +1,13 @@
 from pathlib import Path
 
-import pytest
-
 from conftest import register_ready_v1_sandbox
-from docker.errors import DockerException
 
 from app.startup import reconcile_controller_state
 from app.controller.store import ControllerStore
 
 
-def test_reconcile_fails_and_releases_running_turn_when_docker_is_down(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_reconcile_settles_an_interrupted_turn_and_releases_it(
+    tmp_path: Path,
 ) -> None:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
@@ -36,11 +33,6 @@ def test_reconcile_fails_and_releases_running_turn_when_docker_is_down(
         max_review_turns=3,
     )
     assert store.claim_planning_turn("session-1")
-    monkeypatch.setattr(
-        "app.startup.docker.from_env",
-        lambda: (_ for _ in ()).throw(DockerException("daemon unavailable")),
-    )
-
     counts = reconcile_controller_state(store)
 
     session = store.planning_session("session-1")

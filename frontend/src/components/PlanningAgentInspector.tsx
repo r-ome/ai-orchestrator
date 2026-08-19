@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchPlanningMessageRaw, type PlanningMessage } from '../api/planning'
-import type { PhaseAgent } from '../pages/planningSessionModel'
+import type { PhaseAgent } from './planningAgentInspectorModel'
 
 type InspectorAgentRole = 'clarifier' | 'planner' | 'reviewer' | 'work-item'
 type InspectorTab = 'history' | 'raw' | 'controls'

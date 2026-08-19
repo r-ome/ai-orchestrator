@@ -17,17 +17,6 @@ export type PendingDialog = 'proceed' | 'cancel' | null
  */
 export type TabId = 'clarifier' | 'review' | 'spec' | DelegationTabId | 'preview'
 
-export interface PhaseAgent {
-  id: string
-  role: 'clarifier' | 'planner' | 'reviewer' | 'work-item'
-  label: string
-  detail: string
-  provider: string | null
-  model: string | null
-  reasoningEffort?: string | null
-  state: 'active' | 'done' | 'pending'
-}
-
 export function thinkingRole(status: PlanningStatus): string | null {
   if (status === 'clarifying' || status === 'awaiting_confirmation') {
     return 'Clarifier'

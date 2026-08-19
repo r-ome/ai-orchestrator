@@ -24,6 +24,7 @@ import {
 } from '../components/DelegationWorkspace'
 import PlanSpecView from '../components/PlanSpecView'
 import { PlanningAgentInspector } from '../components/PlanningAgentInspector'
+import type { PhaseAgent } from '../components/planningAgentInspectorModel'
 import PlanningStatusBadge from '../components/PlanningStatusBadge'
 import { useApiResource } from '../hooks/useApiResource'
 import { ClarifierPanel } from './ClarifierPanel'
@@ -35,7 +36,6 @@ import {
   splitMessages,
   thinkingRole,
   type PendingDialog,
-  type PhaseAgent,
   type TabId,
 } from './planningSessionModel'
 
