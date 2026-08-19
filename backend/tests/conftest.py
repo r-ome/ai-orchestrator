@@ -6,6 +6,13 @@ import pytest
 from docker.errors import APIError, ImageNotFound, NotFound
 
 from app.controller.config import get_controller_settings
+from app.controller.store import ControllerStore
+from app.sandboxes.manifest import (
+    SandboxManifest,
+    transition_sandbox_lifecycle,
+    write_manifest,
+)
+from app.sandboxes.models import SandboxLifecycleStatus
 
 
 class FakeDockerResource:
@@ -413,6 +420,77 @@ def override_docker_client(
             app.dependency_overrides.pop(get_docker_client, None)
         else:
             app.dependency_overrides[get_docker_client] = previous
+
+
+def register_ready_v1_sandbox(
+    store: ControllerStore,
+    *,
+    sandbox_id: str,
+    project_id: str,
+    project_name: str,
+    volume_name: str,
+    created_at: str = "",
+    remote_url: str | None = None,
+    default_branch: str = "main",
+    mirror_volume: str | None = None,
+    feature_key: str = "test-sandbox",
+    feature_title: str | None = None,
+    desired_state: str = "active",
+    lifecycle_status: SandboxLifecycleStatus = SandboxLifecycleStatus.READY,
+    base_ref: str | None = None,
+    created_base_commit: str | None = None,
+    current_base_commit: str | None = None,
+    feature_branch: str | None = None,
+    db_engine: str | None = None,
+    db_name: str | None = None,
+    db_data_volume: str | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """Register a remote project and a managed sandbox in a lifecycle state.
+
+    V1 sandboxes require a remote project, a manifest, and a valid lifecycle
+    transition. Defaults model a ready sandbox while optional manifest fields
+    let focused tests set up the state their code path reads.
+    """
+    store.register_v1_project(
+        project_id=project_id,
+        remote_url=remote_url or f"https://example.test/{project_id}.git",
+        default_branch=default_branch,
+        mirror_volume=mirror_volume or f"prj-{project_id[:12]}-mirror",
+        created_at=created_at,
+    )
+    registration = store.register_v1_sandbox(
+        sandbox_id=sandbox_id,
+        project_id=project_id,
+        project_name=project_name,
+        volume_name=volume_name,
+        created_at=created_at,
+    )
+    manifest = SandboxManifest(
+        sandbox_id=sandbox_id,
+        lifecycle_version="v1",
+        feature_key=feature_key,
+        feature_title=feature_title,
+        desired_state=desired_state,
+        lifecycle_status=lifecycle_status,
+        base_ref=base_ref,
+        created_base_commit=created_base_commit,
+        current_base_commit=current_base_commit,
+        feature_branch=feature_branch,
+        db_engine=db_engine,
+        db_name=db_name,
+        db_data_volume=db_data_volume,
+    )
+    if not registration[1]:
+        return registration
+    if lifecycle_status is SandboxLifecycleStatus.CREATING:
+        write_manifest(store, manifest)
+    else:
+        assert transition_sandbox_lifecycle(
+            store,
+            manifest,
+            to_status=lifecycle_status,
+        )
+    return registration
 
 
 @pytest.fixture(autouse=True)

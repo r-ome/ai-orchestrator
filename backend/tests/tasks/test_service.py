@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+
+from conftest import register_ready_v1_sandbox
 from docker.errors import APIError
 
 from app.controller.store import ControllerStore, OpenTaskExists
@@ -480,13 +482,12 @@ def test_initial_migration_creates_task_constraints(tmp_path: Path) -> None:
     store = ControllerStore(database_path)
     store.initialize()
     store.initialize()
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id="sandbox-1",
         project_id="project-1",
         project_name="sample-sandbox-1",
-        source_path="/projects/sample",
         volume_name="orchestrator-project-sample-1",
-        status="ready",
         created_at="2026-01-01T00:00:00Z",
     )
 

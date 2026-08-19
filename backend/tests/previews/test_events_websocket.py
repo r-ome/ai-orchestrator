@@ -4,6 +4,8 @@ from collections.abc import Iterator
 from types import SimpleNamespace
 
 import pytest
+
+from conftest import register_ready_v1_sandbox
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -57,13 +59,12 @@ def _configure(monkeypatch: pytest.MonkeyPatch, *, sandbox_id: str) -> Controlle
     # `_approve` below needs the sandbox row to exist, because
     # review_rounds.sandbox_id is a NOT NULL foreign key. Derive the project id
     # the way the service does, so both inserts agree.
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id=sandbox_id,
         project_id=managed_project_key(project.source_path),
         project_name=project.name,
-        source_path=project.source_path,
         volume_name=project.volume_name,
-        status="ready",
         created_at=project.created_at,
     )
     return store

@@ -2,6 +2,8 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+
+from conftest import register_ready_v1_sandbox
 from docker.errors import NotFound
 from pydantic import ValidationError
 
@@ -44,14 +46,14 @@ def _store(tmp_path: Path) -> ControllerStore:
         (GUEST, "sample-sandbox-2"),
         (OTHER, "sample-sandbox-3"),
     ):
-        store.register_sandbox(
+        register_ready_v1_sandbox(
+            store,
             sandbox_id=sandbox_id,
             project_id=PROJECT_KEY,
             project_name=name,
-            source_path="/projects/sample",
             volume_name=f"orchestrator-project-{name}",
-            status="ready",
             created_at="2026-08-04T00:00:00Z",
+            feature_key=f"test-{sandbox_id[:12]}",
         )
     return store
 

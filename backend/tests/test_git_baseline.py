@@ -6,6 +6,8 @@ from uuid import uuid4
 
 import docker
 import pytest
+
+from conftest import register_ready_v1_sandbox
 from docker.errors import ContainerError, NotFound
 
 from app.agents.config import AgentSettings
@@ -168,13 +170,12 @@ def test_initial_migration_supports_git_baselines_and_is_idempotent(
     store.initialize()
     store.initialize()
 
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id="sandbox-1",
         project_id="project-1",
         project_name="sample-sandbox-1",
-        source_path="/projects/sample",
         volume_name="orchestrator-project-sample-1",
-        status="ready",
         created_at="2026-01-01T00:00:00Z",
     )
     store.set_sandbox_baseline_commit(

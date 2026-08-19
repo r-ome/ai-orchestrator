@@ -4,6 +4,8 @@ from typing import Any
 
 import pytest
 
+from conftest import register_ready_v1_sandbox
+
 from app.controller.store import ChangeRequestRunning, ControllerStore
 from app.delegation import change_requests, service
 from app.delegation.models import (
@@ -31,13 +33,12 @@ SETTINGS = CodingTurnSettings(
 def _store(tmp_path: Path) -> tuple[ControllerStore, str]:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id="sandbox-1",
         project_id="project-1",
         project_name="sample",
-        source_path="/projects/sample",
         volume_name="sample-volume",
-        status="ready",
         created_at="2026-08-10T00:00:00Z",
     )
     store.create_planning_session(

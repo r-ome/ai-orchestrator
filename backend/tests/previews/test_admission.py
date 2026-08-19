@@ -4,6 +4,8 @@ from typing import Any
 
 import pytest
 
+from conftest import register_ready_v1_sandbox
+
 from app.controller.store import ControllerStore
 from app.previews.config import get_preview_settings
 from app.previews.models import (
@@ -43,13 +45,12 @@ def test_preparing_row_exists_before_any_docker_resource_is_created(
         host_port=43000,
     )
     digest = "d" * 64
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id=project.sandbox_id,
         project_id="project-1",
         project_name=project.name,
-        source_path=project.source_path,
         volume_name=project.volume_name,
-        status="ready",
         created_at=project.created_at,
     )
     store.create_review(

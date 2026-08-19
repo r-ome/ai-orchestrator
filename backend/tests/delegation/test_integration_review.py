@@ -4,6 +4,8 @@ from typing import Any
 
 import pytest
 
+from conftest import register_ready_v1_sandbox
+
 from app.controller.store import ControllerStore, ReviewGenerating
 from app.delegation import integration_review, service
 from app.delegation.config import IntegrationReviewSettings
@@ -59,13 +61,12 @@ def _item(key: str) -> dict[str, Any]:
 def store(tmp_path: Path) -> ControllerStore:
     result = ControllerStore(tmp_path / "controller.sqlite3")
     result.initialize()
-    result.register_sandbox(
+    register_ready_v1_sandbox(
+        result,
         sandbox_id="sandbox-1",
         project_id="project-1",
         project_name="sample",
-        source_path="/projects/sample",
         volume_name="sample-volume",
-        status="ready",
         created_at="2026-08-08T00:00:00Z",
     )
     result.create_planning_session(

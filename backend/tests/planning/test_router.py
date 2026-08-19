@@ -2,6 +2,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+
+from conftest import register_ready_v1_sandbox
 from fastapi.testclient import TestClient
 
 from app.controller.store import get_controller_store
@@ -28,13 +30,12 @@ def client(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(service, "schedule_turn", lambda *_: None)
     def ensure(_: object, store: Any, __: str):
         project_key = project_id(PROJECT.source_path)
-        store.register_sandbox(
+        register_ready_v1_sandbox(
+            store,
             sandbox_id=PROJECT.sandbox_id,
             project_id=project_key,
             project_name=PROJECT.name,
-            source_path=PROJECT.source_path,
             volume_name=PROJECT.volume_name,
-            status="ready",
             created_at=PROJECT.created_at,
         )
         return PROJECT.sandbox_id, project_key, PROJECT

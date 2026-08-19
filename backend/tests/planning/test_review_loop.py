@@ -6,6 +6,8 @@ from typing import Any
 
 import pytest
 
+from conftest import register_ready_v1_sandbox
+
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
 from app.planning import service
@@ -36,13 +38,12 @@ PROJECT = SimpleNamespace(
 def controller_store(tmp_path: Path) -> ControllerStore:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id=PROJECT.sandbox_id,
         project_id="project-1",
         project_name=PROJECT.name,
-        source_path=PROJECT.source_path,
         volume_name=PROJECT.volume_name,
-        status="ready",
         created_at=PROJECT.created_at,
     )
     return store

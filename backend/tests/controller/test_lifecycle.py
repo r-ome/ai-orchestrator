@@ -4,6 +4,8 @@ from typing import Any
 
 import pytest
 
+from conftest import register_ready_v1_sandbox
+
 from app.controller.lifecycle import _settle_interrupted_turns, reconcile_controller_state
 from app.controller.store import ControllerStore
 from app.delegation import service as delegation_service
@@ -37,13 +39,12 @@ def _item(key: str) -> dict[str, Any]:
 def _store(tmp_path: Path) -> ControllerStore:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id="sandbox-1",
         project_id="project-1",
         project_name="sample",
-        source_path="/projects/sample",
         volume_name="sample-volume",
-        status="ready",
         created_at="2026-08-08T00:00:00Z",
     )
     store.create_planning_session(

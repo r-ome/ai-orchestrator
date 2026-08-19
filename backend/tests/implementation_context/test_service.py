@@ -5,6 +5,8 @@ from typing import Any
 
 import pytest
 
+from conftest import register_ready_v1_sandbox
+
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
 from app.delegation.models import DelegationStatus
@@ -88,13 +90,12 @@ def _manifest(**overrides: Any) -> dict[str, Any]:
 def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ControllerStore:
     controller_store = ControllerStore(tmp_path / "controller.sqlite3")
     controller_store.initialize()
-    controller_store.register_sandbox(
+    register_ready_v1_sandbox(
+        controller_store,
         sandbox_id="sandbox-1",
         project_id="project-1",
         project_name="sample",
-        source_path="/projects/sample",
         volume_name="orchestrator-project-sample-sandbox-1",
-        status="ready",
         created_at="2026-08-08T00:00:00Z",
     )
     _create_session(controller_store)

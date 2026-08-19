@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import register_ready_v1_sandbox
+
 from app.controller.store import ActiveAgentRunExists, ControllerStore
 from app.previews.detection import (
     compare_files,
@@ -271,13 +273,12 @@ def test_orders_compose_dependencies_before_the_preview_service() -> None:
 def test_sqlite_enforces_one_active_agent_per_sandbox(tmp_path: Path) -> None:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id="sandbox-1",
         project_id="project-1",
         project_name="sample-sandbox-1",
-        source_path="/projects/sample",
         volume_name="sample-volume",
-        status="ready",
         created_at="2026-08-04T00:00:00Z",
     )
     store.start_agent_run(
@@ -297,13 +298,12 @@ def test_sqlite_enforces_one_active_agent_per_sandbox(tmp_path: Path) -> None:
 def test_approved_removal_becomes_the_new_protected_baseline(tmp_path: Path) -> None:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id="sandbox-1",
         project_id="project-1",
         project_name="sample-sandbox-1",
-        source_path="/projects/sample",
         volume_name="sample-volume",
-        status="ready",
         created_at="2026-08-04T00:00:00Z",
     )
     original = b'{"scripts":{"dev":"vite"}}'
@@ -340,13 +340,12 @@ def test_approved_removal_becomes_the_new_protected_baseline(tmp_path: Path) -> 
 def test_sqlite_enforces_one_active_preview_per_sandbox(tmp_path: Path) -> None:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id="sandbox-1",
         project_id="project-1",
         project_name="sample-sandbox-1",
-        source_path="/projects/sample",
         volume_name="sample-volume",
-        status="ready",
         created_at="2026-08-04T00:00:00Z",
     )
 
@@ -378,13 +377,12 @@ def test_sqlite_enforces_one_active_preview_per_sandbox(tmp_path: Path) -> None:
 def test_preview_progress_events_are_persistent_and_ordered(tmp_path: Path) -> None:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id="sandbox-1",
         project_id="project-1",
         project_name="sample-sandbox-1",
-        source_path="/projects/sample",
         volume_name="sample-volume",
-        status="ready",
         created_at="2026-08-04T00:00:00Z",
     )
 

@@ -1,6 +1,8 @@
 from pathlib import Path
 
 import pytest
+
+from conftest import register_ready_v1_sandbox
 from docker.errors import DockerException
 
 from app.controller.lifecycle import reconcile_controller_state
@@ -12,13 +14,12 @@ def test_reconcile_fails_and_releases_running_turn_when_docker_is_down(
 ) -> None:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id="sandbox-1",
         project_id="project-1",
         project_name="Sample Project",
-        source_path="/projects/sample",
         volume_name="orchestrator-project-sample",
-        status="ready",
         created_at="2026-08-06T00:00:00Z",
     )
     store.create_planning_session(

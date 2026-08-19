@@ -6,6 +6,8 @@ from pathlib import Path
 import docker
 import pytest
 
+from conftest import register_ready_v1_sandbox
+
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
 from app.implementation_context.config import ContextSettings
@@ -63,13 +65,12 @@ def context(tmp_path: Path):
     project = inspect_registered_project(client, PROJECT)
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id=project.sandbox_id,
         project_id=project_id(project.source_path),
         project_name=project.name,
-        source_path=project.source_path,
         volume_name=project.volume_name,
-        status="ready",
         created_at=project.created_at,
     )
     store.create_planning_session(
