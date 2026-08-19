@@ -1,5 +1,7 @@
+import os
 from collections import defaultdict, deque
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,6 +15,25 @@ from app.sandboxes.manifest import (
     write_manifest,
 )
 from app.sandboxes.models import SandboxLifecycleStatus
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Keep Docker-gated temp dirs inside the path the Colima VM can see.
+
+    macOS puts `tmp_path` under `/private/var/folders`, which Colima does not
+    share with its VM. Any test that bind-mounts `tmp_path` into a container
+    then fails with "bind source path does not exist". The VM does share the
+    user's home directory, so gated runs get their basetemp from there.
+
+    Only gated runs are affected. An explicit `--basetemp` always wins.
+    """
+    if os.getenv("RUN_DOCKER_PREVIEW_TESTS") != "1":
+        return
+    if config.option.basetemp is not None:
+        return
+    shared = Path.home() / ".orchestrator-pytest-tmp"
+    shared.mkdir(parents=True, exist_ok=True)
+    config.option.basetemp = str(shared)
 
 
 class FakeDockerResource:

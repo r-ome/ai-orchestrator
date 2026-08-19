@@ -119,7 +119,10 @@ def test_linked_worktree_or_submodule_gets_a_named_baseline_refusal() -> None:
         with pytest.raises(ContainerError) as raised:
             ensure_git_baseline(client, GIT_IMAGE, volume.name)
 
-        output = (raised.value.stderr or b"").decode()
+        # docker-py returns stderr as str or bytes depending on the path taken;
+        # `describe_git_failure` handles both, so the test must too.
+        stderr = raised.value.stderr
+        output = stderr.decode(errors="replace") if isinstance(stderr, bytes) else (stderr or "")
         assert "linked worktree or submodule" in output
         assert "fatal: not a git repository" not in output
     finally:
