@@ -4,12 +4,19 @@
 **Verified against:** `main` @ `30e7ca9`, 19 Aug 2026
 **Baseline at verification:** `backend/.venv/bin/python -m pytest -q` → 818 passed, 43 skipped, 26.1s
 
-> **Progress, 19 Aug 2026 — `main` @ `ce205cd`.** Phases 0, 1, 2, 3.1, 3.2, 3.3, 4 and 5 are
-> done. Phase 3.4 is partially done and deliberately stopped; see its status block. Phase 6 is
-> next. Current suite: **822 passed, 43 skipped**.
+> **Progress, 19 Aug 2026 — `main` @ `282dc1e`.** Phases 0, 1, 2, 3.1, 3.2, 3.3, 4, 5 and 6
+> are done. Phase 3.4 is partially done and deliberately stopped; see its status block. Phase 7
+> is next. Current suite: **backend 834 passed, 43 skipped; frontend 74 passed**.
 >
-> The gated suite (`RUN_DOCKER_PREVIEW_TESTS=1`) is **5 failed, 855 passed**. All five are
-> genuine test rot, unrelated to any phase:
+> Phase 6 added the frontend's first real tests: 1 file and 1 test became 4 files and 74. It
+> also found and fixed a backend defect the plan did not anticipate; see its status block.
+> **The frontend gate is `npm run build`, not `tsc --noEmit`** — only the former type-checks
+> the test sources, and a break reached `main` because of that difference.
+>
+> The gated suite (`RUN_DOCKER_PREVIEW_TESTS=1`) was **5 failed, 855 passed** as of `ce205cd`.
+> It has not been re-run since; Phase 6 added 12 backend tests, so the passing count is stale
+> and the current total is unmeasured. The five failures are unrelated to any phase and are
+> genuine test rot:
 > `tests/previews/test_docker_integration.py::test_approved_proposal_starts_and_stops_through_the_full_service`,
 > `::test_events_websocket_replays_and_streams_live_container_logs`,
 > `tests/previews/test_preview_kinds.py::test_task_preview_serves_its_commit_and_keeps_it_across_a_restart`,
@@ -382,6 +389,79 @@ in this document that needed no correction.
 
 Do not delegate this phase to Codex. It cannot screenshot and localhost is blocked to it.
 Claude's own Bash can drive headless CDP against this app.
+
+**Phase 6 status, 19 Aug 2026: done.** Nine commits, `4b084eb` through `282dc1e`.
+
+`DelegationWorkspace.tsx` 1,782 → 525 lines; `PlanningSessionPage.tsx` 1,268 → 635. Both
+counts in the text above were correct, the first figures in this document that needed no
+correction. Nine modules came out of the two files:
+
+| Module | Lines |
+|---|---|
+| `components/delegationWorkspaceModel.ts` | 179 |
+| `components/WorkItemsPanel.tsx` | 383 |
+| `components/WorkItemCard.tsx` | 319 |
+| `components/FeatureCodeDiff.tsx` | 266 |
+| `components/FeatureReviewPanel.tsx` | 252 |
+| `components/PlanningAgentInspector.tsx` | 194 |
+| `pages/PlanReviewPanel.tsx` | 205 |
+| `pages/ClarifierPanel.tsx` | 187 |
+| `pages/planningSessionModel.ts` | 165 |
+
+The frontend went from **1 test file and 1 test** to **4 files and 74 tests**. Backend
+`pytest -q` 822 → 834 passed, 43 skipped.
+
+Corrections and additions to the text above:
+
+- **The phase was not purely frontend.** "Prefer improving the backend projection over adding
+  frontend logic" turned out to name a real defect, not a style preference. `DelegationPanel`
+  decided whether a feature review was still valid by comparing two ISO-8601 timestamps **as
+  strings**. Backend timestamps come from `datetime.now(UTC).isoformat()`, which omits the
+  microseconds field when it is exactly zero, so `'.'` (0x2E) meets `'Z'` (0x5A) and the
+  ordering inverts inside a single second. The same comparison also ranked an unparseable
+  timestamp as the later one. `featureApproved` disables the "Run feature review" button, so a
+  wrong result left the reader unable to re-run a review a later change had invalidated.
+  `6318db0` moves the rule to `delegation/service.view()` as `review_superseded` and
+  `feature_approved`, compared with `datetime.fromisoformat`. This is the **first
+  `fromisoformat` call in `backend/app`**; every other timestamp comparison in this codebase is
+  still a string comparison.
+- **Three panels were not worth extracting.** The spec, delegation and preview panels are 26,
+  10 and 16 lines. They stay inline.
+- **`Do not delegate this phase to Codex` was too strong.** Codex cannot screenshot and cannot
+  reach localhost, so it cannot verify. It wrote all four splits fine. The correct rule is
+  narrower: Codex may write frontend refactors, but Claude must verify them.
+
+Two behaviours that survive only because they were found before the split:
+
+- `DelegationPanel` owns `changeInstructions`, and every reader is in the feature-review
+  branch, so the obvious split moves it into `FeatureReviewPanel`. The page renders the panel
+  for both delegation tabs, so half-typed instructions survive an items ↔ feature-review
+  switch today; `FeatureReviewPanel` unmounts on every switch and would discard them.
+  `e6aa297` pins it.
+- The same shape recurs in `PlanningSessionPage` with `message` and `addingClarification`. All
+  eight pieces of page state stay in the page; neither new panel declares state or an effect.
+
+Verified by: **render probes**, which are the right oracle for a JSX move and worth reusing in
+Phase 7. Render the component across many states, dump `container.innerHTML` to a file, and
+diff across the change. `DelegationPanel` was probed across 20 states (40 KB, byte-identical);
+`PlanningSessionPage` across 11 session statuses × every enabled phase button, 77 states
+(540 KB, byte-identical). Both were run twice to confirm determinism, and both probes were
+deleted before committing. Also: mutation passes on every extracted branch, and an OpenAPI diff
+for `6318db0` showing exactly the two added properties.
+
+Four things a green suite did not catch, each found by mutation testing and each now covered:
+
+- No test covered a `generating` or `failed` review still carrying `approved: true`, so the
+  status guard in `featureApproved` could be deleted freely.
+- Deleting the obsolete `latestIncorporatedChange` test silently removed the only coverage of
+  `latestChange` selection and the `runningChange` status filter, which both still exist.
+- `ad734dd`: `npm run build` runs `tsc -b`, which type-checks the test sources; `tsc --noEmit`
+  does not. Making two fields required broke the build through a test fixture and reached
+  `main`, because the phase before it verified with `tsc --noEmit`. **Use `npm run build` as
+  the frontend gate.**
+- The first draft of the `DelegationPanel` split exported `ContextManifestView` so
+  `WorkItemsPanel` could reach it, creating a runtime import cycle between the two modules. It
+  had exactly one caller and is now private to it.
 
 ---
 
