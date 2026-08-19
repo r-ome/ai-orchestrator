@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -11,13 +10,15 @@ from app.docker_client import get_docker_client
 from app.main import app
 from app.planning.config import get_planning_settings
 from app.planning import service
-from app.projects.service import project_id
+from app.projects.models import ProjectRegistration
+from app.projects.service import managed_project_key, project_id
 
 
-PROJECT = SimpleNamespace(
+PROJECT_ID = project_id("/projects/sample")
+PROJECT = ProjectRegistration(
     sandbox_id="sandbox-1",
     name="Sample Project",
-    source_path="/projects/sample",
+    source_path=f"managed:{PROJECT_ID}",
     volume_name="orchestrator-project-sample",
     created_at="2026-08-06T00:00:00Z",
     ready=True,
@@ -29,7 +30,7 @@ def client(monkeypatch: pytest.MonkeyPatch):
     docker_client = object()
     monkeypatch.setattr(service, "schedule_turn", lambda *_: None)
     def ensure(_: object, store: Any, __: str):
-        project_key = project_id(PROJECT.source_path)
+        project_key = managed_project_key(PROJECT.source_path)
         register_ready_v1_sandbox(
             store,
             sandbox_id=PROJECT.sandbox_id,

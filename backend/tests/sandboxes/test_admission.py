@@ -2,9 +2,9 @@ import sqlite3
 import threading
 from pathlib import Path
 from typing import Any
-
 import pytest
 
+from conftest import register_ready_v1_sandbox
 from app.controller.store import (
     ActiveAgentRunExists,
     AgentWriterSessionExists,
@@ -21,13 +21,12 @@ from app.sandboxes import lifecycle as sandbox_lifecycle
 def _store(tmp_path: Path) -> ControllerStore:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id="sandbox-1",
         project_id="project-1",
         project_name="sample",
-        source_path="/projects/sample",
         volume_name="sample-volume",
-        status="ready",
         created_at="2026-08-11T00:00:00Z",
     )
     return store
@@ -178,13 +177,12 @@ def test_task_primary_key_conflict_stays_a_sqlite_integrity_error(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
-    store.register_sandbox(
+    register_ready_v1_sandbox(
+        store,
         sandbox_id="sandbox-2",
         project_id="project-2",
         project_name="sample-two",
-        source_path="/projects/sample-two",
         volume_name="sample-two-volume",
-        status="ready",
         created_at="2026-08-11T00:00:00Z",
     )
     store.create_task(
@@ -735,29 +733,3 @@ def test_preview_stop_is_explicit_and_then_retries_admission(
     ) as lease:
         assert lease is not None
         assert stopped == ["preview-1"]
-
-
-def test_legacy_sandbox_writer_starts_do_not_take_or_require_a_lease(
-    tmp_path: Path,
-) -> None:
-    store = _store(tmp_path)
-    store.create_task(
-        task_id="task-1",
-        sandbox_id="sandbox-1",
-        agent_run_id=None,
-        branch="task/task-1",
-        base_branch="",
-        base_commit="",
-        title="sample",
-        status="preparing",
-    )
-
-    lease = store.acquire_sandbox_lease(
-        sandbox_id="sandbox-1",
-        operation="sync",
-        operation_id="sync-1",
-        owner="test",
-    )
-
-    assert lease is None
-    assert store.sandbox_lease("sandbox-1") is None

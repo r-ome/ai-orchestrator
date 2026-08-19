@@ -14,6 +14,7 @@ from app.agents.config import AgentSettings
 from app.agents.models import AgentProvider, CreateAgentRequest
 from app.agents.service import create_agent, stop_agent
 from app.controller.store import ControllerStore
+from app.projects.models import ProjectRegistration
 from app.projects.service import ensure_git_baseline
 
 
@@ -282,10 +283,22 @@ def test_agent_creation_gives_a_baseline_to_a_sandbox_missing_one(
     docker_client = _StubDockerClient()
     controller_store = ControllerStore(tmp_path / "controller.sqlite3")
     controller_store.initialize()
-    project = SimpleNamespace(
+    project = ProjectRegistration(
+        sandbox_id="sandbox-1",
         name="Sample Project",
+        source_path="managed:project-1",
         volume_name="orchestrator-project-sample",
+        created_at="2026-08-06T00:00:00Z",
         ready=True,
+    )
+    register_ready_v1_sandbox(
+        controller_store,
+        sandbox_id=project.sandbox_id,
+        project_id="project-1",
+        project_name=project.name,
+        volume_name=project.volume_name,
+        created_at=project.created_at,
+        db_engine="none",
     )
     monkeypatch.setattr(
         "app.agents.service.inspect_registered_project",
@@ -337,10 +350,22 @@ def test_agent_run_is_recorded_before_git_and_dependency_resolution(
     docker_client = _StubDockerClient()
     controller_store = ControllerStore(tmp_path / "controller.sqlite3")
     controller_store.initialize()
-    project = SimpleNamespace(
+    project = ProjectRegistration(
+        sandbox_id="sandbox-1",
         name="Sample Project",
+        source_path="managed:project-1",
         volume_name="orchestrator-project-sample",
+        created_at="2026-08-06T00:00:00Z",
         ready=True,
+    )
+    register_ready_v1_sandbox(
+        controller_store,
+        sandbox_id=project.sandbox_id,
+        project_id="project-1",
+        project_name=project.name,
+        volume_name=project.volume_name,
+        created_at=project.created_at,
+        db_engine="none",
     )
     monkeypatch.setattr(
         "app.agents.service.inspect_registered_project",
@@ -391,10 +416,22 @@ def test_agent_preparation_failure_marks_the_row_and_removes_its_container(
 
     controller_store = ControllerStore(tmp_path / "controller.sqlite3")
     controller_store.initialize()
-    project = SimpleNamespace(
+    project = ProjectRegistration(
+        sandbox_id="sandbox-1",
         name="Sample Project",
+        source_path="managed:project-1",
         volume_name="orchestrator-project-sample",
+        created_at="2026-08-06T00:00:00Z",
         ready=True,
+    )
+    register_ready_v1_sandbox(
+        controller_store,
+        sandbox_id=project.sandbox_id,
+        project_id="project-1",
+        project_name=project.name,
+        volume_name=project.volume_name,
+        created_at=project.created_at,
+        db_engine="none",
     )
     monkeypatch.setattr(
         "app.agents.service.inspect_registered_project",

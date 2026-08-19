@@ -11,6 +11,7 @@ from docker.errors import APIError
 
 from app.controller.store import ControllerStore, OpenTaskExists
 from app.dirty_state import DirtyEntry, serialize_snapshot
+from app.projects.models import ProjectRegistration
 from app.tasks.models import (
     TASK_TRANSITIONS,
     ReportTaskRequest,
@@ -104,15 +105,23 @@ def _report_output(head: str, branch: str, dirty: tuple[str, ...] = ()) -> bytes
 def controller_store(tmp_path: Path) -> ControllerStore:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
+    register_ready_v1_sandbox(
+        store,
+        sandbox_id="sandbox-1",
+        project_id="project-1",
+        project_name="Sample Project",
+        volume_name=VOLUME_NAME,
+        created_at="2026-01-01T00:00:00Z",
+    )
     return store
 
 
 @pytest.fixture
 def docker_client(monkeypatch: pytest.MonkeyPatch) -> _StubDockerClient:
-    project = SimpleNamespace(
+    project = ProjectRegistration(
         sandbox_id="sandbox-1",
         name="Sample Project",
-        source_path="/projects/sample",
+        source_path="managed:project-1",
         volume_name=VOLUME_NAME,
         created_at="2026-01-01T00:00:00Z",
         ready=True,

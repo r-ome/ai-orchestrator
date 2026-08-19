@@ -14,6 +14,7 @@ from app.docker_client import get_docker_client
 from app.main import app
 from app.sandboxes import router as sandbox_router
 from app.sandboxes.manifest import SandboxManifest, write_manifest
+from conftest import mark_sandbox_legacy, register_ready_v1_sandbox
 
 
 PROJECT_ID = "staleness-project"
@@ -194,24 +195,6 @@ def test_staleness_holds_the_project_mirror_lock_only_during_fetch(
     assert store.project_mirror_lock(PROJECT_ID) is None
 
 
-def test_staleness_refuses_legacy_sandboxes(client: TestClient) -> None:
-    store = get_controller_store()
-    store.register_sandbox(
-        sandbox_id="legacy-sandbox",
-        project_id="legacy-project",
-        project_name="legacy",
-        source_path="/projects/legacy",
-        volume_name="legacy-workspace",
-        status="ready",
-        created_at="",
-    )
-
-    response = client.get("/sandboxes/legacy-sandbox/staleness")
-
-    assert response.status_code == 409
-    assert "recreate" in response.json()["detail"]
-
-
 @requires_docker
 def test_staleness_endpoint_counts_commits_after_a_local_remote_advances(
     monkeypatch: pytest.MonkeyPatch,
@@ -376,3 +359,22 @@ def test_staleness_endpoint_counts_commits_after_a_local_remote_advances(
             remote_volume.remove(force=True)
         if network is not None:
             network.remove()
+
+
+def test_staleness_refuses_a_migrated_legacy_sandbox(client: TestClient) -> None:
+    store = get_controller_store()
+    register_ready_v1_sandbox(
+        store,
+        sandbox_id="legacy-sandbox",
+        project_id="legacy-project",
+        project_name="legacy",
+        volume_name="legacy-workspace",
+    )
+    mark_sandbox_legacy(store, "legacy-sandbox")
+
+    response = client.get("/sandboxes/legacy-sandbox/staleness")
+
+    assert response.status_code == 409
+    # Match the legacy refusal specifically. A later "recreate it" check
+    # returns 409 too, so a looser assertion passes without the guard.
+    assert response.json()["detail"].startswith("Legacy sandbox")

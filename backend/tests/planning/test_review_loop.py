@@ -20,14 +20,15 @@ from app.planning.models import (
 )
 from app.planning.runner import TurnRequest, TurnResult
 from app.planning.service import TurnKind
+from app.projects.models import ProjectRegistration
 
 
 TEST_MODEL = "test-model"
 
-PROJECT = SimpleNamespace(
+PROJECT = ProjectRegistration(
     sandbox_id="sandbox-1",
     name="Sample Project",
-    source_path="/projects/sample",
+    source_path="managed:project-1",
     volume_name="orchestrator-project-sample",
     created_at="2026-08-06T00:00:00Z",
     ready=True,

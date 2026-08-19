@@ -20,7 +20,9 @@ from app.agents.service import (
 from app.docker_client import get_docker_client
 from app.controller.store import get_controller_store
 from app.main import app
+from app.projects.models import ProjectRegistration
 from app.projects.service import ProjectOperationError
+from conftest import register_ready_v1_sandbox
 
 client = TestClient(app)
 
@@ -200,10 +202,13 @@ def _override_docker(instance: StubDockerClient) -> Any:
     return override
 
 
-def _ready_project() -> SimpleNamespace:
-    return SimpleNamespace(
+def _ready_project() -> ProjectRegistration:
+    return ProjectRegistration(
+        sandbox_id="sandbox-1",
         name="Sample Project",
+        source_path="managed:project-1",
         volume_name="orchestrator-project-sample",
+        created_at="2026-08-06T00:00:00Z",
         ready=True,
     )
 
@@ -218,13 +223,23 @@ def _configure(
     docker_client: StubDockerClient,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    project: SimpleNamespace | None = None,
+    project: ProjectRegistration | None = None,
 ) -> None:
+    project = project or _ready_project()
+    register_ready_v1_sandbox(
+        get_controller_store(),
+        sandbox_id=project.sandbox_id,
+        project_id="project-1",
+        project_name=project.name,
+        volume_name=project.volume_name,
+        created_at=project.created_at,
+        db_engine="none",
+    )
     app.dependency_overrides[get_docker_client] = _override_docker(docker_client)
     app.dependency_overrides[get_agent_settings] = lambda: SETTINGS
     monkeypatch.setattr(
         "app.agents.service.inspect_registered_project",
-        lambda *_: project or _ready_project(),
+        lambda *_: project,
     )
     # The git baseline runs a throwaway container the StubDockerClient does
     # not model; these router tests exercise agent creation, not the git

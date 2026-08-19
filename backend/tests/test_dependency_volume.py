@@ -26,6 +26,8 @@ from app.previews.service import (
     _dependency_volume_ready,
     _lockfile_digest,
 )
+from app.projects.models import ProjectRegistration
+from conftest import register_ready_v1_sandbox
 
 
 # --- _lockfile_digest -------------------------------------------------------
@@ -234,11 +236,27 @@ SETTINGS = AgentSettings(
 )
 
 
-def _ready_project() -> SimpleNamespace:
-    return SimpleNamespace(
+def _ready_project() -> ProjectRegistration:
+    return ProjectRegistration(
+        sandbox_id="sandbox-1",
         name="Sample Project",
+        source_path="managed:project-1",
         volume_name="orchestrator-project-sample",
+        created_at="2026-08-06T00:00:00Z",
         ready=True,
+    )
+
+
+def _register_ready_sandbox(store: ControllerStore) -> None:
+    project = _ready_project()
+    register_ready_v1_sandbox(
+        store,
+        sandbox_id=project.sandbox_id,
+        project_id="project-1",
+        project_name=project.name,
+        volume_name=project.volume_name,
+        created_at=project.created_at,
+        db_engine="none",
     )
 
 
@@ -249,6 +267,7 @@ def test_agent_mounts_the_dependency_volume_read_only(
     docker_client = StubDockerClient()
     controller_store = ControllerStore(tmp_path / "controller.sqlite3")
     controller_store.initialize()
+    _register_ready_sandbox(controller_store)
     monkeypatch.setattr(
         "app.agents.service.inspect_registered_project",
         lambda *_: _ready_project(),
@@ -287,6 +306,7 @@ def test_agent_creates_an_empty_dependency_volume_when_no_preview_has_run(
     docker_client = StubDockerClient()
     controller_store = ControllerStore(tmp_path / "controller.sqlite3")
     controller_store.initialize()
+    _register_ready_sandbox(controller_store)
     monkeypatch.setattr(
         "app.agents.service.inspect_registered_project",
         lambda *_: _ready_project(),

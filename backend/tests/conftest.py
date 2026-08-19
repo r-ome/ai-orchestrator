@@ -512,3 +512,18 @@ def _isolated_controller_database(tmp_path, monkeypatch):
     get_controller_settings.cache_clear()
     yield
     get_controller_settings.cache_clear()
+
+
+def mark_sandbox_legacy(store: ControllerStore, sandbox_id: str) -> None:
+    """Force a sandbox row into the legacy shape.
+
+    `register_sandbox` is gone, so a legacy row now only reaches a running
+    controller one way: a database migrated from before the v1 lifecycle. The
+    `require_v1` guards still refuse those rows, so the tests that cover them
+    build the row the same way the migration leaves it.
+    """
+    with store._connection() as connection:
+        connection.execute(
+            "UPDATE sandboxes SET lifecycle_version = 'legacy' WHERE id = ?",
+            (sandbox_id,),
+        )

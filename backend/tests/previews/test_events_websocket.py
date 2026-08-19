@@ -1,7 +1,6 @@
 import threading
 import time
 from collections.abc import Iterator
-from types import SimpleNamespace
 
 import pytest
 
@@ -13,6 +12,7 @@ from app.controller.store import ControllerStore, get_controller_store
 from app.docker_client import get_docker_client
 from app.main import app
 from app.previews.service import _record_preview_progress
+from app.projects.models import ProjectRegistration
 from app.projects.service import managed_project_key
 
 client = TestClient(app)
@@ -33,11 +33,11 @@ def clear_overrides() -> Iterator[None]:
     app.dependency_overrides.clear()
 
 
-def _ready_project(sandbox_id: str) -> SimpleNamespace:
-    return SimpleNamespace(
+def _ready_project(sandbox_id: str) -> ProjectRegistration:
+    return ProjectRegistration(
         name="events-sandbox-1",
         sandbox_id=sandbox_id,
-        source_path="/projects/events-sandbox-1",
+        source_path=f"managed:{sandbox_id}-project",
         volume_name="events-sandbox-1-volume",
         ready=True,
         created_at="2026-08-06T00:00:00Z",

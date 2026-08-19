@@ -150,35 +150,23 @@ def _store_with_sandbox(
     *,
     sandbox_id: str,
     project_id: str,
-    lifecycle_version: str,
 ) -> ControllerStore:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
-    if lifecycle_version == "v1":
-        store.register_v1_project(
-            project_id=project_id,
-            remote_url=f"https://example.test/{project_id}.git",
-            default_branch="main",
-            mirror_volume=f"{project_id}-mirror",
-            created_at="2026-08-12T00:00:00Z",
-        )
-        store.register_v1_sandbox(
-            sandbox_id=sandbox_id,
-            project_id=project_id,
-            project_name=project_id,
-            volume_name=f"{sandbox_id}-volume",
-            created_at="2026-08-12T00:00:00Z",
-        )
-    else:
-        store.register_sandbox(
-            sandbox_id=sandbox_id,
-            project_id=project_id,
-            project_name=project_id,
-            source_path=f"/projects/{project_id}",
-            volume_name=f"{sandbox_id}-volume",
-            status="ready",
-            created_at="2026-08-12T00:00:00Z",
-        )
+    store.register_v1_project(
+        project_id=project_id,
+        remote_url=f"https://example.test/{project_id}.git",
+        default_branch="main",
+        mirror_volume=f"{project_id}-mirror",
+        created_at="2026-08-12T00:00:00Z",
+    )
+    store.register_v1_sandbox(
+        sandbox_id=sandbox_id,
+        project_id=project_id,
+        project_name=project_id,
+        volume_name=f"{sandbox_id}-volume",
+        created_at="2026-08-12T00:00:00Z",
+    )
     return store
 
 
@@ -310,7 +298,6 @@ def test_planning_sessions_for_project_includes_latest_feature_facts(tmp_path: P
         tmp_path,
         sandbox_id="sandbox-feature-status",
         project_id="project-feature-status",
-        lifecycle_version="v2",
     )
     now = "2026-08-14T00:00:00Z"
     with store._connection() as connection:
@@ -414,7 +401,6 @@ def test_publication_merge_fact_survives_later_observations(tmp_path: Path) -> N
         tmp_path,
         sandbox_id="sandbox-publication-merge",
         project_id="project-publication-merge",
-        lifecycle_version="v2",
     )
     session_id = "session-publication-merge"
     merged_at = "2026-08-14T00:00:00Z"
@@ -563,7 +549,6 @@ def test_delete_v1_sandbox_manifest_deletes_planning_and_delegation_children(
         tmp_path,
         sandbox_id="v1-sandbox",
         project_id="v1-project",
-        lifecycle_version="v1",
     )
     _seed_planning_delegation_tree(
         store,
@@ -578,94 +563,6 @@ def test_delete_v1_sandbox_manifest_deletes_planning_and_delegation_children(
     assert store.sandbox("v1-sandbox") is None
     assert store.project("v1-project") is not None
     _assert_database_is_consistent(store.database_path)
-
-
-def test_delete_sandbox_deletes_legacy_planning_and_delegation_children(
-    tmp_path: Path,
-) -> None:
-    store = _store_with_sandbox(
-        tmp_path,
-        sandbox_id="legacy-sandbox",
-        project_id="legacy-project",
-        lifecycle_version="legacy",
-    )
-    _seed_planning_delegation_tree(
-        store,
-        sandbox_id="legacy-sandbox",
-        project_id="legacy-project",
-    )
-    assert set(_planning_delegation_counts(store, "legacy-sandbox").values()) == {1}
-
-    store.delete_sandbox("legacy-sandbox")
-
-    assert set(_planning_delegation_counts(store, "legacy-sandbox").values()) == {0}
-    assert store.sandbox("legacy-sandbox") is None
-    assert store.project("legacy-project") is None
-    _assert_database_is_consistent(store.database_path)
-
-
-def test_deleting_a_sandbox_keeps_another_sandbox_planning_tree_intact(
-    tmp_path: Path,
-) -> None:
-    store = _store_with_sandbox(
-        tmp_path,
-        sandbox_id="first-sandbox",
-        project_id="first-project",
-        lifecycle_version="legacy",
-    )
-    store.register_sandbox(
-        sandbox_id="second-sandbox",
-        project_id="second-project",
-        project_name="second-project",
-        source_path="/projects/second-project",
-        volume_name="second-sandbox-volume",
-        status="ready",
-        created_at="2026-08-12T00:00:00Z",
-    )
-    _seed_planning_delegation_tree(
-        store,
-        sandbox_id="first-sandbox",
-        project_id="first-project",
-    )
-    _seed_planning_delegation_tree(
-        store,
-        sandbox_id="second-sandbox",
-        project_id="second-project",
-    )
-    expected_second_tree = _planning_delegation_counts(store, "second-sandbox")
-
-    store.delete_sandbox("first-sandbox")
-
-    assert set(_planning_delegation_counts(store, "first-sandbox").values()) == {0}
-    assert _planning_delegation_counts(store, "second-sandbox") == expected_second_tree
-    assert store.sandbox("second-sandbox") is not None
-    _assert_database_is_consistent(store.database_path)
-
-
-def test_v1_destroy_preserves_its_project_and_legacy_destroy_removes_its_last_project(
-    tmp_path: Path,
-) -> None:
-    store = _store_with_sandbox(
-        tmp_path,
-        sandbox_id="v1-sandbox",
-        project_id="v1-project",
-        lifecycle_version="v1",
-    )
-    store.register_sandbox(
-        sandbox_id="legacy-sandbox",
-        project_id="legacy-project",
-        project_name="legacy-project",
-        source_path="/projects/legacy-project",
-        volume_name="legacy-sandbox-volume",
-        status="ready",
-        created_at="2026-08-12T00:00:00Z",
-    )
-
-    store.delete_v1_sandbox_manifest("v1-sandbox")
-    store.delete_sandbox("legacy-sandbox")
-
-    assert store.project("v1-project") is not None
-    assert store.project("legacy-project") is None
 
 
 def test_fresh_database_applies_sandbox_migrations(tmp_path: Path) -> None:
@@ -714,13 +611,18 @@ def test_migration_21_applies_when_22_and_23_are_already_stamped(
         ).fetchone()[0]
     assert "UNIQUE" not in projects_sql.upper()
 
-    store.register_sandbox(
+    store.register_v1_project(
+        project_id="project-1",
+        remote_url="https://example.test/project-1.git",
+        default_branch="main",
+        mirror_volume="project-1-mirror",
+        created_at="2026-08-11T00:00:00+00:00",
+    )
+    store.register_v1_sandbox(
         sandbox_id="sandbox-1",
         project_id="project-1",
         project_name="sample",
-        source_path="/projects/sample",
         volume_name="sample-volume",
-        status="ready",
         created_at="2026-08-11T00:00:00+00:00",
     )
 
@@ -1098,132 +1000,6 @@ def test_projects_rebuild_rolls_back_when_index_creation_fails(tmp_path: Path) -
     assert "source_path TEXT NOT NULL UNIQUE" in projects_sql
     assert projects == [("project-1", "/projects/sample")]
     assert versions == [1, 18, 19]
-
-
-def test_register_sandbox_does_not_overwrite_lifecycle_status(tmp_path: Path) -> None:
-    store = ControllerStore(tmp_path / "controller.sqlite3")
-    store.initialize()
-    registration = {
-        "sandbox_id": "sandbox-1",
-        "project_id": "project-1",
-        "project_name": "sample",
-        "source_path": "/projects/sample",
-        "volume_name": "sample-volume",
-        "status": "ready",
-        "created_at": "2026-08-11T00:00:00+00:00",
-    }
-    store.register_sandbox(**registration)
-    with store._connection() as connection:
-        connection.execute(
-            """
-            UPDATE sandboxes
-            SET status = 'missing', lifecycle_status = 'destroying'
-            WHERE id = 'sandbox-1'
-            """
-        )
-
-    store.register_sandbox(**registration)
-
-    sandbox = store.sandboxes()[0]
-    assert sandbox["status"] == "ready"
-    assert sandbox["lifecycle_status"] == "destroying"
-
-
-def test_register_sandbox_upserts_same_source_path_after_projects_rebuild(
-    tmp_path: Path,
-) -> None:
-    store = ControllerStore(tmp_path / "controller.sqlite3")
-    store.initialize()
-    registration = {
-        "sandbox_id": "sandbox-1",
-        "project_id": "project-1",
-        "project_name": "sample",
-        "source_path": "/projects/sample",
-        "volume_name": "sample-volume",
-        "status": "ready",
-        "created_at": "2026-08-11T00:00:00+00:00",
-    }
-
-    store.register_sandbox(**registration)
-    store.register_sandbox(**registration)
-
-    with sqlite3.connect(store.database_path) as connection:
-        assert connection.execute("SELECT count(*) FROM projects").fetchone()[0] == 1
-        assert connection.execute("SELECT count(*) FROM sandboxes").fetchone()[0] == 1
-
-
-def test_v1_and_legacy_registration_never_reassign_project_ids(tmp_path: Path) -> None:
-    store = ControllerStore(tmp_path / "controller.sqlite3")
-    store.initialize()
-    store.register_sandbox(
-        sandbox_id="legacy-sandbox",
-        project_id="legacy-project",
-        project_name="sample",
-        source_path="/projects/sample",
-        volume_name="legacy-volume",
-        status="ready",
-        created_at="2026-08-11T00:00:00Z",
-    )
-    with store._connection() as connection:
-        connection.execute(
-            """
-            UPDATE projects
-            SET remote_url = 'https://github.com/owner/repo'
-            WHERE id = 'legacy-project'
-            """
-        )
-
-    v1_project = store.register_v1_project(
-        project_id="remote-project",
-        remote_url="https://github.com/owner/repo.git",
-        default_branch="main",
-        mirror_volume="mirror-volume",
-        created_at="2026-08-11T00:00:00Z",
-    )
-
-    assert v1_project["id"] == "legacy-project"
-    with pytest.raises(sqlite3.IntegrityError):
-        store.register_sandbox(
-            sandbox_id="other-sandbox",
-            project_id="other-project",
-            project_name="sample",
-            source_path="/projects/sample",
-            volume_name="other-volume",
-            status="ready",
-            created_at="2026-08-11T00:00:00Z",
-        )
-    with sqlite3.connect(store.database_path) as connection:
-        projects = connection.execute(
-            "SELECT id FROM projects ORDER BY id"
-        ).fetchall()
-
-    assert projects == [("legacy-project",)]
-
-
-def test_register_sandbox_retires_stale_volume_name_owner(tmp_path: Path) -> None:
-    store = ControllerStore(tmp_path / "controller.sqlite3")
-    store.initialize()
-    shared = {
-        "project_id": "project-1",
-        "project_name": "sample-sandbox-1",
-        "source_path": "/projects/sample",
-        "volume_name": "orchestrator-project-sample-sandbox-1",
-        "status": "ready",
-        "created_at": "2026-08-04T00:00:00Z",
-    }
-    store.register_sandbox(sandbox_id="sandbox-old", **shared)
-
-    store.register_sandbox(sandbox_id="sandbox-current", **shared)
-    store.register_sandbox(sandbox_id="sandbox-current", **shared)
-
-    sandboxes = {row["id"]: row for row in store.sandboxes()}
-    assert len(sandboxes) == 2
-    assert sandboxes["sandbox-old"]["volume_name"] == (
-        "orchestrator-project-sample-sandbox-1#retired:sandbox-old"
-    )
-    assert sandboxes["sandbox-old"]["status"] == "missing"
-    assert sandboxes["sandbox-current"]["volume_name"] == shared["volume_name"]
-    assert sandboxes["sandbox-current"]["status"] == "ready"
 
 
 def test_initial_migration_creates_the_current_schema_once(tmp_path: Path) -> None:

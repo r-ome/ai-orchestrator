@@ -1,13 +1,14 @@
 import os
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
 import docker
 import pytest
 
+from conftest import register_ready_v1_sandbox
 from app.controller.store import ControllerStore
+from app.projects.models import ProjectRegistration
 from app.tasks.models import ReportTaskRequest, StartTaskRequest, TaskStatus
 from app.tasks.service import (
     TaskOperationError,
@@ -51,10 +52,10 @@ def sandbox_volume(monkeypatch: pytest.MonkeyPatch) -> Any:
     client = docker.from_env()
     volume = client.volumes.create(name=f"orchestrator-task-test-{uuid4().hex[:12]}")
     _run(client, volume.name, "printf 'hello' > /project/index.html")
-    project = SimpleNamespace(
+    project = ProjectRegistration(
         sandbox_id="sandbox-1",
         name="Sample Project",
-        source_path="/projects/sample",
+        source_path="managed:project-1",
         volume_name=volume.name,
         created_at="2026-01-01T00:00:00Z",
         ready=True,
@@ -70,9 +71,18 @@ def sandbox_volume(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 @pytest.fixture
-def controller_store(tmp_path: Path) -> ControllerStore:
+def controller_store(tmp_path: Path, sandbox_volume: Any) -> ControllerStore:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
+    _, volume = sandbox_volume
+    register_ready_v1_sandbox(
+        store,
+        sandbox_id="sandbox-1",
+        project_id="project-1",
+        project_name="Sample Project",
+        volume_name=volume.name,
+        created_at="2026-01-01T00:00:00Z",
+    )
     return store
 
 

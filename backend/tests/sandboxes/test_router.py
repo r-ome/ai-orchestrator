@@ -2,7 +2,6 @@ from dataclasses import replace
 import inspect
 import os
 from pathlib import Path
-from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import docker
@@ -17,6 +16,7 @@ from app.main import app
 from app.planning import service as planning_service
 from app.planning.config import PlanningSettings
 from app.planning.models import CreatePlanningSessionRequest
+from app.projects.models import ProjectRegistration
 from app.sandboxes.mirror import MirrorPin
 from app.sandboxes.naming import (
     mirror_ownership_labels,
@@ -38,6 +38,7 @@ from app.sandboxes.manifest import (
 )
 from app.sandboxes.models import SandboxLifecycleStatus
 from app.sandboxes.publish import PullRequest, PublishError, PublishOutcome
+from conftest import mark_sandbox_legacy, register_ready_v1_sandbox
 
 
 REMOTE = "https://github.com/owner/repo.git"
@@ -653,27 +654,6 @@ def test_migration_failure_never_marks_the_sandbox_ready(
     assert sandbox["lifecycle_status"] != "ready"
 
 
-def test_engine_routes_return_409_for_legacy_sandboxes(client: TestClient) -> None:
-    store = get_controller_store()
-    store.register_sandbox(
-        sandbox_id="legacy-sandbox",
-        project_id="legacy-project",
-        project_name="legacy",
-        source_path="/projects/legacy",
-        volume_name="legacy-volume",
-        status="ready",
-        created_at="2026-08-11T00:00:00Z",
-    )
-
-    response = client.post(
-        "/sandboxes/legacy-sandbox/confirm-engine",
-        json={"engine": "mysql", "migrate_commands": ["make migrate"], "commands_source": {"migrate": "makefile"}, "actor": "jerome"},
-    )
-
-    assert response.status_code == 409
-    assert client.get("/sandboxes/legacy-sandbox/engine").status_code == 409
-
-
 def test_destroy_sweeps_only_manifest_resources_and_keeps_shared_infrastructure(
     client: TestClient, fake_docker_client
 ) -> None:
@@ -1156,12 +1136,14 @@ def test_planning_attaches_to_an_existing_sandbox_without_creating_one(
 ) -> None:
     created = _create(client).json()
     store = get_controller_store()
-    project = SimpleNamespace(
+    sandbox = store.sandbox(created["sandbox_id"])
+    assert sandbox is not None
+    project = ProjectRegistration(
         sandbox_id=created["sandbox_id"],
         name="Existing v1 sandbox",
-        source_path="",
-        volume_name="",
-        created_at="",
+        source_path=f"managed:{created['project_id']}",
+        volume_name=str(sandbox["volume_name"]),
+        created_at=str(sandbox["created_at"]),
         ready=True,
     )
     monkeypatch.setattr(planning_service, "schedule_turn", lambda *_: None)
@@ -1250,24 +1232,6 @@ def test_publish_records_verified_git_and_pull_request_result(
     assert manifest is not None
     assert manifest.operation == "publish"
     assert manifest.operation_phase == "published"
-
-
-def test_publish_refuses_legacy_sandbox(client: TestClient) -> None:
-    store = get_controller_store()
-    store.register_sandbox(
-        sandbox_id="legacy-publish",
-        project_id="legacy-project",
-        project_name="legacy",
-        source_path="/tmp/legacy-publish",
-        volume_name="legacy-publish-volume",
-        status="ready",
-        created_at="",
-    )
-
-    response = client.post("/sandboxes/legacy-publish/publish")
-
-    assert response.status_code == 409
-    assert "Legacy sandbox" in response.json()["detail"]
 
 
 def test_publish_failure_records_a_retryable_checkpoint(
@@ -1443,3 +1407,45 @@ def test_publish_api_failure_never_persists_or_returns_the_write_token(
     assert publication is not None and manifest is not None
     persisted = f"{publication!r} {manifest!r} {response.json()!r}"
     assert token not in persisted
+
+
+def test_publish_refuses_a_migrated_legacy_sandbox(client: TestClient) -> None:
+    store = get_controller_store()
+    register_ready_v1_sandbox(
+        store,
+        sandbox_id="legacy-publish",
+        project_id="legacy-project",
+        project_name="legacy",
+        volume_name="legacy-publish-volume",
+    )
+    mark_sandbox_legacy(store, "legacy-publish")
+
+    response = client.post("/sandboxes/legacy-publish/publish")
+
+    assert response.status_code == 409
+    assert "Legacy sandbox" in response.json()["detail"]
+
+
+def test_engine_routes_refuse_a_migrated_legacy_sandbox(client: TestClient) -> None:
+    store = get_controller_store()
+    register_ready_v1_sandbox(
+        store,
+        sandbox_id="legacy-engine",
+        project_id="legacy-project",
+        project_name="legacy",
+        volume_name="legacy-volume",
+    )
+    mark_sandbox_legacy(store, "legacy-engine")
+
+    response = client.post(
+        "/sandboxes/legacy-engine/confirm-engine",
+        json={
+            "engine": "mysql",
+            "migrate_commands": ["make migrate"],
+            "commands_source": {"migrate": "makefile"},
+            "actor": "jerome",
+        },
+    )
+
+    assert response.status_code == 409
+    assert client.get("/sandboxes/legacy-engine/engine").status_code == 409

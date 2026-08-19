@@ -34,6 +34,7 @@ from app.sandboxes.git import (
     run_git,
     sync_workspace_from_mirror,
 )
+from conftest import mark_sandbox_legacy, register_ready_v1_sandbox
 
 
 PROJECT_ID = "sync-project"
@@ -436,17 +437,6 @@ def test_sync_reports_a_database_added_after_no_database_confirmation(
     assert report.mismatch is True
 
 
-def test_sync_refuses_legacy_sandbox(client: TestClient) -> None:
-    store = get_controller_store()
-    store.register_sandbox(
-        sandbox_id="legacy-sync", project_id="legacy-project", project_name="legacy",
-        source_path="/projects/legacy", volume_name="legacy-workspace", status="ready", created_at="",
-    )
-    response = client.post("/sandboxes/legacy-sync/sync", json={})
-    assert response.status_code == 409
-    assert "recreate" in response.json()["detail"]
-
-
 @requires_docker
 def test_sync_git_path_rebases_from_a_local_bare_remote() -> None:
     """Exercise canonical network fetch and local-only sandbox rebase end to end."""
@@ -671,3 +661,22 @@ def test_reviewed_publish_reports_a_blocking_preview_and_takes_the_opt_in(
     client.post(f"/sandboxes/{SANDBOX_ID}/publish", json={"stop_blocking_preview": True})
 
     assert stopped == ["preview-blocker"]
+
+
+def test_sync_refuses_a_migrated_legacy_sandbox(client: TestClient) -> None:
+    store = get_controller_store()
+    register_ready_v1_sandbox(
+        store,
+        sandbox_id="legacy-sync",
+        project_id="legacy-project",
+        project_name="legacy",
+        volume_name="legacy-workspace",
+    )
+    mark_sandbox_legacy(store, "legacy-sync")
+
+    response = client.post("/sandboxes/legacy-sync/sync", json={})
+
+    assert response.status_code == 409
+    # Match the legacy refusal specifically. A later "recreate it" check
+    # returns 409 too, so a looser assertion passes without the guard.
+    assert response.json()["detail"].startswith("Legacy sandbox")

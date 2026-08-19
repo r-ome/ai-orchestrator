@@ -1,4 +1,3 @@
-import hashlib
 from uuid import NAMESPACE_URL, uuid5
 
 from docker.client import DockerClient
@@ -91,8 +90,7 @@ def ensure_sandbox_registered(
 ) -> tuple[str, str, ProjectRegistration]:
     """Returns one ready managed sandbox and its remote project id.
 
-    Sandbox creation already writes the row, so the registration below is a
-    backstop for a caller that supplies its own `project`.
+    Sandbox creation writes the row before any caller can resolve the project.
     """
     project = project or inspect_registered_project(
         docker_client,
@@ -101,24 +99,13 @@ def ensure_sandbox_registered(
     )
     if not project.ready:
         raise ProjectOperationError(409, f"Project '{project_name}' is not ready")
-    sandbox_id = getattr(project, "sandbox_id", "") or hashlib.sha256(
-        f"sandbox:{project.volume_name}".encode()
-    ).hexdigest()[:32]
+    sandbox_id = project.sandbox_id
     sandbox = controller_store.sandbox(sandbox_id)
-    if sandbox is not None:
-        return sandbox_id, str(sandbox["project_id"]), project
-    source_path = getattr(project, "source_path", "") or f"managed:{sandbox_id}"
-    project_key = managed_project_key(source_path)
-    controller_store.register_sandbox(
-        sandbox_id=sandbox_id,
-        project_id=project_key,
-        project_name=project.name,
-        source_path=source_path,
-        volume_name=project.volume_name,
-        status="ready",
-        created_at=getattr(project, "created_at", ""),
-    )
-    return sandbox_id, project_key, project
+    if sandbox is None:
+        # `inspect_registered_project` read this row a moment ago, so only a
+        # concurrent delete gets here.
+        raise ProjectOperationError(404, f"Project '{project_name}' is not registered")
+    return sandbox_id, str(sandbox["project_id"]), project
 
 
 def ensure_git_baseline(

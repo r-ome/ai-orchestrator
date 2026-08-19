@@ -10,13 +10,14 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import docker
 import pytest
 
+from conftest import register_ready_v1_sandbox
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
+from app.projects.models import ProjectRegistration
 from app.tasks import service as task_service
 from app.tasks.config import CodingTurnSettings
 from app.tasks.models import RunTaskRequest, StartTaskRequest, TaskStatus
@@ -118,17 +119,26 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
+    project = ProjectRegistration(
+        sandbox_id="sandbox-1",
+        name="scratch",
+        source_path="managed:project-1",
+        volume_name=VOLUME,
+        created_at="2026-08-08T00:00:00Z",
+        ready=True,
+    )
+    register_ready_v1_sandbox(
+        store,
+        sandbox_id=project.sandbox_id,
+        project_id="project-1",
+        project_name=project.name,
+        volume_name=project.volume_name,
+        created_at=project.created_at,
+    )
     monkeypatch.setattr(
         task_service,
         "inspect_registered_project",
-        lambda *_a, **_k: SimpleNamespace(
-            sandbox_id="sandbox-1",
-            name="scratch",
-            source_path="/scratch",
-            volume_name=VOLUME,
-            created_at="2026-08-08T00:00:00Z",
-            ready=True,
-        ),
+        lambda *_a, **_k: project,
     )
     try:
         yield store, client

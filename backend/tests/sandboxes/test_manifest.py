@@ -16,35 +16,21 @@ from app.sandboxes.models import SandboxLifecycleStatus
 def _store_with_sandbox(tmp_path: Path) -> ControllerStore:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
-    store.register_sandbox(
+    store.register_v1_project(
+        project_id="project-1",
+        remote_url="https://example.test/project-1.git",
+        default_branch="main",
+        mirror_volume="project-1-mirror",
+        created_at="2026-08-11T00:00:00Z",
+    )
+    store.register_v1_sandbox(
         sandbox_id="sandbox-1",
         project_id="project-1",
         project_name="sample",
-        source_path="/projects/sample",
         volume_name="sample-volume",
-        status="discovered",
         created_at="2026-08-11T00:00:00Z",
     )
     return store
-
-
-def test_manifest_write_preserves_legacy_status(tmp_path: Path) -> None:
-    store = _store_with_sandbox(tmp_path)
-    manifest = SandboxManifest(
-        sandbox_id="sandbox-1",
-        lifecycle_version="v1",
-        feature_key="add-manifest",
-        desired_state="active",
-        lifecycle_status="creating",
-        feature_branch="feature/add-manifest",
-    )
-
-    write_manifest(store, manifest)
-
-    sandbox = store.sandbox("sandbox-1")
-    assert sandbox is not None
-    assert sandbox["status"] == "discovered"
-    assert read_manifest(store, "sandbox-1") == manifest
 
 
 def test_created_base_commit_is_write_once(tmp_path: Path) -> None:

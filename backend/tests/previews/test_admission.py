@@ -1,5 +1,4 @@
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -15,6 +14,7 @@ from app.previews.models import (
     StartPreviewRequest,
 )
 from app.previews.service import start_preview
+from app.projects.models import ProjectRegistration
 
 
 def test_preparing_row_exists_before_any_docker_resource_is_created(
@@ -24,10 +24,10 @@ def test_preparing_row_exists_before_any_docker_resource_is_created(
 ) -> None:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
-    project = SimpleNamespace(
+    project = ProjectRegistration(
         sandbox_id="sandbox-1",
         name="sample",
-        source_path="/projects/sample",
+        source_path="managed:project-1",
         volume_name="sample-volume",
         created_at="2026-08-11T00:00:00Z",
         ready=True,

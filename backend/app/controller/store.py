@@ -1069,75 +1069,6 @@ class ControllerStore:
             finally:
                 connection.close()
 
-    def register_sandbox(
-        self,
-        *,
-        sandbox_id: str,
-        project_id: str,
-        project_name: str,
-        source_path: str,
-        volume_name: str,
-        status: str,
-        created_at: str,
-    ) -> None:
-        """Insert a sandbox row that carries no managed lifecycle state.
-
-        The `'legacy'` marker below no longer names a copied local folder;
-        that feature is gone. It now means only "this row has no manifest and
-        takes no lifecycle lease", which is what `sandbox_lease` reads it for.
-        Sandbox creation uses `register_v1_sandbox` instead.
-        """
-        now = _now()
-        with self._connection() as connection:
-            stale_owner = connection.execute(
-                "SELECT id FROM sandboxes WHERE volume_name = ? AND id != ?",
-                (volume_name, sandbox_id),
-            ).fetchone()
-            if stale_owner is not None:
-                stale_sandbox_id = str(stale_owner["id"])
-                retired_volume_name = (
-                    f"{volume_name}#retired:{stale_sandbox_id}"
-                )
-                connection.execute(
-                    """
-                    UPDATE sandboxes
-                    SET volume_name = ?, status = 'missing', updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (retired_volume_name, now, stale_sandbox_id),
-                )
-            connection.execute(
-                """
-                INSERT INTO projects(id, source_path, created_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(source_path) WHERE source_path IS NOT NULL
-                DO NOTHING
-                """,
-                (project_id, source_path, created_at or now),
-            )
-            connection.execute(
-                """
-                INSERT INTO sandboxes(
-                    id, project_id, project_name, volume_name, status,
-                    lifecycle_version, desired_state, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'legacy', 'active', ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    project_name = excluded.project_name,
-                    volume_name = excluded.volume_name,
-                    status = excluded.status,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    sandbox_id,
-                    project_id,
-                    project_name,
-                    volume_name,
-                    status,
-                    created_at or now,
-                    now,
-                ),
-            )
-
     def register_v1_project(
         self,
         *,
@@ -1234,8 +1165,7 @@ class ControllerStore:
     ) -> tuple[dict[str, Any], bool]:
         """Record v1 sandbox intent without creating a Docker resource.
 
-        This path deliberately does not call ``register_sandbox``. Managed
-        sandboxes are keyed by a remote project and need no copy-flow fields.
+        Managed sandboxes are keyed by a remote project.
         """
         now = _now()
         with self._connection() as connection:

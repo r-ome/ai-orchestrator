@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -7,8 +6,10 @@ from fastapi.testclient import TestClient
 from app.controller.store import get_controller_store
 from app.docker_client import get_docker_client
 from app.main import app
+from app.projects.models import ProjectRegistration
 from app.tasks.models import TaskStatus
 from app.tasks.service import transition_task
+from conftest import register_ready_v1_sandbox
 
 
 BASE_COMMIT = "a" * 40
@@ -54,10 +55,10 @@ class _StubDockerClient:
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch):
     docker_client = _StubDockerClient()
-    project = SimpleNamespace(
+    project = ProjectRegistration(
         sandbox_id="sandbox-1",
         name="Sample Project",
-        source_path="/projects/sample",
+        source_path="managed:project-1",
         volume_name="orchestrator-project-sample",
         created_at="2026-01-01T00:00:00Z",
         ready=True,
@@ -69,6 +70,15 @@ def client(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         "app.tasks.service.ensure_git_baseline",
         lambda *_: BASE_COMMIT,
+    )
+    store = get_controller_store()
+    register_ready_v1_sandbox(
+        store,
+        sandbox_id=project.sandbox_id,
+        project_id="project-1",
+        project_name=project.name,
+        volume_name=project.volume_name,
+        created_at=project.created_at,
     )
     app.dependency_overrides[get_docker_client] = lambda: docker_client
     with TestClient(app) as test_client:
