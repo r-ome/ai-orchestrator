@@ -930,6 +930,44 @@ def test_destroy_failure_keeps_destroying_without_tombstone_and_retry_completes(
     assert get_controller_store().sandbox_tombstone(sandbox["sandbox_id"]) is not None
 
 
+def test_orphan_removal_reports_a_docker_outage_as_unavailable(
+    client: TestClient,
+    fake_docker_client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A daemon failure during removal is 503, and keeps Docker's own message."""
+    sandbox = _create(client).json()
+    name = f"sbx-{sandbox['sandbox_id'][:12]}-outage"
+    fake_docker_client.volumes.create(
+        name=name,
+        labels=ownership_labels(
+            sandbox_id=sandbox["sandbox_id"], project_id=sandbox["project_id"]
+        ),
+    )
+    store = get_controller_store()
+    store.event(
+        sandbox_id=None,
+        run_id=None,
+        kind="controller.unexpected_resource",
+        payload={
+            "resource": f"volume:{name}",
+            "resource_kind": "volume",
+            "resource_name": name,
+        },
+    )
+    monkeypatch.setattr(
+        sandbox_service,
+        "_remove_manifest_resource",
+        lambda *_a, **_k: (_ for _ in ()).throw(APIError("daemon said no")),
+    )
+
+    response = client.post(f"/sandboxes/orphans/volume:{name}/remove")
+
+    assert response.status_code == 503
+    assert "daemon said no" in response.json()["detail"]
+    assert fake_docker_client.volumes.get(name).removed is False
+
+
 def test_orphan_removal_revalidates_manifest_ownership(
     client: TestClient,
     fake_docker_client,

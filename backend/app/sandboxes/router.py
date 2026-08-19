@@ -3,15 +3,10 @@
 from typing import Annotated, Callable, TypeVar
 
 from docker.client import DockerClient
-from docker.errors import DockerException, NotFound
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, field_validator
 
-from app.controller.store import (
-    ControllerStore,
-    SandboxAdmissionError,
-    get_controller_store,
-)
+from app.controller.store import ControllerStore, get_controller_store
 from app.docker_client import get_docker_client
 from app.docker_errors import DockerErrorPolicy, PassThroughApiError, docker_response
 from app.projects.remote import normalize_remote_url
@@ -20,16 +15,8 @@ from app.sandboxes.manifest import (
     read_manifest,
 )
 from app.sandboxes.models import SandboxLifecycleStatus
-from app.sandboxes.lifecycle import (
-    lifecycle_conflict_detail,
-    project_mirror_lock,
-)
 from app.sandboxes.database import SandboxDatabaseError
 from app.sandboxes.engine_detection import normalize_confirmable_engine
-from app.sandboxes.git import (
-    count_mirror_staleness,
-    fetch_canonical_mirror,
-)
 from app.sandboxes import service
 from app.sandboxes.service import (
     EngineConfirmation,
@@ -37,6 +24,7 @@ from app.sandboxes.service import (
     SandboxDependencyFailure,
     SandboxInternalFailure,
     SandboxNotFound,
+    SandboxUnavailable,
     SandboxValidationError,
     _json_value,
     _optional_string,
@@ -48,18 +36,11 @@ from app.sandboxes.service import (
 from app.sandboxes.publish import (
     PublishError,
 )
-from app.sandboxes.naming import (
-    db_data_volume,
-    feature_branch,
-    is_shared_infrastructure,
-    orphan_ownership_sandbox_id,
-    validate_feature_key,
-)
+from app.sandboxes.naming import validate_feature_key
 from app.sandboxes.orphans import (
     parse_orphan_resource_key,
     resource_is_claimed,
 )
-from app.previews.config import get_preview_settings
 
 
 router = APIRouter(prefix="/sandboxes", tags=["sandboxes"])
@@ -73,6 +54,7 @@ _DOCKER_ERRORS = DockerErrorPolicy(
         SandboxDependencyFailure,
         SandboxInternalFailure,
         SandboxValidationError,
+        SandboxUnavailable,
         SandboxDatabaseError,
         PublishError,
     ),
@@ -336,31 +318,14 @@ def remove_orphan_resource(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> RemoveOrphanResourceResponse:
     """Remove one operator-selected orphan after checking live manifest ownership."""
-    try:
-        orphan = parse_orphan_resource_key(resource)
-        collection = service._docker_collection(docker_client, orphan.kind)
-    except ValueError as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error)) from error
-    except SandboxValidationError as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
-    try:
-        docker_resource = collection.get(orphan.name)
-    except NotFound as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Orphan resource not found") from error
-    try:
-        if is_shared_infrastructure(docker_resource):
-            raise ValueError("shared infrastructure cannot be removed as an orphan")
-        # A name is only a discovery hint. Removal requires the complete v1
-        # ownership-label shape, which prevents deleting an unrelated sbx-* resource.
-        orphan_ownership_sandbox_id(docker_resource)
-        if resource_is_claimed(controller_store, orphan):
-            raise ValueError("resource is now claimed by a sandbox manifest")
-        service._remove_manifest_resource(docker_resource, orphan.kind)
-    except ValueError as error:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-    except DockerException as error:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(error)) from error
-    return RemoveOrphanResourceResponse(resource=orphan.key, removed=True)
+    orphan_key = _docker_response(
+        lambda: service.remove_orphan_resource(
+            docker_client,
+            controller_store,
+            resource=resource,
+        )
+    )
+    return RemoveOrphanResourceResponse(resource=orphan_key, removed=True)
 
 
 @router.get("/{sandbox_id}", response_model=SandboxResponse)
@@ -383,85 +348,14 @@ def get_sandbox_staleness(
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
 ) -> SandboxStalenessResponse:
     """Fetch the shared mirror, then report this sandbox's informational lag."""
-    return _docker_response(
-        lambda: _sandbox_staleness_response(
+    outcome = _docker_response(
+        lambda: service.staleness(
             docker_client,
             controller_store,
-            sandbox_id,
+            sandbox_id=sandbox_id,
         )
     )
-
-
-def _sandbox_staleness_response(
-    docker_client: DockerClient,
-    controller_store: ControllerStore,
-    sandbox_id: str,
-) -> SandboxStalenessResponse:
-    sandbox = controller_store.sandbox(sandbox_id)
-    require_v1(
-        sandbox,
-        sandbox_id,
-        "has no canonical mirror or usable base commit; recreate it explicitly to use v1 staleness.",
-    )
-    assert sandbox is not None
-    project = controller_store.project(str(sandbox["project_id"]))
-    if project is None or not project.get("mirror_volume"):
-        raise SandboxConflict(
-            f"Sandbox '{sandbox_id}' has no project mirror; recreate it explicitly to use v1.",
-        )
-    base_ref = _required_staleness_value(sandbox, "base_ref", sandbox_id)
-    current_base_commit = _required_staleness_value(
-        sandbox, "current_base_commit", sandbox_id
-    )
-    mirror_name = str(project["mirror_volume"])
-    git_image = get_preview_settings().git_image
-    fetch_failure_reason: str | None = None
-
-    # Staleness is sandbox read-only. It intentionally takes no lifecycle
-    # lease, so an active agent, task, or preview cannot block inspection.
-    # It locks only the shared mirror while canonical fetch mutates its refs.
-    try:
-        with project_mirror_lock(controller_store, str(project["id"]), "staleness"):
-            try:
-                fetch_canonical_mirror(
-                    docker_client,
-                    image=git_image,
-                    mirror_volume=mirror_name,
-                    ensure_image=True,
-                )
-            except Exception as error:
-                fetch_failure_reason = str(error)
-                project = controller_store.project(str(sandbox["project_id"])) or project
-    except SandboxAdmissionError as error:
-        raise SandboxConflict(lifecycle_conflict_detail(error)) from error
-    if fetch_failure_reason is None:
-        project = controller_store.record_v1_project_mirror_fetch(
-            project_id=str(project["id"])
-        )
-
-    try:
-        behind_count = count_mirror_staleness(
-            docker_client,
-            image=git_image,
-            mirror_volume=mirror_name,
-            current_base_commit=current_base_commit,
-            base_ref=base_ref,
-            ensure_image=True,
-        )
-    except Exception as error:
-        if fetch_failure_reason is None:
-            raise SandboxInternalFailure(str(error)) from error
-        fetch_failure_reason = f"{fetch_failure_reason}; last known mirror state is unavailable: {error}"
-        behind_count = None
-
-    return SandboxStalenessResponse(
-        behind_count=behind_count,
-        base_ref=base_ref,
-        current_base_commit=current_base_commit,
-        mirror_fetched_at=_optional_string(project.get("mirror_fetched_at")),
-        stale_answer=fetch_failure_reason is not None,
-        fetch_failure_reason=fetch_failure_reason,
-    )
+    return SandboxStalenessResponse(**outcome.__dict__)
 
 
 @router.post(
@@ -687,17 +581,6 @@ def _value(manifest: SandboxManifest, field: str) -> str | None:
     value = getattr(manifest, field)
     return str(value) if value is not None else None
 
-
-
-def _required_staleness_value(
-    sandbox: dict[str, object], field: str, sandbox_id: str
-) -> str:
-    value = sandbox.get(field)
-    if value is None or not str(value):
-        raise SandboxConflict(
-            f"Sandbox '{sandbox_id}' has no {field}; recreate it explicitly to use v1 staleness.",
-        )
-    return str(value)
 
 
 def _engine_detection_response(detection: dict[str, object]) -> EngineDetectionResponse:

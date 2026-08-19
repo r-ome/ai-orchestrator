@@ -18,6 +18,7 @@ from app.sandboxes.database import (
 )
 from app.sandboxes.engine_detection import NO_DATABASE, discover_engine, discover_schema_baseline_files
 from app.sandboxes.git import (
+    count_mirror_staleness,
     create_workspace_safety_ref,
     describe_git_failure,
     fetch_canonical_mirror,
@@ -51,11 +52,14 @@ from app.sandboxes.naming import (
     database_name,
     db_data_volume,
     feature_branch,
+    is_shared_infrastructure,
     mirror_volume,
+    orphan_ownership_sandbox_id,
     sandbox_id_for,
     validate_ownership,
     workspace_volume,
 )
+from app.sandboxes.orphans import parse_orphan_resource_key, resource_is_claimed
 from app.sandboxes.publish import (
     GitHubApiError,
     PublishError,
@@ -89,6 +93,16 @@ class SandboxNotFound(Exception):
     """A missing sandbox that maps to HTTP 404."""
 
     status_code = 404
+
+    @property
+    def detail(self) -> str:
+        return str(self)
+
+
+class SandboxUnavailable(Exception):
+    """A sandbox dependency outage that maps to HTTP 503."""
+
+    status_code = 503
 
     @property
     def detail(self) -> str:
@@ -161,6 +175,16 @@ class PublishOutcome:
     pr_url: str | None = None
     pr_state: str | None = None
     pr_merged_at: str | None = None
+
+
+@dataclass(frozen=True)
+class StalenessOutcome:
+    behind_count: int | None
+    base_ref: str
+    current_base_commit: str
+    mirror_fetched_at: str | None
+    stale_answer: bool
+    fetch_failure_reason: str | None
 
 
 def sync(
@@ -532,6 +556,112 @@ def publish(
         raise SandboxDependencyFailure(describe_git_failure(error)) from error
 
 
+def staleness(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    *,
+    sandbox_id: str,
+) -> StalenessOutcome:
+    """Fetch the shared mirror, then report this sandbox's informational lag."""
+    sandbox = controller_store.sandbox(sandbox_id)
+    require_v1(
+        sandbox,
+        sandbox_id,
+        "has no canonical mirror or usable base commit; recreate it explicitly to use v1 staleness.",
+    )
+    assert sandbox is not None
+    project = controller_store.project(str(sandbox["project_id"]))
+    if project is None or not project.get("mirror_volume"):
+        raise SandboxConflict(
+            f"Sandbox '{sandbox_id}' has no project mirror; recreate it explicitly to use v1.",
+        )
+    base_ref = _required_staleness_value(sandbox, "base_ref", sandbox_id)
+    current_base_commit = _required_staleness_value(
+        sandbox, "current_base_commit", sandbox_id
+    )
+    mirror_name = str(project["mirror_volume"])
+    git_image = get_preview_settings().git_image
+    fetch_failure_reason: str | None = None
+
+    # Staleness is sandbox read-only. It intentionally takes no lifecycle
+    # lease, so an active agent, task, or preview cannot block inspection.
+    # It locks only the shared mirror while canonical fetch mutates its refs.
+    try:
+        with project_mirror_lock(controller_store, str(project["id"]), "staleness"):
+            try:
+                fetch_canonical_mirror(
+                    docker_client,
+                    image=git_image,
+                    mirror_volume=mirror_name,
+                    ensure_image=True,
+                )
+            except Exception as error:
+                fetch_failure_reason = str(error)
+                project = controller_store.project(str(sandbox["project_id"])) or project
+    except SandboxAdmissionError as error:
+        raise SandboxConflict(lifecycle_conflict_detail(error)) from error
+    if fetch_failure_reason is None:
+        project = controller_store.record_v1_project_mirror_fetch(
+            project_id=str(project["id"])
+        )
+
+    try:
+        behind_count = count_mirror_staleness(
+            docker_client,
+            image=git_image,
+            mirror_volume=mirror_name,
+            current_base_commit=current_base_commit,
+            base_ref=base_ref,
+            ensure_image=True,
+        )
+    except Exception as error:
+        if fetch_failure_reason is None:
+            raise SandboxInternalFailure(str(error)) from error
+        fetch_failure_reason = f"{fetch_failure_reason}; last known mirror state is unavailable: {error}"
+        behind_count = None
+
+    return StalenessOutcome(
+        behind_count=behind_count,
+        base_ref=base_ref,
+        current_base_commit=current_base_commit,
+        mirror_fetched_at=_optional_string(project.get("mirror_fetched_at")),
+        stale_answer=fetch_failure_reason is not None,
+        fetch_failure_reason=fetch_failure_reason,
+    )
+
+
+def remove_orphan_resource(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    *,
+    resource: str,
+) -> str:
+    """Remove one operator-selected orphan after checking live manifest ownership."""
+    try:
+        orphan = parse_orphan_resource_key(resource)
+        collection = _docker_collection(docker_client, orphan.kind)
+    except ValueError as error:
+        raise SandboxValidationError(str(error)) from error
+    try:
+        docker_resource = collection.get(orphan.name)
+    except NotFound as error:
+        raise SandboxNotFound("Orphan resource not found") from error
+    try:
+        if is_shared_infrastructure(docker_resource):
+            raise ValueError("shared infrastructure cannot be removed as an orphan")
+        # A name is only a discovery hint. Removal requires the complete v1
+        # ownership-label shape, which prevents deleting an unrelated sbx-* resource.
+        orphan_ownership_sandbox_id(docker_resource)
+        if resource_is_claimed(controller_store, orphan):
+            raise ValueError("resource is now claimed by a sandbox manifest")
+        _remove_manifest_resource(docker_resource, orphan.kind)
+    except ValueError as error:
+        raise SandboxConflict(str(error)) from error
+    except DockerException as error:
+        raise SandboxUnavailable(str(error)) from error
+    return orphan.key
+
+
 def complete_database_provision(
     docker_client: DockerClient,
     controller_store: ControllerStore,
@@ -696,6 +826,17 @@ def _required_sync_value(
     if value is None or not str(value):
         raise SandboxConflict(
             f"Sandbox '{sandbox_id}' has no {field}; recreate it explicitly to use v1 sync."
+        )
+    return str(value)
+
+
+def _required_staleness_value(
+    sandbox: dict[str, object], field: str, sandbox_id: str
+) -> str:
+    value = sandbox.get(field)
+    if value is None or not str(value):
+        raise SandboxConflict(
+            f"Sandbox '{sandbox_id}' has no {field}; recreate it explicitly to use v1 staleness."
         )
     return str(value)
 

@@ -13,7 +13,7 @@ from app.controller.store import get_controller_store
 from app.docker_client import get_docker_client
 from app.main import app
 from app.sandboxes import lifecycle as sandbox_lifecycle
-from app.sandboxes import router as sandbox_router
+from app.sandboxes import service as sandbox_service
 from app.sandboxes.manifest import SandboxManifest, write_manifest
 from conftest import mark_sandbox_legacy, register_ready_v1_sandbox
 
@@ -62,9 +62,9 @@ def _register_v1_staleness_sandbox() -> None:
 
 
 def _stub_staleness_commands(monkeypatch: pytest.MonkeyPatch, *, count: int) -> None:
-    monkeypatch.setattr(sandbox_router, "fetch_canonical_mirror", lambda *_args, **_kwargs: b"")
+    monkeypatch.setattr(sandbox_service, "fetch_canonical_mirror", lambda *_args, **_kwargs: b"")
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "count_mirror_staleness",
         lambda *_args, **_kwargs: count,
     )
@@ -116,12 +116,12 @@ def test_staleness_fetch_failure_uses_last_known_mirror_state_without_claiming_z
             ("2026-08-11T00:00:00Z", PROJECT_ID),
         )
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "fetch_canonical_mirror",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("remote unreachable")),
     )
     monkeypatch.setattr(
-        sandbox_router,
+        sandbox_service,
         "count_mirror_staleness",
         lambda *_args, **_kwargs: 7,
     )
@@ -189,8 +189,8 @@ def test_staleness_holds_the_project_mirror_lock_only_during_fetch(
         assert store.project_mirror_lock(PROJECT_ID) is None
         return 1
 
-    monkeypatch.setattr(sandbox_router, "fetch_canonical_mirror", fetch)
-    monkeypatch.setattr(sandbox_router, "count_mirror_staleness", count)
+    monkeypatch.setattr(sandbox_service, "fetch_canonical_mirror", fetch)
+    monkeypatch.setattr(sandbox_service, "count_mirror_staleness", count)
 
     response = client.get(f"/sandboxes/{SANDBOX_ID}/staleness")
 
