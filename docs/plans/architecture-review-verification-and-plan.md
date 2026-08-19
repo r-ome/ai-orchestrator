@@ -570,6 +570,12 @@ Then tighten the Phase 0.1 test from "does not grow" to "no cycles".
 
 *Prerequisites: Phases 1, 5, 7.*
 
+> **Prerequisites are met as of 19 Aug 2026.** Phases 1, 5 and 7 are all done. Phase 7 also
+> leaves a worked example to copy: the `controller/store/` package is a directed acyclic
+> import graph with `_shared`, `errors`, `schema` and `queries` as leaves and nothing
+> importing the facade. That is the shape the `platform → store → domain → api` direction
+> needs at package scale.
+
 ---
 
 ### Phase 10 — Vocabulary (optional, low urgency)

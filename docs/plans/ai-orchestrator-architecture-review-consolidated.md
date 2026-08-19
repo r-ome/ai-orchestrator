@@ -167,7 +167,7 @@ A database constraint prevents multiple active agent runs in one sandbox. Detach
 
 `backend/app/controller/`
 
-The controller layer owns SQLite persistence and startup repair. `controller/store.py` contains schema, migrations, and persistence operations for nearly every subsystem. It also enforces important partial unique indexes.
+The controller layer owns SQLite persistence and startup repair. `controller/store.py` contains schema, migrations, and persistence operations for nearly every subsystem. It also enforces important partial unique indexes. *(Phase 7 split this into the `controller/store/` package; see §5.2.)*
 
 Startup reconciliation closes interrupted turns, reclaims stale leases, reconciles agents and previews, detects unexpected/orphaned resources, and expires previews.
 
@@ -440,6 +440,15 @@ Roughly 4,500 lines, one large class, about 155 methods, and roughly 30 tables. 
 
 The direct SQL style is fine. The ownership locality is not.
 
+> **Resolved by Phase 7, 19 Aug 2026 (`main` @ `268fc2b`).** `controller/store.py` is now the
+> package `controller/store/`, split into ten area mixins plus `schema`, `migrations`,
+> `errors`, `queries` and `_shared`. The facade is 89 lines. The measured figures were 4,454
+> lines, **151** methods and 33 tables — the "about 155 methods" above is close but the
+> per-area distribution this review proposed was wrong in four places. See the Phase 7 status
+> block in `architecture-review-verification-and-plan.md`. The direct SQL style, the single
+> database, connection, lock and migration stream, and every partial unique index are
+> unchanged.
+
 ### `previews/service.py`
 
 Roughly 3,700 lines and about 100 top-level functions. It owns preview lifecycle, three runtime modes, Compose parsing/validation, dependency caching, gateway/networking, shared databases, schema attachment, and project-secrets CRUD.
@@ -669,6 +678,10 @@ Delete duplicated helpers and replace message-substring control flow with typed 
 This is probably the highest value-per-risk local change.
 
 ## 7.4 Split `ControllerStore` by subsystem without redesigning the database
+
+> **Done, Phase 7, 19 Aug 2026.** Every "keep" below held. The split shape chosen was mixin
+> classes inherited by `ControllerStore`, not sub-repositories, so no call site changed in any
+> of the 78 importing files. An AST oracle proved every method body byte-identical.
 
 Keep:
 
