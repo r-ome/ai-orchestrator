@@ -1,7 +1,7 @@
 # Open work
 
-**State:** `main` @ `7b497c4`, 19 Aug 2026
-**Suites:** backend 835 passed, 43 skipped, ~31s. Frontend 80 passed, `npm run build` clean.
+**State:** `main` @ `e871406`, 20 Aug 2026
+**Suites:** backend 835 passed, 43 skipped, ~29s. Frontend 80 passed, `npm run build` clean.
 
 This replaces `architecture-review-verification-and-plan.md` and
 `ai-orchestrator-architecture-review-consolidated.md`. Both are deleted. The plan they
@@ -9,8 +9,9 @@ described is complete: phases 0 through 10 are resolved, and phase 3.4 is closed
 ADR 0009. Their per-phase status blocks live in the git history and in the commit
 messages that landed each phase.
 
-Every figure below was measured on `7b497c4`. The method for each is given, so the next
-reader can re-measure rather than trust.
+Every figure below was measured on `7b497c4`. Only documentation has landed since, so
+they still hold at `e871406`. The method for each is given, so the next reader can
+re-measure rather than trust.
 
 ---
 
