@@ -362,7 +362,7 @@ def test_no_database_provision_and_destroy_leave_no_database_residue() -> None:
             actor="tester",
         )
 
-        sandbox_router._complete_database_provision(
+        sandbox_service.complete_database_provision(
             docker_client,
             store,
             sandbox_id=sandbox_id,

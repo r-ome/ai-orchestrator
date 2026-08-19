@@ -24,9 +24,12 @@ from app.delegation.models import (
 from app.dirty_state import DirtyEntry, serialize_snapshot
 from app.previews.config import PreviewSettings
 from app.sandboxes import router as sandbox_router
+from app.sandboxes import service as sandbox_service
 from app.sandboxes.engine_detection import EngineDetection, NO_DATABASE
-from app.sandboxes.manifest import SandboxManifest, read_manifest, write_manifest
+from app.sandboxes.manifest import read_manifest, transition_sandbox_lifecycle
+from app.sandboxes.models import SandboxLifecycleStatus
 from app.sandboxes.naming import ownership_labels, workspace_volume
+from conftest import register_ready_v1_sandbox
 
 
 BASE = "1" * 40
@@ -558,36 +561,25 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
         ).decode().strip()
 
         store = get_controller_store()
-        store.register_v1_project(
-            project_id=project_id,
-            remote_url=f"https://example.test/{run_id}.git",
-            default_branch="main",
-            mirror_volume=f"delivery-mirror-{run_id}",
-            created_at="",
-        )
-        store.register_v1_sandbox(
+        register_ready_v1_sandbox(
+            store,
             sandbox_id=sandbox_id,
             project_id=project_id,
             project_name="delivery test",
             volume_name=workspace,
+            remote_url=f"https://example.test/{run_id}.git",
+            default_branch="main",
+            mirror_volume=f"delivery-mirror-{run_id}",
             created_at="",
+            feature_key=feature_key,
+            desired_state="active",
+            feature_branch=branch,
+            base_ref="refs/heads/main",
+            created_base_commit=base,
+            current_base_commit=base,
+            db_engine=NO_DATABASE,
         )
         store.record_sandbox_resource(sandbox_id, kind="volume", name=workspace)
-        write_manifest(
-            store,
-            SandboxManifest(
-                sandbox_id=sandbox_id,
-                lifecycle_version="v1",
-                feature_key=feature_key,
-                desired_state="active",
-                lifecycle_status="ready",
-                feature_branch=branch,
-                base_ref="refs/heads/main",
-                created_base_commit=base,
-                current_base_commit=base,
-                db_engine=NO_DATABASE,
-            ),
-        )
         store.record_sandbox_engine_detection(
             sandbox_id=sandbox_id,
             signals=[],
@@ -652,22 +644,22 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
         def complete_sync(*_args: object, **_kwargs: object) -> None:
             manifest = read_manifest(store, sandbox_id)
             assert manifest is not None
-            write_manifest(
+            assert transition_sandbox_lifecycle(
                 store,
                 replace(
                     manifest,
-                    lifecycle_status="ready",
                     current_base_commit=manifest.pending_base_commit,
                     pending_base_commit=None,
                 ),
+                to_status=SandboxLifecycleStatus.READY,
             )
 
-        monkeypatch.setattr(sandbox_router, "fetch_canonical_mirror", lambda *_a, **_k: None)
-        monkeypatch.setattr(sandbox_router, "mirror_base_commit", lambda *_a, **_k: base)
-        monkeypatch.setattr(sandbox_router, "sync_workspace_from_mirror", lambda *_a, **_k: None)
-        monkeypatch.setattr(sandbox_router, "_complete_database_provision", complete_sync)
+        monkeypatch.setattr(sandbox_service, "fetch_canonical_mirror", lambda *_a, **_k: None)
+        monkeypatch.setattr(sandbox_service, "mirror_base_commit", lambda *_a, **_k: base)
+        monkeypatch.setattr(sandbox_service, "sync_workspace_from_mirror", lambda *_a, **_k: None)
+        monkeypatch.setattr(sandbox_service, "complete_database_provision", complete_sync)
         monkeypatch.setattr(
-            sandbox_router,
+            sandbox_service,
             "discover_engine",
             lambda *_a, **_k: EngineDetection(
                 signals=(),
