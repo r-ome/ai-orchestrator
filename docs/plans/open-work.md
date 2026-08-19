@@ -5,54 +5,16 @@
 
 This replaces `architecture-review-verification-and-plan.md` and
 `ai-orchestrator-architecture-review-consolidated.md`. Both are deleted. The plan they
-described is complete: phases 0 through 10 are resolved, and phase 3.4 is stopped by an
-explicit decision, not by oversight. Their per-phase status blocks live in the git history
-and in the commit messages that landed each phase.
+described is complete: phases 0 through 10 are resolved, and phase 3.4 is closed by
+ADR 0009. Their per-phase status blocks live in the git history and in the commit
+messages that landed each phase.
 
 Every figure below was measured on `7b497c4`. The method for each is given, so the next
 reader can re-measure rather than trust.
 
 ---
 
-## 1. Phase 3.4 — two shared-database implementations, decision open
-
-The only piece of the old plan that is unfinished. It stopped because it is not a refactor.
-
-The review assumed one implementation was a dead fallback. Both are live:
-`previews/sharing.py:133 _shared_database_server` and
-`sandboxes/database.py:1393 _ensure_shared_server`. They resolve byte-identical Docker
-resource names, so both address the same container, but they behave differently on failure.
-
-A handoff scoped this as "four differences to thread". Reading both functions found twelve,
-five of them behavioural:
-
-| Difference | Behavioural |
-|---|---|
-| Image-mismatch 409 fires before provisioning in sandboxes, after it in previews | yes |
-| Health check raises `PreviewOperationError` vs 422/408 with its own wording | yes |
-| Image pull failure maps to 424 vs letting the raw `DockerException` escape | yes |
-| `database=` gets the proposal's name vs `""` | yes |
-| Container start is unconditional vs only-when-not-running | yes |
-| `networks.list(names=[…])` vs `networks.get(…)` | no |
-| Engine dispatch: module constant vs `database_engine(name, error)` | no |
-| The `report` ProgressReporter, image source, error factory, return shape, volume labels | mixed |
-
-Making previews delegate to sandboxes changes the error codes and progress events the
-preview UI renders. It cannot land as a structural commit.
-
-**Three routes, none chosen:**
-
-1. Accept the drift and document it.
-2. Thread all twelve differences as parameters. This yields a twelve-parameter function,
-   arguably worse than the duplication.
-3. Leave the two implementations separate, permanently and on purpose.
-
-The preview path also stays reachable for v1 sandboxes with `db_engine == NO_DATABASE`, so
-it cannot simply be deleted.
-
----
-
-## 2. Never covered by any phase
+## 1. Never covered by any phase
 
 ### The two largest backend modules were never decomposition targets
 
@@ -67,7 +29,8 @@ it cannot simply be deleted.
 
 Phase 7 split `ControllerStore`; phase 8 split `previews`. Nothing did this. Phase 5 grew
 `sandboxes/service.py` from 695 to 1,487 lines by design and recorded it.
-`sandboxes/database.py` also holds one of the two implementations in item 1.
+`sandboxes/database.py` also holds one of the two shared-database implementations
+that section 4 closes.
 
 For contrast, the frontend hotspots the review named were fixed: `DelegationWorkspace.tsx`
 went 1,780 → 525 lines, `PlanningSessionPage.tsx` 1,200+ → 635.
@@ -98,7 +61,7 @@ pool and broke 5 unrelated tests until pruned. Prune before and after.
 
 ---
 
-## 3. Structural debt, measured
+## 2. Structural debt, measured
 
 ### The 8-node domain import cycle
 
@@ -161,7 +124,7 @@ are genuinely read, and that analysis has to come first.
 
 ---
 
-## 4. Small, cheap, unblocked
+## 3. Small, cheap, unblocked
 
 - **Three dead imports** in `tests/delegation/test_delivery.py`: `mkdtemp` (line 6),
   `ControllerStore` (line 14), `IntegrationReviewStatus` (line 21). Each name appears
@@ -179,7 +142,39 @@ are genuinely read, and that analysis has to come first.
 
 ---
 
-## 5. Decided and closed — do not reopen without reading this
+## 4. Decided and closed — do not reopen without reading this
+
+### Phase 3.4, two shared-database implementations — closed separate, 20 Aug 2026
+
+Decided in `docs/adr/0009-two-shared-database-implementations.md`. Keep both
+`previews/sharing.py:133 _shared_database_server` and
+`sandboxes/database.py:1393 _ensure_shared_server`. Change no code.
+
+They are not duplication. `sandbox_database_runtime` (`sandboxes/database.py:1053`)
+routes a preview to the previews path whenever the sandbox has
+`lifecycle_version != "v1"` or `db_engine == "none"`, and to the sandboxes path
+otherwise. Previews is MySQL-only by construction, so it cannot address a PostgreSQL
+shared server at all.
+
+Two of the five behavioural differences the old entry listed are not behavioural.
+`database=` is unread when `shared=True` (`sandboxes/database.py:257`), and container
+start is identical because `create_hardened` returns the container unstarted
+(`containers/hardened.py:180`). The `LABEL_DATA_MANAGED` volume difference is inert
+too: its only reader also filters on a run id, which shared volumes never carry.
+
+Three differences remain, and only the image source can cause harm. The shared
+container name keys on the project, so one project with a `mysql` sandbox and a
+`none` sandbox points both implementations at one container; mismatched image tags
+then give one of them a permanent 409.
+
+Measured on 20 Aug 2026, the collision is latent. Both the live store and the 18 Aug
+pre-reset backup hold one project and one sandbox (`v1`, `db_engine = none`), zero
+`sandbox_databases` rows and zero `shared_database_schemas` rows. All four recorded
+approvals declare `services: {}`. Neither implementation has ever provisioned a
+database here.
+
+**If the feature is ever used**, give the image one authority. Do not merge the two
+functions — that leaves the shared container name, which is the part that collides.
 
 ### One `Severity` enum — closed unbuilt, 19 Aug 2026
 
@@ -227,7 +222,7 @@ delegation family, which touches the `/changes` route and so is a wire change.
 
 ---
 
-## 6. Working agreements that earned their place
+## 5. Working agreements that earned their place
 
 These came out of eleven phases. Each one is here because ignoring it cost something.
 
