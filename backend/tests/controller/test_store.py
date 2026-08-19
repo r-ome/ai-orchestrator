@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 import app.controller.store as store_module
+import app.controller.store.migrations as migrations_module
 from app.controller.store import ControllerStore
 
 
@@ -669,7 +670,7 @@ def test_initialize_applies_migrations_in_order_once_and_skips_stamps(
         return apply
 
     monkeypatch.setattr(
-        store_module,
+        migrations_module,
         "MIGRATIONS",
         {101: migration(101), 102: migration(102), 103: migration(103)},
     )
@@ -720,7 +721,7 @@ def test_migration_starts_after_previous_stamp_in_autocommit_mode(
         )
 
     monkeypatch.setattr(
-        store_module,
+        migrations_module,
         "MIGRATIONS",
         {18: lambda connection: None, 19: disable_foreign_keys},
     )
@@ -781,7 +782,7 @@ def test_migration_can_rebuild_parent_table_with_foreign_key_children(
         )
 
     monkeypatch.setattr(
-        store_module,
+        migrations_module,
         "MIGRATIONS",
         {18: create_parent_and_child, 19: rebuild_parent},
     )
@@ -817,7 +818,7 @@ def test_failed_migration_preserves_earlier_stamps_and_retries_only_failure(
             failed_once = False
             raise RuntimeError("migration failed")
 
-    monkeypatch.setattr(store_module, "MIGRATIONS", {18: succeed, 19: fail_once})
+    monkeypatch.setattr(migrations_module, "MIGRATIONS", {18: succeed, 19: fail_once})
 
     with pytest.raises(RuntimeError, match="migration failed"):
         store.initialize()
@@ -880,11 +881,11 @@ def test_upgrade_preserves_data_and_reruns_no_applied_migration(
         # version 1 the same stamps are absent, so the fakes would legitimately
         # run and prove nothing.
         monkeypatch.setattr(
-            store_module,
+            migrations_module,
             "MIGRATIONS",
             {
                 **{version: old_migration(version) for version in range(2, 18)},
-                **store_module.MIGRATIONS,
+                **migrations_module.MIGRATIONS,
             },
         )
 
