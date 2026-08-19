@@ -1,4 +1,9 @@
-"""Guard the package import direction until the known cycle is removed."""
+"""Guard the app import direction until the known cycle is removed.
+
+The node set is every app-level *module*, not only directory packages.
+Root-level ``.py`` modules were invisible to the earlier version, which
+is why a real ``previews`` <-> ``dependency_cache`` cycle went unreported.
+"""
 
 import ast
 from collections import defaultdict
@@ -12,6 +17,7 @@ KNOWN_CYCLE = frozenset(
         "agents",
         "controller",
         "delegation",
+        "dependency_cache",
         "implementation_context",
         "planning",
         "previews",
@@ -20,7 +26,23 @@ KNOWN_CYCLE = frozenset(
         "tasks",
     }
 )
-PACKAGES_OUTSIDE_KNOWN_CYCLE = frozenset({"containers", "volumes", "turns"})
+MODULES_OUTSIDE_KNOWN_CYCLE = frozenset(
+    {
+        "coercions",
+        "containers",
+        "dirty_state",
+        "docker_client",
+        "docker_errors",
+        "docker_terminal",
+        "env",
+        "errors",
+        "jobs",
+        "labels",
+        "log_stream",
+        "turns",
+        "volumes",
+    }
+)
 
 
 def _app_root() -> Path:
@@ -48,17 +70,28 @@ def _import_targets(node: ast.Import | ast.ImportFrom, package: tuple[str, ...])
     return [base, *(base + (alias.name,) for alias in node.names)]
 
 
-def _package_import_graph(app_root: Path) -> dict[str, set[str]]:
+def _app_nodes(app_root: Path) -> set[str]:
+    """Every app-level node: directory packages plus root-level modules.
+
+    Restricting this to directory packages hides any cycle that runs through
+    a root-level module such as ``app/dependency_cache.py``.
+    """
     packages = {
         child.name
         for child in app_root.iterdir()
         if child.is_dir() and (child / "__init__.py").is_file()
     }
+    modules = {child.stem for child in app_root.glob("*.py") if child.stem != "__init__"}
+    return packages | modules
+
+
+def _package_import_graph(app_root: Path) -> dict[str, set[str]]:
+    packages = _app_nodes(app_root)
     graph: dict[str, set[str]] = defaultdict(set, {package: set() for package in packages})
     for path in app_root.rglob("*.py"):
-        if len(path.relative_to(app_root).parts) < 2:
-            continue
         module = _module_parts(path, app_root)
+        if len(module) < 2:
+            continue
         source = module[1]
         if source not in packages:
             continue
@@ -69,7 +102,8 @@ def _package_import_graph(app_root: Path) -> dict[str, set[str]]:
                 continue
             for target in _import_targets(node, package):
                 if len(target) > 1 and target[0] == "app" and target[1] in packages:
-                    graph[source].add(target[1])
+                    if target[1] != source:
+                        graph[source].add(target[1])
     return graph
 
 
@@ -114,25 +148,25 @@ def _strongly_connected_components(graph: dict[str, set[str]]) -> list[frozenset
     return components
 
 
-def test_package_import_cycle_stays_at_the_known_baseline() -> None:
+def test_app_import_cycle_stays_at_the_known_baseline() -> None:
     components = _strongly_connected_components(_package_import_graph(_app_root()))
     largest = max(components, key=len)
 
-    assert PACKAGES_OUTSIDE_KNOWN_CYCLE.isdisjoint(largest), (
-        "Packages outside the known cycle joined it: "
-        f"{sorted(PACKAGES_OUTSIDE_KNOWN_CYCLE.intersection(largest))}"
+    assert MODULES_OUTSIDE_KNOWN_CYCLE.isdisjoint(largest), (
+        "Modules outside the known cycle joined it: "
+        f"{sorted(MODULES_OUTSIDE_KNOWN_CYCLE.intersection(largest))}"
     )
     if largest < KNOWN_CYCLE:
         raise AssertionError(
-            "The package import cycle shrank to "
+            "The app import cycle shrank to "
             f"{sorted(largest)}. Tighten KNOWN_CYCLE to {sorted(largest)}."
         )
     if KNOWN_CYCLE < largest:
         raise AssertionError(
-            "The package import cycle grew from "
+            "The app import cycle grew from "
             f"{sorted(KNOWN_CYCLE)} to {sorted(largest)}."
         )
     assert largest == KNOWN_CYCLE, (
-        "The largest package import cycle changed unexpectedly: "
+        "The largest app import cycle changed unexpectedly: "
         f"expected {sorted(KNOWN_CYCLE)}, got {sorted(largest)}."
     )
