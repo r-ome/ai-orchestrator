@@ -8,6 +8,7 @@ from docker.client import DockerClient
 
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
+from app.errors import OperationError
 # Models only. `delegation.service` imports this module, so reaching for
 # anything further into that package would close a ring.
 from app.delegation.models import DelegationStatus
@@ -46,11 +47,8 @@ _CONTEXT_SESSION_STATUSES = {
 }
 
 
-class ContextOperationError(Exception):
-    def __init__(self, status_code: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.detail = detail
+class ContextOperationError(OperationError):
+    """An implementation context operation failed."""
 
 
 @dataclass(frozen=True)

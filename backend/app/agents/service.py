@@ -20,6 +20,7 @@ from app.controller.store import (
     ControllerStore,
     SandboxWriterAdmissionError,
 )
+from app.errors import OperationError
 from app.agents.models import (
     AgentProvider,
     CleanupAgentsResponse,
@@ -70,11 +71,8 @@ IDLE_COMMAND = [
 ]
 
 
-class AgentOperationError(Exception):
-    def __init__(self, status_code: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.detail = detail
+class AgentOperationError(OperationError):
+    """An agent operation failed."""
 
 
 def create_agent(

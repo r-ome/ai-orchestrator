@@ -9,6 +9,7 @@ from docker.errors import DockerException
 from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
 from app.delegation.packet import ResolvedVerification
 from app.controller.store import ControllerStore
+from app.errors import OperationError
 from app.sandboxes.database import (
     SandboxDatabaseError,
     SandboxDatabaseRuntime,
@@ -24,11 +25,8 @@ class VerificationSettings:
     max_output_bytes: int
 
 
-class VerificationOperationError(Exception):
-    def __init__(self, status_code: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.detail = detail
+class VerificationOperationError(OperationError):
+    """A verification operation failed."""
 
 
 def run_verification(

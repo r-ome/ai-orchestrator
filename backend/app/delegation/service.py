@@ -38,6 +38,7 @@ from app.delegation.models import (
     delegation_source_statuses,
 )
 from app.delegation.routing import route
+from app.errors import OperationError
 from app.implementation_context.service import ready_context
 from app.planning.config import PlanningSettings
 from app.planning.models import PlanningRole, PlanningStatus
@@ -63,11 +64,8 @@ _LIST_COLUMNS = {
 }
 
 
-class DelegationOperationError(Exception):
-    def __init__(self, status_code: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.detail = detail
+class DelegationOperationError(OperationError):
+    """A delegation operation failed."""
 
 
 def confirmed_command_kinds(

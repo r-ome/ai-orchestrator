@@ -42,6 +42,7 @@ from app.containers.hardened import (
 from app.containers.images import ensure_image
 from app.controller.config import get_controller_settings
 from app.controller.store import ControllerStore, SandboxWriterAdmissionError
+from app.errors import OperationError
 from app.labels import (
     LABEL_CONTROLLER_MANAGED,
     LABEL_DATA_MANAGED,
@@ -172,11 +173,8 @@ logger = logging.getLogger("uvicorn.error")
 ProgressReporter = Callable[..., None]
 
 
-class PreviewOperationError(Exception):
-    def __init__(self, status_code: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.detail = detail
+class PreviewOperationError(OperationError):
+    """A preview operation failed."""
 
 
 def propose_preview(

@@ -21,15 +21,13 @@ from app.containers.models import (
     StopContainerResponse,
 )
 from app.containers.service import container_summary
+from app.errors import OperationError
 
 MAX_FILE_BYTES = 1_048_576
 
 
-class ContainerOperationError(Exception):
-    def __init__(self, status_code: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.detail = detail
+class ContainerOperationError(OperationError):
+    """A container operation failed."""
 
 
 def inspect_managed_container(

@@ -14,6 +14,7 @@ from app.controller.store import (
     SandboxWriterAdmissionError,
 )
 from app.dirty_state import parse_snapshot, serialize_snapshot, snapshot_shell
+from app.errors import OperationError
 from app.previews.config import get_preview_settings
 from app.projects.models import ProjectRegistration
 from app.projects.service import (
@@ -50,11 +51,8 @@ _COMMIT_PATTERN = re.compile(r"^[0-9a-f]{7,64}$")
 _BRANCH_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
 
 
-class TaskOperationError(Exception):
-    def __init__(self, status_code: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.detail = detail
+class TaskOperationError(OperationError):
+    """A task operation failed."""
 
 
 def start_task(

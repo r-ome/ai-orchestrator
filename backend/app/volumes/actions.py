@@ -21,15 +21,13 @@ from app.volumes.models import (
     VolumeFileDetails,
     VolumeFileResponse,
 )
+from app.errors import OperationError
 
 MAX_FILE_BYTES = 1_048_576
 
 
-class VolumeOperationError(Exception):
-    def __init__(self, status_code: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.detail = detail
+class VolumeOperationError(OperationError):
+    """A volume operation failed."""
 
 
 def list_managed_volumes(docker_client: DockerClient) -> ManagedVolumesResponse:

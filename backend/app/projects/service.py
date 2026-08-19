@@ -5,6 +5,7 @@ from docker.client import DockerClient
 from docker.errors import NotFound
 
 from app.controller.store import ControllerStore
+from app.errors import OperationError
 from app.projects.models import ProjectRegistration
 from app.sandboxes.models import SandboxLifecycleStatus
 from app.sandboxes.git import run_git
@@ -42,11 +43,8 @@ GIT_BASELINE_SCRIPT = (
 )
 
 
-class ProjectOperationError(Exception):
-    def __init__(self, status_code: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.detail = detail
+class ProjectOperationError(OperationError):
+    """A project operation failed."""
 
 
 def inspect_registered_project(
