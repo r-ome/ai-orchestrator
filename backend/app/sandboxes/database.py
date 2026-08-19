@@ -25,6 +25,16 @@ from docker.models.containers import Container
 from docker.types import Mount
 from requests.exceptions import ReadTimeout
 
+from app.labels import (
+    LABEL_CONTROLLER_MANAGED,
+    LABEL_KIND,
+    LABEL_PERSISTENT,
+    LABEL_PROJECT_ID,
+    LABEL_PROJECT_SOURCE,
+    LABEL_SERVICE,
+    LABEL_SHARED_DATABASE,
+    LABEL_SHARED_DATABASE_IMAGE,
+)
 from app.previews.config import PreviewSettings
 from app.previews.models import PreviewConfiguration, PreviewDependencyService
 from app.containers.hardened import (
@@ -328,7 +338,7 @@ class MySQLDatabaseEngine:
             environment=request.environment,
             labels={
                 **request.labels,
-                "orchestrator.preview.service": request.service_label,
+                LABEL_SERVICE: request.service_label,
             },
             volumes=request.volumes,
             mounts=request.mounts or None,
@@ -719,7 +729,7 @@ class SQLiteDatabaseEngine(MySQLDatabaseEngine):
             environment=request.environment,
             labels={
                 **request.labels,
-                "orchestrator.preview.service": request.service_label,
+                LABEL_SERVICE: request.service_label,
             },
             volumes=request.volumes,
             mounts=request.mounts or None,
@@ -1139,8 +1149,8 @@ def provision_sandbox_database(
             sandbox_id=sandbox_id,
             project_id=str(sandbox["project_id"]),
         ),
-        "orchestrator.managed": "true",
-        "orchestrator.kind": "sandbox-database",
+        LABEL_CONTROLLER_MANAGED: "true",
+        LABEL_KIND: "sandbox-database",
     }
     network = _owned_sandbox_network(
         docker_client,
@@ -1337,8 +1347,8 @@ def _owned_sandbox_network(
         return None
     labels = {
         **ownership_labels(sandbox_id=sandbox_id, project_id=project_id),
-        "orchestrator.managed": "true",
-        "orchestrator.kind": "sandbox-network",
+        LABEL_CONTROLLER_MANAGED: "true",
+        LABEL_KIND: "sandbox-network",
     }
     try:
         return docker_client.networks.create(
@@ -1391,14 +1401,14 @@ def _ensure_shared_server(
     image = _database_image(engine_name)
     names = shared_database_names(project_id, engine_name)
     labels = {
-        "orchestrator.managed": "true",
-        "orchestrator.kind": "shared-database",
-        "orchestrator.shared-database": "true",
-        "orchestrator.shared-database.image": image,
-        "orchestrator.project.id": project_id,
-        "orchestrator.project.source": project_source,
-        "orchestrator.preview.service": "database",
-        "orchestrator.preview.persistent": "true",
+        LABEL_CONTROLLER_MANAGED: "true",
+        LABEL_KIND: "shared-database",
+        LABEL_SHARED_DATABASE: "true",
+        LABEL_SHARED_DATABASE_IMAGE: image,
+        LABEL_PROJECT_ID: project_id,
+        LABEL_PROJECT_SOURCE: project_source,
+        LABEL_SERVICE: "database",
+        LABEL_PERSISTENT: "true",
     }
     with shared_database_server_lock(names["container"]):
         ensure_image(docker_client, image)
@@ -1431,7 +1441,7 @@ def _ensure_shared_server(
         if container is not None:
             stored_image = (
                 (container.attrs.get("Config") or {}).get("Labels") or {}
-            ).get("orchestrator.shared-database.image", "")
+            ).get(LABEL_SHARED_DATABASE_IMAGE, "")
             if stored_image and stored_image != image:
                 raise SandboxDatabaseError(
                     409,

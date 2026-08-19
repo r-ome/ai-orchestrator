@@ -240,6 +240,42 @@ shape — that gap has to be handled deliberately.
 
 *Risk: 3.3 low and urgent. 3.4 medium and larger than the review estimated.*
 
+**3.4 status, 19 Aug 2026: partially done, delegation deliberately not attempted.**
+
+A later handoff scoped 3.4 as "four differences to thread" between
+`previews._shared_database_server` and `sandboxes.database._ensure_shared_server`. Reading both
+functions found twelve. What the earlier scoping got right: the eight container labels are
+byte-identical, `shared_database_names(key, "mysql")` returns exactly
+`mysql_shared_database_names(key)` so both paths address the same container, and
+`DATABASE_ENGINES["mysql"] is MYSQL_DATABASE`.
+
+What it missed. Beyond the known four (the `report` ProgressReporter, image source, error
+factory, return shape) and the known volume-label divergence:
+
+| Difference | Behavioural |
+|---|---|
+| Image-mismatch 409 fires before provisioning in sandboxes, after it in previews | yes |
+| Health check: previews raises `PreviewOperationError`; sandboxes raises 422/408 with its own wording | yes |
+| Image pull failure: previews maps to 424 "Preview image '...' is unavailable"; sandboxes lets the raw `DockerException` escape | yes |
+| `database=` argument: previews passes the proposal's database name, sandboxes passes `""` | yes |
+| Container start: previews starts a newly created container unconditionally, sandboxes starts only when not running | yes |
+| Network lookup: `networks.list(names=[...])` vs `networks.get(...)` | no |
+| Engine dispatch: module constant vs `database_engine(name, error)` | no |
+
+Making previews delegate would change the error codes and progress events the preview UI shows,
+so it is not a refactor. Three routes remain open: accept the drift, thread all twelve
+differences as parameters (which makes the callee a twelve-parameter function, arguably worse
+than the duplication), or leave the two implementations separate.
+
+Done instead: `sandboxes/database.py` now uses the `app/labels.py` constants rather than
+hardcoding the same fifteen label keys. Zero behaviour change, and it removes the reason a
+reader would think the two label sets could drift.
+
+Still hardcoded elsewhere: 26 more label-key literals across eight files —
+`sandboxes/naming.py`, `sandboxes/engine_detection.py`, `tasks/runner.py`, `planning/runner.py`,
+`agents/service.py`, `implementation_context/inventory.py`, `delegation/verification.py` and
+`controller/lifecycle.py`. Out of scope here; a candidate for Phase 9.
+
 ---
 
 ### Phase 4 — Delete write-only manifest state
