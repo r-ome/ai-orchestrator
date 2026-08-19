@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type {
   DelegationView,
@@ -120,6 +121,38 @@ function renderFeatureReview(delegation: DelegationView | null, busy = '') {
     />,
   )
 }
+
+describe('DelegationPanel change instructions', () => {
+  /**
+   * The panel stays mounted across the items <-> feature-review switch, because
+   * the page renders it for both tabs. Half-typed instructions must survive
+   * that switch. Splitting the two branches into separate components would
+   * unmount this state and silently lose the text.
+   */
+  it('keeps typed instructions across a switch to the items tab and back', async () => {
+    const user = userEvent.setup()
+    const workspace = makeWorkspace({ delegation: makeDelegation() })
+    const { rerender } = render(
+      <DelegationPanel tab="feature-review" workspace={workspace} />,
+    )
+
+    await user.type(
+      screen.getByLabelText('Requested changes'),
+      'Reduce the dialog width',
+    )
+    expect(screen.getByLabelText('Requested changes')).toHaveValue(
+      'Reduce the dialog width',
+    )
+
+    rerender(<DelegationPanel tab="items" workspace={workspace} />)
+    expect(screen.queryByLabelText('Requested changes')).not.toBeInTheDocument()
+
+    rerender(<DelegationPanel tab="feature-review" workspace={workspace} />)
+    expect(screen.getByLabelText('Requested changes')).toHaveValue(
+      'Reduce the dialog width',
+    )
+  })
+})
 
 describe('DelegationPanel feature review', () => {
   it('shows an approved completed review without an incorporated change', () => {
