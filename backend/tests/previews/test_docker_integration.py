@@ -21,7 +21,7 @@ from app.previews.models import (
     PreviewRuntime,
     StartPreviewRequest,
 )
-from app.dependency_cache import _volume_runtime_files
+from app.previews.dependency_cache import _volume_runtime_files
 from app.previews.resources import _labels, _remove_resources
 from app.previews.runtimes.compose import _start_compose
 from app.previews.runtimes.dockerfile import _start_dockerfile

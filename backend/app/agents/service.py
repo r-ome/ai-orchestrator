@@ -31,7 +31,7 @@ from app.agents.models import (
     ReplaceAgentRequest,
     StopAgentResponse,
 )
-from app.dependency_cache import (
+from app.previews.dependency_cache import (
     _dependency_volume,
     _lockfile_digest,
     _volume_runtime_files,

@@ -29,7 +29,7 @@ from app.containers.hardened import (
 )
 from app.controller.config import get_controller_settings
 from app.controller.store import ControllerStore, SandboxWriterAdmissionError
-from app.dependency_cache import (
+from app.previews.dependency_cache import (
     _DEPENDENCY_READY_MARKER,
     _data_volume,
     _dependency_volume,

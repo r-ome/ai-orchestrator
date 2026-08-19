@@ -25,7 +25,7 @@ from app.previews.sharing import (
     _connect_sandbox_database_endpoint,
     _managed_preview_database,
 )
-from app.dependency_cache import _volume_context_tar
+from app.previews.dependency_cache import _volume_context_tar
 
 
 def _start_dockerfile(

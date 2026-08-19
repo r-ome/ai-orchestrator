@@ -1,8 +1,13 @@
 """Guard the app import direction until the known cycle is removed.
 
 The node set is every app-level *module*, not only directory packages.
-Root-level ``.py`` modules were invisible to the earlier version, which
-is why a real ``previews`` <-> ``dependency_cache`` cycle went unreported.
+Root-level ``.py`` modules were invisible to an earlier version of this
+test, which is why a real ``previews`` <-> ``dependency_cache`` cycle went
+unreported until Phase 9 widened the node set and then cut it.
+
+`app/main.py` is the only root-level module left, so the wider node set
+currently catches nothing extra. Keep it anyway: it is what stops the next
+root-level module from re-opening the same blind spot.
 """
 
 import ast
@@ -17,7 +22,6 @@ KNOWN_CYCLE = frozenset(
         "agents",
         "controller",
         "delegation",
-        "dependency_cache",
         "implementation_context",
         "planning",
         "previews",

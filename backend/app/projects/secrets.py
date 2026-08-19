@@ -3,7 +3,7 @@ from typing import Any
 from docker.client import DockerClient
 
 from app.controller.store import ControllerStore
-from app.dependency_cache import _volume_environment_files
+from app.previews.dependency_cache import _volume_environment_files
 from app.previews._shared import _project_key, _ready_project
 from app.previews.config import PreviewSettings
 from app.previews.detection import parse_environment_pairs

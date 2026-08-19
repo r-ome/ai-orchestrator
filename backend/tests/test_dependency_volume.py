@@ -19,7 +19,7 @@ from app.agents.config import AgentSettings
 from app.agents.models import AgentProvider, CreateAgentRequest
 from app.agents.service import create_agent
 from app.controller.store import ControllerStore
-from app.dependency_cache import (
+from app.previews.dependency_cache import (
     _dependency_volume,
     _dependency_volume_name,
     _dependency_volume_ready,

@@ -19,7 +19,7 @@ from app.previews.models import (
     StartPreviewRequest,
 )
 from app.previews.errors import PreviewOperationError
-from app.dependency_cache import _run_volume_name
+from app.previews.dependency_cache import _run_volume_name
 from app.previews.resources import _labels, _remove_resources
 from app.previews.runtimes.native import _start_native
 from app.previews.service import (

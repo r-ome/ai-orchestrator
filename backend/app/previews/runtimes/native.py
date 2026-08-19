@@ -15,7 +15,7 @@ from app.containers.hardened import (
     create_hardened,
 )
 from app.controller.store import ControllerStore
-from app.dependency_cache import (
+from app.previews.dependency_cache import (
     _DEPENDENCY_READY_MARKER,
     _data_volume,
     _dependency_volume,
