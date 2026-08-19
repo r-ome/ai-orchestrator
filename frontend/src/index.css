@@ -1,7 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
-/* Nocturne token foundation. The source of truth is
-   docs/AI orchestrator redesign(1)/_ds/nocturne-5d5c5f44-8660-441f-857c-998fcf575867/styles.css.
+/* Nocturne token foundation. These values ARE the source of truth now. The
+   design-system export they came from was deleted once its redesign shipped;
+   recover it from git history at `docs/AI orchestrator redesign(1)/` if the
+   original ramps are ever needed again.
    Nocturne publishes dark values; light derives from the inverted tonal ramps. */
 /* `data-theme` is stamped on <html> before first paint by the inline script
    in index.html. The bare :root block keeps dark as the scriptless fallback.
