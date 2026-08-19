@@ -15,8 +15,13 @@ Vite proxies `/api` and WebSocket traffic to `http://127.0.0.1:8000`.
 ## Verify
 
 ```bash
+npm run lint
+npm test
 npm run build
 ```
+
+`npm test` runs Vitest against jsdom. Test files live next to the code they
+cover and use the `*.test.tsx` suffix.
 
 The project detail page enforces explicit review. It shows detected preview
 settings and protected-file differences before enabling start or rebuild.

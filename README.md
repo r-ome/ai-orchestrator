@@ -103,6 +103,7 @@ uv run pytest
 
 cd ../frontend
 npm run lint
+npm test
 npm run build
 ```
 
