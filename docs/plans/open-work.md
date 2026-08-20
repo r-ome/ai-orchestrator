@@ -1,6 +1,6 @@
 # Open work
 
-**State:** `chore/label-constants` @ `ac144d6`, 20 Aug 2026, branched from `main` @ `c3638b1`
+**State:** `main` @ `189a840`, 20 Aug 2026. Four commits ahead of `origin/main`, not pushed.
 **Suites:** backend 835 passed, 43 skipped, ~31s. Gated backend 874 passed, 4 skipped, ~137s,
 run twice. Frontend 80 passed, `npm run build` clean.
 **Lint:** `ruff check app tests` passes. `ruff format --check` reports 239 files formatted.
@@ -412,6 +412,12 @@ where the code actually lives.**
 
 ## 2. Structural debt, measured
 
+Two of the four items here are done, 20 Aug 2026, and keep their entries because each
+returned a finding. **What is still open is the import cycle and the function-local
+imports**, plus three smaller things recorded inside the entries below: the label
+vocabulary is close to uncovered, `rebuilding` is a dead status still in the index, and the
+16 preview-status write sites are still literals. Nobody has decided on any of them.
+
 ### The 8-node domain import cycle
 
 `agents, delegation, implementation_context, planning, previews, projects, sandboxes, tasks`.
@@ -494,10 +500,59 @@ Nine sit inside the 8-node cycle and are plausibly load-bearing. The `startup.py
 the candidate worth testing first: `startup` is acyclic now, so the cycle it plausibly
 dodged is cut. Unproven, and hoisting it is a behaviour change.
 
-### `PreviewStatus` was never added
+### `PreviewStatus` — done, 20 Aug 2026
 
-Carried from phase 8. Preview status is still strings. Nothing has established which states
-are genuinely read, and that analysis has to come first.
+`189a840`. The analysis this entry demanded changed the shape of the job. The entry read
+"preview status is still strings", which frames it as typing. The measured problem was
+duplication across two languages.
+
+**The vocabulary is nine values; eight are written.** Active: `preparing`, `running`,
+`restarting`, `rebuilding`, `stopping`. Terminal: `stopped`, `failed`, `missing`, `expired`.
+Nothing writes `rebuilding`.
+
+**The active set was spelled four times**, at `controller/store/previews.py:14` and `:20`,
+in the `preview_runs` branch of the UNION at `controller/store/agents.py:187`, and in the
+`one_active_preview_per_sandbox` UNIQUE INDEX at `controller/store/schema.py:67`.
+
+**That index is the reason the item was worth doing.** It enforces one active preview per
+sandbox. Add an active status to the Python tuples and miss the index, and two active
+previews can coexist. **A Python enum cannot reach the index** — SQLite bakes the literals
+into the definition — so an enum alone would have unified two of four sites and left the
+load-bearing pair drifting. The IN-list is now generated from the same tuple.
+
+`app/controller/store/preview_status.py` owns `PreviewStatus`, `ACTIVE_PREVIEW_STATUSES`,
+`TERMINAL_PREVIEW_STATUSES` and `ACTIVE_PREVIEW_STATUS_SQL`. `previews/models.py` imports
+from it, not the reverse: `controller` is in `MODULES_OUTSIDE_KNOWN_CYCLE` and stays there.
+
+**Three constraints found by measuring, each of which would have been a defect:**
+
+- **`PreviewContainer.status` is not ours.** It holds Docker's container status —
+  `created`, `paused`, `exited`. Typing it with `PreviewStatus` would be a bug. Untouched.
+- **`ACTIVE_PREVIEW_STATUSES` is an ordered tuple, not a frozenset.** Byte-identity with the
+  index in existing databases depends on the value order.
+- **Keeping `rebuilding` forces it into the enum.** Generating the clause from a tuple that
+  omitted it would silently drop it from the index and move the schema.
+
+**`rebuilding` stays, and is open.** Nothing writes it. Removing it means migration 32
+rebuilding the index on every existing controller database, following the migration 23
+precedent (`_include_preparing_in_open_tasks`, a DROP INDEX and recreate with a changed
+status set). Harmless where it sits, because no row can ever hold it. Nobody has decided
+to remove it.
+
+**Still strings, deliberately:** the 16 `status="..."` write sites in `previews/service.py`
+and `app/startup.py`. Converting the write sites is a separate change and was not asked for.
+
+**The frontend constrains nothing.** Five sites render `status` as text and none branch on
+a value, so no frontend change was needed. `ContainerStatusBadge.tsx` reads Docker's
+vocabulary, not this one.
+
+**Method: two oracles, and the schema one is the real gate.** A 54-object dump of
+`sqlite_master` from a freshly initialised store must be byte-identical across the change —
+`/tmp/schema_oracle.py`. It was. The OpenAPI dump is expected to differ and did, gaining a
+`PreviewStatus` enum on exactly the two typed fields. **Tripwire:** adding a value to the
+tuple moves both the index and the UNION, and leaves the `tasks` branch of the same UNION
+alone. That last part is the negative control — without it the tripwire cannot tell
+generation from over-generation.
 
 ---
 
