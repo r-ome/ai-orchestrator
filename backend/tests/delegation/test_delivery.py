@@ -11,6 +11,7 @@ import docker
 import pytest
 from conftest import register_ready_v1_sandbox
 
+import app.sandboxes.service.syncing as sandbox_service_syncing
 from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.delegation import delivery, service
 from app.delegation.models import (
@@ -24,7 +25,6 @@ from app.platform.dirty_state import DirtyEntry, serialize_snapshot
 from app.platform.naming import ownership_labels, workspace_volume
 from app.previews.config import PreviewSettings
 from app.sandboxes import router as sandbox_router
-from app.sandboxes import service as sandbox_service
 from app.sandboxes.engine_detection import NO_DATABASE, EngineDetection
 from app.sandboxes.manifest import read_manifest, transition_sandbox_lifecycle
 
@@ -660,19 +660,21 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
             )
 
         monkeypatch.setattr(
-            sandbox_service, "fetch_canonical_mirror", lambda *_a, **_k: None
+            sandbox_service_syncing, "fetch_canonical_mirror", lambda *_a, **_k: None
         )
         monkeypatch.setattr(
-            sandbox_service, "mirror_base_commit", lambda *_a, **_k: base
+            sandbox_service_syncing, "mirror_base_commit", lambda *_a, **_k: base
         )
         monkeypatch.setattr(
-            sandbox_service, "sync_workspace_from_mirror", lambda *_a, **_k: None
+            sandbox_service_syncing,
+            "sync_workspace_from_mirror",
+            lambda *_a, **_k: None,
         )
         monkeypatch.setattr(
-            sandbox_service, "complete_database_provision", complete_sync
+            sandbox_service_syncing, "complete_database_provision", complete_sync
         )
         monkeypatch.setattr(
-            sandbox_service,
+            sandbox_service_syncing,
             "discover_engine",
             lambda *_a, **_k: EngineDetection(
                 signals=(),

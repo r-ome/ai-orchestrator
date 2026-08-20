@@ -11,7 +11,9 @@ from fastapi.testclient import TestClient
 
 import app.sandboxes.database.mysql as sandbox_database_mysql
 import app.sandboxes.database.postgres as sandbox_database_postgres
+import app.sandboxes.service.publishing as sandbox_service_publishing
 import app.sandboxes.service.resources as sandbox_service_resources
+import app.sandboxes.service.transitions as sandbox_service_transitions
 from app.agents.models import AgentProvider
 from app.controller.store import get_controller_store
 from app.controller.store.lifecycle_status import SandboxLifecycleStatus
@@ -87,11 +89,11 @@ def _stub_canonical_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
             )
         return MirrorPin(volume_name=name, default_branch="main", commit="a" * 40)
 
-    monkeypatch.setattr(sandbox_service, "ensure_project_mirror", ensure)
+    monkeypatch.setattr(sandbox_service_transitions, "ensure_project_mirror", ensure)
     # The Docker fake does not execute Git. Resume identity semantics are
     # exercised here at the router level, while git.py has its own script tests.
     monkeypatch.setattr(
-        sandbox_service, "verify_workspace_identity", lambda *_a, **_k: None
+        sandbox_service_transitions, "verify_workspace_identity", lambda *_a, **_k: None
     )
     monkeypatch.setattr(
         sandbox_database_mysql,
@@ -195,7 +197,9 @@ def test_conflicting_engine_signals_wait_and_surface_every_signal(
         commands_source={"migrate": "prisma"},
     )
     monkeypatch.setattr(
-        sandbox_service, "discover_engine", lambda *_args, **_kwargs: detection
+        sandbox_service_transitions,
+        "discover_engine",
+        lambda *_args, **_kwargs: detection,
     )
 
     created = _create(client).json()
@@ -224,7 +228,9 @@ def test_create_refuses_a_project_that_tracks_its_sqlite_database(
         tracked_database_paths=("prisma/dev.db",),
     )
     monkeypatch.setattr(
-        sandbox_service, "discover_engine", lambda *_args, **_kwargs: detection
+        sandbox_service_transitions,
+        "discover_engine",
+        lambda *_args, **_kwargs: detection,
     )
 
     response = _create(client)
@@ -867,7 +873,7 @@ def test_resume_recovers_a_missing_workspace_but_reraises_other_workspace_errors
         ensure_workspace_import(*args, **kwargs)
 
     monkeypatch.setattr(
-        sandbox_service, "ensure_workspace_import", record_workspace_import
+        sandbox_service_transitions, "ensure_workspace_import", record_workspace_import
     )
     recoverable = _create(client).json()
     imported_workspaces.clear()
@@ -890,7 +896,7 @@ def test_resume_recovers_a_missing_workspace_but_reraises_other_workspace_errors
         workspace_volume(rejected["sandbox_id"])
     )
     monkeypatch.setattr(
-        sandbox_service,
+        sandbox_service_transitions,
         "verify_workspace_identity",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("identity check failed")
@@ -915,7 +921,7 @@ def test_resume_recovers_a_workspace_phase_failure_without_engine_detection(
 ) -> None:
     ensure_workspace_import = sandbox_service.ensure_workspace_import
     monkeypatch.setattr(
-        sandbox_service,
+        sandbox_service_transitions,
         "ensure_workspace_import",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("workspace import failed")
@@ -934,7 +940,7 @@ def test_resume_recovers_a_workspace_phase_failure_without_engine_detection(
     assert store.sandbox_engine_detection(sandbox_id) is None
 
     monkeypatch.setattr(
-        sandbox_service, "ensure_workspace_import", ensure_workspace_import
+        sandbox_service_transitions, "ensure_workspace_import", ensure_workspace_import
     )
     resumed = client.post(f"/sandboxes/{sandbox_id}/resume")
 
@@ -964,7 +970,7 @@ def test_resume_reuses_an_unconfirmed_engine_detection(
         to_status=SandboxLifecycleStatus.CREATING,
     )
     monkeypatch.setattr(
-        sandbox_service,
+        sandbox_service_transitions,
         "discover_engine",
         lambda *_args, **_kwargs: pytest.fail("resume must reuse the stored detection"),
     )
@@ -1319,11 +1325,11 @@ def test_publish_records_verified_git_and_pull_request_result(
         )
 
     monkeypatch.setattr(
-        sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None
+        sandbox_service_publishing, "reviewed_target", lambda *_args, **_kwargs: None
     )
-    monkeypatch.setattr(sandbox_service, "publish_reviewed_feature", publish)
+    monkeypatch.setattr(sandbox_service_publishing, "publish_reviewed_feature", publish)
     monkeypatch.setattr(
-        sandbox_service,
+        sandbox_service_publishing,
         "discover_or_create_pull_request",
         lambda **_kwargs: PullRequest(
             number=42,
@@ -1365,10 +1371,10 @@ def test_publish_failure_records_a_retryable_checkpoint(
         },
     ).json()
     monkeypatch.setattr(
-        sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None
+        sandbox_service_publishing, "reviewed_target", lambda *_args, **_kwargs: None
     )
     monkeypatch.setattr(
-        sandbox_service,
+        sandbox_service_publishing,
         "publish_reviewed_feature",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             PublishError(409, "Sandbox HEAD changed after review")
@@ -1412,10 +1418,10 @@ def test_publish_push_failure_stores_a_safe_message(
         stderr=stderr,
     )
     monkeypatch.setattr(
-        sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None
+        sandbox_service_publishing, "reviewed_target", lambda *_args, **_kwargs: None
     )
     monkeypatch.setattr(
-        sandbox_service,
+        sandbox_service_publishing,
         "publish_reviewed_feature",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
     )
@@ -1473,11 +1479,11 @@ def test_publish_pr_failure_keeps_the_pushed_commit_and_retry_creates_one_pr(
         return PullRequest(42, "https://github.com/owner/repo/pull/42", "open")
 
     monkeypatch.setattr(
-        sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None
+        sandbox_service_publishing, "reviewed_target", lambda *_args, **_kwargs: None
     )
-    monkeypatch.setattr(sandbox_service, "publish_reviewed_feature", publish)
+    monkeypatch.setattr(sandbox_service_publishing, "publish_reviewed_feature", publish)
     monkeypatch.setattr(
-        sandbox_service, "discover_or_create_pull_request", pull_request
+        sandbox_service_publishing, "discover_or_create_pull_request", pull_request
     )
 
     failed = client.post(f"/sandboxes/{created['sandbox_id']}/publish")
@@ -1518,10 +1524,10 @@ def test_publish_api_failure_never_persists_or_returns_the_write_token(
         },
     ).json()
     monkeypatch.setattr(
-        sandbox_service, "reviewed_target", lambda *_args, **_kwargs: None
+        sandbox_service_publishing, "reviewed_target", lambda *_args, **_kwargs: None
     )
     monkeypatch.setattr(
-        sandbox_service,
+        sandbox_service_publishing,
         "publish_reviewed_feature",
         lambda *_args, **_kwargs: PublishOutcome(
             "feature/add-sandbox-api", "b" * 40, "b" * 40, True
