@@ -6,8 +6,10 @@ from uuid import uuid4
 
 import docker
 import pytest
+from conftest import register_ready_v1_sandbox
 
 from app.controller.store import ControllerStore
+from app.platform.naming import ownership_labels, workspace_volume
 from app.previews.config import PreviewSettings
 from app.previews.dependency_cache import _run_volume_name
 from app.previews.errors import PreviewOperationError
@@ -105,10 +107,17 @@ def _fetch(url: str) -> str:
     raise AssertionError(f"{url} never answered: {error}")
 
 
-def _sandbox_volume(client, project_name: str, sandbox_id: str, source: Path):
+def _sandbox_volume(
+    client,
+    project_name: str,
+    sandbox_id: str,
+    project_id: str,
+    source: Path,
+):
     return client.volumes.create(
-        name=f"orchestrator-kind-test-{sandbox_id[:12]}",
+        name=f"{workspace_volume(project_name)}-{sandbox_id[:12]}",
         labels={
+            **ownership_labels(sandbox_id=project_name, project_id=project_id),
             PROJECT_MANAGED: "true",
             PROJECT_NAME: project_name,
             LABEL_SOURCE: str(source),
@@ -120,8 +129,8 @@ def _sandbox_volume(client, project_name: str, sandbox_id: str, source: Path):
             LABEL_COPY_IMAGE: "alpine:latest",
             LABEL_STATUS_STORAGE: STATUS_STORAGE_PROJECT_VOLUME,
             LABEL_COPY_JOB_ID: uuid4().hex,
-            LABEL_PROJECT_ID: uuid4().hex,
-            LABEL_SANDBOX_ID: sandbox_id,
+            LABEL_PROJECT_ID: project_id,
+            LABEL_SANDBOX_ID: project_name,
         },
     )
 
@@ -159,9 +168,19 @@ def test_task_preview_serves_its_commit_and_keeps_it_across_a_restart(
     settings = _settings()
     sandbox_id = uuid4().hex
     project_name = f"task-preview-{sandbox_id[:8]}"
+    project_id = uuid4().hex
     source = tmp_path / project_name
     source.mkdir()
-    volume = _sandbox_volume(client, project_name, sandbox_id, source)
+    volume = _sandbox_volume(client, project_name, sandbox_id, project_id, source)
+    register_ready_v1_sandbox(
+        store,
+        sandbox_id=project_name,
+        project_id=project_id,
+        project_name=project_name,
+        volume_name=volume.name,
+        created_at="2026-08-06T00:00:00Z",
+        db_engine="none",
+    )
     started = False
     try:
         _shell(client, volume.name, "printf base > /project/index.html")
@@ -265,9 +284,19 @@ def test_failed_task_preview_returns_the_task_to_review(
     settings = _settings()
     sandbox_id = uuid4().hex
     project_name = f"failed-task-preview-{sandbox_id[:8]}"
+    project_id = uuid4().hex
     source = tmp_path / project_name
     source.mkdir()
-    volume = _sandbox_volume(client, project_name, sandbox_id, source)
+    volume = _sandbox_volume(client, project_name, sandbox_id, project_id, source)
+    register_ready_v1_sandbox(
+        store,
+        sandbox_id=project_name,
+        project_id=project_id,
+        project_name=project_name,
+        volume_name=volume.name,
+        created_at="2026-08-06T00:00:00Z",
+        db_engine="none",
+    )
     try:
         _shell(client, volume.name, "printf base > /project/index.html")
         _mark_copied(client, volume.name)

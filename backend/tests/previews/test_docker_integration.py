@@ -10,13 +10,20 @@ from uuid import uuid4
 import docker
 import pytest
 import yaml
+from conftest import register_ready_v1_sandbox
 from fastapi.testclient import TestClient
 
 from app.controller.store import ControllerStore, get_controller_store
 from app.main import app
 from app.platform.docker_client import get_docker_client
+from app.platform.labels import LABEL_PERSISTENT
+from app.platform.naming import ownership_labels, workspace_volume
 from app.previews.config import PreviewSettings
-from app.previews.dependency_cache import _volume_runtime_files
+from app.previews.dependency_cache import (
+    _dependency_volume_name,
+    _lockfile_digest,
+    _volume_runtime_files,
+)
 from app.previews.models import (
     PreviewAction,
     PreviewConfiguration,
@@ -477,9 +484,11 @@ def test_approved_proposal_starts_and_stops_through_the_full_service(
     client = docker.from_env()
     sandbox_id = uuid4().hex
     project_name = f"workflow-sandbox-{sandbox_id[:8]}"
+    project_id = uuid4().hex
     project_volume = client.volumes.create(
-        name=f"orchestrator-workflow-test-{sandbox_id[:12]}",
+        name=f"{workspace_volume(project_name)}-{sandbox_id[:12]}",
         labels={
+            **ownership_labels(sandbox_id=project_name, project_id=project_id),
             PROJECT_MANAGED: "true",
             PROJECT_NAME: project_name,
             LABEL_SOURCE: str(source),
@@ -491,9 +500,18 @@ def test_approved_proposal_starts_and_stops_through_the_full_service(
             LABEL_COPY_IMAGE: "alpine:latest",
             LABEL_STATUS_STORAGE: STATUS_STORAGE_PROJECT_VOLUME,
             LABEL_COPY_JOB_ID: uuid4().hex,
-            LABEL_PROJECT_ID: uuid4().hex,
-            LABEL_SANDBOX_ID: sandbox_id,
+            LABEL_PROJECT_ID: project_id,
+            LABEL_SANDBOX_ID: project_name,
         },
+    )
+    register_ready_v1_sandbox(
+        store,
+        sandbox_id=project_name,
+        project_id=project_id,
+        project_name=project_name,
+        volume_name=project_volume.name,
+        created_at="2026-08-04T00:00:00Z",
+        db_engine="none",
     )
     run = None
     try:
@@ -613,6 +631,10 @@ def test_native_preview_reports_real_container_and_dependency_durations() -> Non
         name=f"orchestrator-preview-timing-{run_id[:12]}"
     )
     resources: dict[str, Any] = {"containers": [], "networks": [], "volumes": []}
+    dependency_volume_name = _dependency_volume_name(
+        "timing-sandbox", _lockfile_digest({})
+    )
+    persistent_volume_names = {dependency_volume_name}
     events: list[tuple[str, str, int | None, str | None]] = []
 
     def progress(
@@ -624,6 +646,14 @@ def test_native_preview_reports_real_container_and_dependency_durations() -> Non
         events.append((step, message, duration_ms, started_at))
 
     try:
+        # This test always uses an empty project volume, so the dependency
+        # volume uses the no-lockfile digest. Clear a prior interrupted run
+        # before asserting the cold-install events below.
+        try:
+            client.volumes.get(dependency_volume_name).remove(force=True)
+        except docker.errors.NotFound:
+            pass
+
         port = _available_host_port()
         config = PreviewConfiguration(
             mode=PreviewMode.NATIVE,
@@ -655,6 +685,11 @@ def test_native_preview_reports_real_container_and_dependency_durations() -> Non
             run_id,
             port,
             progress=progress,
+        )
+        persistent_volume_names.update(
+            volume.name
+            for volume in resources["volumes"]
+            if (volume.attrs.get("Labels") or {}).get(LABEL_PERSISTENT) == "true"
         )
 
         body = ""
@@ -697,6 +732,11 @@ def test_native_preview_reports_real_container_and_dependency_durations() -> Non
         )
     finally:
         _remove_resources(resources, remove_data_volumes=True)
+        for volume_name in persistent_volume_names:
+            try:
+                client.volumes.get(volume_name).remove(force=True)
+            except docker.errors.NotFound:
+                pass
         project_volume.remove(force=True)
         client.close()
 
@@ -811,9 +851,11 @@ def test_events_websocket_replays_and_streams_live_container_logs() -> None:
     store = get_controller_store()
     sandbox_id = uuid4().hex
     project_name = f"events-ws-sandbox-{sandbox_id[:8]}"
+    project_id = uuid4().hex
     project_volume = real_docker_client.volumes.create(
-        name=f"orchestrator-events-ws-test-{sandbox_id[:12]}",
+        name=f"{workspace_volume(project_name)}-{sandbox_id[:12]}",
         labels={
+            **ownership_labels(sandbox_id=project_name, project_id=project_id),
             PROJECT_MANAGED: "true",
             PROJECT_NAME: project_name,
             LABEL_SOURCE: f"/projects/{project_name}",
@@ -825,9 +867,18 @@ def test_events_websocket_replays_and_streams_live_container_logs() -> None:
             LABEL_COPY_IMAGE: "alpine:latest",
             LABEL_STATUS_STORAGE: STATUS_STORAGE_PROJECT_VOLUME,
             LABEL_COPY_JOB_ID: uuid4().hex,
-            LABEL_PROJECT_ID: uuid4().hex,
-            LABEL_SANDBOX_ID: sandbox_id,
+            LABEL_PROJECT_ID: project_id,
+            LABEL_SANDBOX_ID: project_name,
         },
+    )
+    register_ready_v1_sandbox(
+        store,
+        sandbox_id=project_name,
+        project_id=project_id,
+        project_name=project_name,
+        volume_name=project_volume.name,
+        created_at="2026-08-06T00:00:00Z",
+        db_engine="none",
     )
     run: Any = None
     try:

@@ -191,7 +191,9 @@ def test_an_agent_written_preview_proposal_cannot_move_the_task(
         )
 
     assert error.value.status_code == 409
-    assert ".agent" in error.value.detail
+    assert error.value.detail == (
+        f"Task branch '{task.branch}' has no commit beyond {task.base_commit}"
+    )
     row = controller_store.task(task.id)
     assert row["status"] == TaskStatus.OPEN.value
     assert row["head_commit"] is None
