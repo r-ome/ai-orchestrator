@@ -1,6 +1,6 @@
 # Open work
 
-**State:** `fix/gated-docker-test-rot` @ `97f98f0`, 20 Aug 2026
+**State:** `main` @ `7950fba`, 20 Aug 2026
 **Suites:** backend 835 passed, 43 skipped, ~31s. Gated backend 874 passed, 4 skipped, ~139s.
 Frontend 80 passed, `npm run build` clean.
 **Lint:** `ruff check app tests` passes. `ruff format --check` reports 219 files formatted.
