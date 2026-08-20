@@ -1,9 +1,11 @@
 # Open work
 
-**State:** `main` @ `189a840`, 20 Aug 2026. Four commits ahead of `origin/main`, not pushed.
-**Suites:** backend 835 passed, 43 skipped, ~31s. Gated backend 874 passed, 4 skipped, ~137s,
-run twice. Frontend 80 passed, `npm run build` clean.
-**Lint:** `ruff check app tests` passes. `ruff format --check` reports 239 files formatted.
+**State:** `main` @ `a787fdc`, 20 Aug 2026. Three commits ahead of `origin/main` (`a74a518`),
+not pushed.
+**Suites:** backend 835 passed, 43 skipped, ~31s. Gated backend 875 passed, 4 skipped, ~140s,
+run twice. Frontend 80 passed, `npm run build` clean — **not re-run since `189a840`; no
+frontend file has changed since.**
+**Lint:** `ruff check app tests` passes. `ruff format --check` reports 240 files formatted.
 
 This replaces `architecture-review-verification-and-plan.md` and
 `ai-orchestrator-architecture-review-consolidated.md`. Both are deleted. The plan they
@@ -413,11 +415,13 @@ where the code actually lives.**
 ## 2. Structural debt, measured
 
 Two of the four items here are done, 20 Aug 2026, and keep their entries because each
-returned a finding. **What is still open is the import cycle and the function-local
-imports**, plus three smaller things recorded inside the entries below: `rebuilding` is a
-dead status still in the index, and **two vocabularies — Docker labels and preview status —
-are each close to undefended by tests**, which is now its own entry. Nobody has decided on
-any of them. The preview-status write sites are done, `4fe0e37`.
+returned a finding. **What is still open is the import cycle, and 13 of the 14
+function-local imports.** One more thing is open and undecided: **two vocabularies — Docker
+labels and preview status — are each close to undefended by tests**, which is now its own
+entry.
+
+Done 20 Aug 2026: the preview-status write sites (`4fe0e37`), the dead `rebuilding` status
+and migration 32 (`d0f0d07`), and the `startup.py` import hoist (`a787fdc`).
 
 ### The 8-node domain import cycle
 
@@ -480,7 +484,7 @@ constants are on the call path — but it fails exactly **one** test of 835,
 `tests/turns/test_events_websocket.py::test_the_context_locator_targets_the_planning_turn_container`.
 834 tests do not notice a corrupted label key. Nobody has decided to close that.
 
-### 14 function-local imports
+### 13 function-local imports — one hoisted 20 Aug 2026, the rest open
 
 Method: AST walk for `Import`/`ImportFrom` nodes inside a function body — not grep.
 
@@ -492,14 +496,26 @@ app/planning/service.py:1208           _generated_at
 app/sandboxes/lifecycle.py:178,179,191 _stop_blocking_preview
 app/sandboxes/lifecycle.py:251,270     drain_sandbox_writers
 app/sandboxes/service/transitions.py:259  resume
-app/startup.py:92                      _reject_abandoned_tasks
+app/startup.py:98                      _reject_abandoned_tasks   -- HOISTED, a787fdc
 app/tasks/service.py:208               run_task
 app/tasks/service.py:752,753           _stop_task_preview
 ```
 
-Nine sit inside the 8-node cycle and are plausibly load-bearing. The `startup.py:92` one is
-the candidate worth testing first: `startup` is acyclic now, so the cycle it plausibly
-dodged is cut. Unproven, and hoisting it is a behaviour change.
+Nine of the remaining 13 sit inside the 8-node cycle and are plausibly load-bearing.
+
+**`startup.py` is done, `a787fdc`.** Its comment claimed the deferral avoided pulling in the
+preview and project services during startup. Half of that was already void:
+`app/startup.py` imports `app.previews.service` at module scope anyway. And `startup` is
+acyclic, so there was no cycle to dodge.
+
+**The proof is the reusable part.** Hoisting is a behaviour change, so reading the comment
+proves nothing. What proved it: each of `app.startup`, `app.tasks.service` and `app.main`
+imports cleanly when imported first, and both orders work in one process; and
+`tests/test_import_direction.py` passes with `KNOWN_CYCLE` untouched. **The negative control
+is the important half** — adding a module-scope `import app.startup` to
+`app/tasks/service.py` makes that test fail on the `MODULES_OUTSIDE_KNOWN_CYCLE` assertion,
+which lists `startup` by name. Without running that, a passing ratchet only shows the test
+ran, not that it defends this module.
 
 ### `PreviewStatus` — done, 20 Aug 2026
 
@@ -534,11 +550,21 @@ from it, not the reverse: `controller` is in `MODULES_OUTSIDE_KNOWN_CYCLE` and s
 - **Keeping `rebuilding` forces it into the enum.** Generating the clause from a tuple that
   omitted it would silently drop it from the index and move the schema.
 
-**`rebuilding` stays, and is open.** Nothing writes it. Removing it means migration 32
-rebuilding the index on every existing controller database, following the migration 23
-precedent (`_include_preparing_in_open_tasks`, a DROP INDEX and recreate with a changed
-status set). Harmless where it sits, because no row can ever hold it. Nobody has decided
-to remove it.
+**`rebuilding` is out of the active set, `d0f0d07`, but stays in the enum.** Migration 32,
+`_remove_rebuilding_from_active_previews`, follows the migration 23 precedent. It builds its
+IN-list from `ACTIVE_PREVIEW_STATUS_SQL` rather than hardcoding literals; migration 23
+hardcodes its own list only because it predates that constant.
+
+**The index and the enum wanted opposite answers, and this entry's reasoning for keeping it
+was wrong.** The entry said `rebuilding` is harmless "because no row can ever hold it".
+That is true of *this* code, not of whatever wrote existing databases. `PreviewRun.status`
+and `PreviewLogs.status` are typed `PreviewStatus`; a probe confirms Pydantic raises a
+`ValidationError` of type `enum` on a row holding a value the enum no longer lists. So
+dropping it from the index is safe on any database and dropping it from the *enum* breaks
+reads of any legacy row. The member stays for reads, and its comment now says so.
+
+**Narrowing a partial UNIQUE index cannot fail on existing data.** It only ever shrinks the
+indexed row set, so it can never introduce a duplicate violation. No backfill is needed.
 
 **The write sites are done, `4fe0e37`, and the count recorded here was wrong.** This entry
 said 16. There are 20. The four it missed are a dict-literal insert at
@@ -564,6 +590,45 @@ vocabulary, not this one.
 tuple moves both the index and the UNION, and leaves the `tasks` branch of the same UNION
 alone. That last part is the negative control — without it the tripwire cannot tell
 generation from over-generation.
+
+**Correction, 20 Aug 2026: the schema oracle is not a gate for migration work.** It reads a
+*freshly initialised* store, so it never exercises a migration path. Measured while landing
+migration 32: with migration 32 deleted from the `MIGRATIONS` map, the oracle's output is
+byte-identical to the correct run, because `schema.py` generates the narrowed index either
+way. A missing migration is invisible to it, and so is a wrong one on any database that
+already exists. Use a forward-migration probe instead — see the entry below.
+
+### Migrations need a forward probe, not a schema dump — method, 20 Aug 2026
+
+Landing migration 32 produced a probe worth reusing, and one wrong turn worth not repeating.
+
+**The wrong turn: comparing a fresh database against a migrated one is vacuous.** Migrations
+run on fresh databases too, so migration 32's `DROP INDEX`/`CREATE` overwrites what
+`schema.py` just built. Both sides of that comparison execute the same code and agree even
+when the code is wrong — a deliberately corrupted migration body produced two identical
+*wrong* indexes and the probe reported success. Codex's own verification made the same
+mistake and reported the same false pass.
+
+**What works,** `/tmp/migration32_probe.py`: initialise a database, force it back to the
+pre-migration state (restore the old index, delete the version stamp), re-initialise, then
+compare the result against an **expected string written out by hand in the probe**. The
+independent reference is the whole point.
+
+**Two negative controls, and they catch different failures:**
+
+| Control | Caught by |
+|---|---|
+| Migration body spells the status list wrong | the probe, and the new index test |
+| Migration left out of the `MIGRATIONS` map | the applied-version assertions |
+
+Neither is caught by the schema oracle. The corrupt-body case was caught by *nothing* until
+`test_the_active_preview_index_holds_exactly_the_active_statuses` was added — it works
+because migration 32 runs on fresh databases, so a corrupt body lands in a fresh store's
+index where a test can see it.
+
+**The applied-version assertions are a real ratchet.** Ten of them, across three test files,
+list every migration version explicitly. Adding a migration fails all ten until you add the
+number. That is the mechanism forcing you to notice; do not weaken it to a length check.
 
 ### Two vocabularies are close to undefended by tests — open, measured 20 Aug 2026
 
@@ -842,6 +907,14 @@ These came out of eleven phases. Each one is here because ignoring it cost somet
   *skipped* suite proves even less. Six gated tests rotted unnoticed over four handoffs
   because the gate hid them, and one of the six is green on any first run and red on the
   second.
+- **An oracle that runs the changed code on both sides proves nothing.** The migration 32
+  probe compared a fresh database against a migrated one, not realising migrations also run
+  on fresh databases. A corrupted migration produced two identical wrong answers and the
+  probe passed. Before trusting any before/after comparison, ask which side is *independent*
+  of the change. If neither is, write the expected value out by hand.
+- **Run `ruff format --check` after any mechanical rename.** `4fe0e37` swapped short string
+  literals for longer enum members and pushed four lines over the limit. The full gated
+  suite stayed green; only the formatter noticed.
 - **When a tripwire fires on some inputs and not others, test your explanation of why.** The
   preview-status sweep looked like "the index defends it" after two data points, and that
   reading was reported before the other six ran. It was wrong: two more members sit in the
@@ -977,7 +1050,7 @@ diff. It catches value-level defects a source diff cannot.
 `backend/.venv/bin/ruff`. The system python has no `app` on its path.
 
 - Ungated: `.venv/bin/python -m pytest -q` → **835 passed, 43 skipped**, ~31s.
-- Gated: `RUN_DOCKER_PREVIEW_TESTS=1` from `backend/` → **874 passed, 4 skipped**, ~137s.
+- Gated: `RUN_DOCKER_PREVIEW_TESTS=1` from `backend/` → **875 passed, 4 skipped**, ~140s.
   Run it twice and read the second run; see section 5.
 - Lint: `ruff check app tests`, then `ruff format --check` (239 files).
 - Frontend gate: `npm run build`, not `tsc --noEmit`.
