@@ -20,6 +20,7 @@ from app.platform.labels import (
 from app.platform.labels import LABEL_RUN_ID as AGENT_RUN_ID
 from app.previews.service import expire_previews
 from app.sandboxes.orphans import discover_orphans
+from app.tasks.service import TaskOperationError, reject_task
 
 _RESTART_REASON = "The backend restarted while this turn was running"
 LIFECYCLE_LEASE_STALE_SECONDS = 60
@@ -92,11 +93,6 @@ def _reject_abandoned_tasks(
     A run whose turn finished is never in that set, so no branch holding a
     verified commit is deleted here.
     """
-    # Imported here rather than at module scope: app.tasks.service pulls in the
-    # preview and project services, and this module is imported during startup
-    # before those are needed.
-    from app.tasks.service import TaskOperationError, reject_task
-
     rejected = 0
     for task_id in task_ids:
         try:
