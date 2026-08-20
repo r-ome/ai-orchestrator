@@ -18,7 +18,6 @@ from app.main import app
 from app.platform.naming import mirror_ownership_labels, ownership_labels
 from app.sandboxes import database as sandbox_database
 from app.sandboxes import lifecycle as sandbox_lifecycle
-from app.sandboxes import service as sandbox_service
 from app.sandboxes.engine_detection import EngineDetection, EngineSignal
 from app.sandboxes.git import (
     GitNetworkMode,
@@ -475,7 +474,7 @@ def test_sync_reports_a_database_added_after_no_database_confirmation(
         ),
     )
 
-    report = sandbox_service.sync_engine_report(
+    report = sandbox_service_syncing.sync_engine_report(
         fake_docker_client,
         store,
         sandbox_id=SANDBOX_ID,

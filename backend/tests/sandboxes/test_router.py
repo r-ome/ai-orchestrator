@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 import app.sandboxes.database.mysql as sandbox_database_mysql
 import app.sandboxes.database.postgres as sandbox_database_postgres
+import app.sandboxes.service.provisioning as sandbox_service_provisioning
 import app.sandboxes.service.publishing as sandbox_service_publishing
 import app.sandboxes.service.resources as sandbox_service_resources
 import app.sandboxes.service.transitions as sandbox_service_transitions
@@ -35,7 +36,6 @@ from app.projects.models import ProjectRegistration
 from app.sandboxes import database as sandbox_database
 from app.sandboxes import publish as sandbox_publish
 from app.sandboxes import router as sandbox_router
-from app.sandboxes import service as sandbox_service
 from app.sandboxes.database import sandbox_database_runtime, shared_database_names
 from app.sandboxes.engine_detection import NO_DATABASE, EngineDetection, EngineSignal
 from app.sandboxes.manifest import (
@@ -403,7 +403,7 @@ def test_no_database_provision_and_destroy_leave_no_database_residue() -> None:
             actor="tester",
         )
 
-        sandbox_service.complete_database_provision(
+        sandbox_service_provisioning.complete_database_provision(
             docker_client,
             store,
             sandbox_id=sandbox_id,
@@ -866,7 +866,7 @@ def test_resume_recovers_a_missing_workspace_but_reraises_other_workspace_errors
     client: TestClient, fake_docker_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     imported_workspaces: list[str] = []
-    ensure_workspace_import = sandbox_service.ensure_workspace_import
+    ensure_workspace_import = sandbox_service_transitions.ensure_workspace_import
 
     def record_workspace_import(*args, **kwargs) -> None:
         imported_workspaces.append(kwargs["sandbox_id"])
@@ -919,7 +919,7 @@ def test_resume_recovers_a_missing_workspace_but_reraises_other_workspace_errors
 def test_resume_recovers_a_workspace_phase_failure_without_engine_detection(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ensure_workspace_import = sandbox_service.ensure_workspace_import
+    ensure_workspace_import = sandbox_service_transitions.ensure_workspace_import
     monkeypatch.setattr(
         sandbox_service_transitions,
         "ensure_workspace_import",
