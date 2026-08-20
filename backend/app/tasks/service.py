@@ -13,6 +13,11 @@ from app.controller.store import (
     OpenTaskExists,
     SandboxWriterAdmissionError,
 )
+from app.controller.store.task_status import (
+    OPEN_TASK_STATUSES,
+    TaskStatus,
+    transition_task,
+)
 from app.platform.dirty_state import parse_snapshot, serialize_snapshot, snapshot_shell
 from app.platform.errors import OperationError
 from app.previews.config import get_preview_settings
@@ -31,17 +36,13 @@ if TYPE_CHECKING:  # pragma: no cover - types only
     from app.tasks.runner import CodingTurnResult
 from app.tasks.models import (
     DEFAULT_BASE_BRANCH,
-    OPEN_TASK_STATUSES,
-    TERMINAL_TASK_STATUSES,
     ReportTaskRequest,
     RunTaskRequest,
     StartTaskRequest,
     Task,
     TaskRunResponse,
     TasksResponse,
-    TaskStatus,
     TurnUsageView,
-    source_statuses,
 )
 from app.tasks.runner import run_coding_turn
 
@@ -629,28 +630,6 @@ def reject_task(
             )
     _stop_task_preview(docker_client, controller_store, task, sandbox)
     return _task(controller_store, task.id)
-
-
-def transition_task(
-    controller_store: ControllerStore,
-    *,
-    task_id: str,
-    to_status: TaskStatus,
-    head_commit: str | None = None,
-) -> bool:
-    """The only way a task's status changes. Sources come from TASK_TRANSITIONS.
-
-    Callers name a destination, never a source, so a transition the table does
-    not draw cannot be requested. The store turns the sources into the UPDATE's
-    WHERE clause, which makes the check atomic rather than a read-then-write.
-    """
-    return controller_store.advance_task_status(
-        task_id=task_id,
-        from_statuses=[status.value for status in source_statuses(to_status)],
-        to_status=to_status.value,
-        head_commit=head_commit,
-        settled=to_status in TERMINAL_TASK_STATUSES,
-    )
 
 
 def open_task_for_sandbox(

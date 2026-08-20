@@ -8,8 +8,9 @@ import pytest
 from conftest import register_ready_v1_sandbox
 
 from app.controller.store import ControllerStore
+from app.controller.store.task_status import TaskStatus, transition_task
 from app.projects.models import ProjectRegistration
-from app.tasks.models import ReportTaskRequest, StartTaskRequest, TaskStatus
+from app.tasks.models import ReportTaskRequest, StartTaskRequest
 from app.tasks.service import (
     TaskOperationError,
     accept_task,
@@ -17,7 +18,6 @@ from app.tasks.service import (
     reject_task,
     report_task_complete,
     start_task,
-    transition_task,
 )
 
 requires_docker = pytest.mark.skipif(

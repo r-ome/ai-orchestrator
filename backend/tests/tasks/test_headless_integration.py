@@ -17,10 +17,11 @@ from conftest import register_ready_v1_sandbox
 
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
+from app.controller.store.task_status import TaskStatus
 from app.projects.models import ProjectRegistration
 from app.tasks import service as task_service
 from app.tasks.config import CodingTurnSettings
-from app.tasks.models import RunTaskRequest, StartTaskRequest, TaskStatus
+from app.tasks.models import RunTaskRequest, StartTaskRequest
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_DOCKER_HEADLESS_TESTS") != "1",

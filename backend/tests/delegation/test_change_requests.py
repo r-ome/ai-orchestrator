@@ -6,6 +6,7 @@ import pytest
 from conftest import register_ready_v1_sandbox
 
 from app.controller.store import ChangeRequestRunning, ControllerStore
+from app.controller.store.task_status import TaskStatus
 from app.delegation import change_requests, service
 from app.delegation.models import (
     ChangeRequestStatus,
@@ -15,7 +16,7 @@ from app.delegation.models import (
 from app.implementation_context.models import ContextStatus
 from app.planning.models import PlanningStatus
 from app.tasks.config import CodingTurnSettings
-from app.tasks.models import Task, TaskRunResponse, TaskStatus, TurnUsageView
+from app.tasks.models import Task, TaskRunResponse, TurnUsageView
 
 SETTINGS = CodingTurnSettings(
     timeout_seconds=900,

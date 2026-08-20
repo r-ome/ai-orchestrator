@@ -15,110 +15,23 @@ The delegation side points *at* a Task; it does not own it. Reading the chain th
 other way round is the mistake this docstring exists to prevent.
 
 `one_open_task_per_sandbox` holds a sandbox to one open Task at a time. See
-`OPEN_TASK_STATUSES` below, which must stay identical to that partial index.
+`OPEN_TASK_STATUSES` in `app/controller/store/task_status.py`, which must stay identical to that partial index.
 
 Not a "sandbox change". `change` already names a different concept in
 `app/delegation/`: a revision of a feature diff under review
 (`FeatureChangeRequest`), which owns a Task through `task_id`. See CONTEXT.md.
 """
 
-from collections.abc import Mapping
-from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from app.agents.models import AgentProvider
-
-
-class TaskStatus(StrEnum):
-    """Where one unit of coding-agent work sits between start and settlement.
-
-    An agent cannot choose a status. The controller opens the task, verifies
-    its branch, and can reopen a reported task for one focused repair.
-    """
-
-    PREPARING = "preparing"
-    OPEN = "open"
-    REPORTED = "reported"
-    PREVIEWING = "previewing"
-    REVIEW = "review"
-    ACCEPTED = "accepted"
-    REJECTED = "rejected"
-    FAILED = "failed"
-
-
-# Must stay identical to the one_open_task_per_sandbox partial index in
-# app/controller/store.py: the index is what enforces the single open task,
-# and this set is what the API reads back.
-OPEN_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
-    {
-        TaskStatus.PREPARING,
-        TaskStatus.OPEN,
-        TaskStatus.REPORTED,
-        TaskStatus.PREVIEWING,
-        TaskStatus.REVIEW,
-    }
-)
-
-TERMINAL_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
-    {TaskStatus.ACCEPTED, TaskStatus.REJECTED, TaskStatus.FAILED}
-)
+from app.controller.store.task_status import TaskStatus
 
 # Only used for task rows written before base_branch was recorded. New tasks
 # always carry the branch the controller read from the sandbox at start.
 DEFAULT_BASE_BRANCH = "main"
-
-# The whole status machine, in one place. Anything absent here is
-# unreachable, because transition_task derives the guarded UPDATE's source
-# statuses from this table and never accepts them from a caller.
-TASK_TRANSITIONS: Mapping[TaskStatus, frozenset[TaskStatus]] = {
-    # Preparing is controller-only. An agent never sees the task until the
-    # baseline facts and branch have been verified.
-    TaskStatus.PREPARING: frozenset({TaskStatus.OPEN, TaskStatus.FAILED}),
-    # open -> rejected exists so a coding agent that never commits cannot hold
-    # its sandbox's only task slot forever. Every non-terminal status sits
-    # inside one_open_task_per_sandbox, so a status with no exit is a deadlock.
-    TaskStatus.OPEN: frozenset({TaskStatus.REPORTED, TaskStatus.REJECTED}),
-    # reported -> open is the controller-directed focused repair path.
-    # reported -> review is the non-preview path, taken by a delegated run
-    # whose branch the controller verified and whose configured verification
-    # commands passed. Many units of delegated work — a shared helper, a
-    # migration, a refactor — have nothing meaningful to preview, and a
-    # mid-graph item can leave the application temporarily unbuildable, so
-    # requiring a preview stack would make them unacceptable rather than
-    # unverified. An agent-driven task still goes through previewing.
-    #
-    # reported -> rejected exists for the same reason as open -> rejected: a
-    # status whose only exit is unavailable holds the sandbox's one task slot
-    # forever.
-    TaskStatus.REPORTED: frozenset(
-        {
-            TaskStatus.OPEN,
-            TaskStatus.PREVIEWING,
-            TaskStatus.REVIEW,
-            TaskStatus.REJECTED,
-        }
-    ),
-    TaskStatus.PREVIEWING: frozenset({TaskStatus.REVIEW, TaskStatus.FAILED}),
-    TaskStatus.REVIEW: frozenset(
-        {TaskStatus.ACCEPTED, TaskStatus.REJECTED, TaskStatus.FAILED}
-    ),
-    TaskStatus.ACCEPTED: frozenset(),
-    TaskStatus.REJECTED: frozenset(),
-    TaskStatus.FAILED: frozenset(),
-}
-
-
-def source_statuses(target: TaskStatus) -> frozenset[TaskStatus]:
-    sources = frozenset(
-        source for source, targets in TASK_TRANSITIONS.items() if target in targets
-    )
-    if target is TaskStatus.OPEN:
-        # PREPARING -> OPEN also writes the verified base fields. The store's
-        # complete_task_preparation method owns that controller-only move.
-        return sources.difference({TaskStatus.PREPARING})
-    return sources
 
 
 class StartTaskRequest(BaseModel):

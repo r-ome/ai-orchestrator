@@ -9,6 +9,7 @@ import pytest
 from conftest import register_ready_v1_sandbox
 
 from app.controller.store import ControllerStore
+from app.controller.store.task_status import TaskStatus
 from app.platform.naming import ownership_labels, workspace_volume
 from app.previews.config import PreviewSettings
 from app.previews.dependency_cache import _run_volume_name
@@ -32,7 +33,7 @@ from app.previews.service import (
     stop_preview,
 )
 from app.projects.service import ensure_git_baseline
-from app.tasks.models import ReportTaskRequest, StartTaskRequest, TaskStatus
+from app.tasks.models import ReportTaskRequest, StartTaskRequest
 from app.tasks.service import report_task_complete, start_task
 
 pytestmark = pytest.mark.skipif(

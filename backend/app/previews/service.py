@@ -13,6 +13,7 @@ from docker.models.containers import Container
 
 from app.controller.store import ControllerStore, SandboxWriterAdmissionError
 from app.controller.store.preview_status import PreviewStatus
+from app.controller.store.task_status import TaskStatus, transition_task
 from app.platform.labels import (
     LABEL_SERVICE,
 )
@@ -74,8 +75,6 @@ from app.previews.sharing import (
     _sharing_state,
     _validate_sharing,
 )
-from app.tasks.models import TaskStatus
-from app.tasks.service import transition_task
 
 SHARED_DATABASE_PREFIX = "orchestrator-shared-db-"
 _preview_lock = Lock()

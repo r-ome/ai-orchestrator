@@ -6,6 +6,7 @@ import pytest
 from conftest import register_ready_v1_sandbox
 
 from app.controller.store import ControllerStore, RunActive
+from app.controller.store.task_status import TaskStatus
 from app.delegation import execution, service
 from app.delegation.models import (
     DelegationStatus,
@@ -17,7 +18,7 @@ from app.delegation.models import (
 from app.implementation_context.models import ContextStatus
 from app.planning.models import PlanningStatus
 from app.tasks.config import CodingTurnSettings
-from app.tasks.models import Task, TaskRunResponse, TaskStatus, TurnUsageView
+from app.tasks.models import Task, TaskRunResponse, TurnUsageView
 from app.tasks.service import TaskOperationError
 
 SETTINGS = CodingTurnSettings(

@@ -9,14 +9,17 @@ from conftest import register_ready_v1_sandbox
 from docker.errors import APIError
 
 from app.controller.store import ControllerStore, OpenTaskExists
+from app.controller.store.task_status import (
+    TASK_TRANSITIONS,
+    TaskStatus,
+    source_statuses,
+    transition_task,
+)
 from app.platform.dirty_state import DirtyEntry, serialize_snapshot
 from app.projects.models import ProjectRegistration
 from app.tasks.models import (
-    TASK_TRANSITIONS,
     ReportTaskRequest,
     StartTaskRequest,
-    TaskStatus,
-    source_statuses,
 )
 from app.tasks.service import (
     TaskOperationError,
@@ -26,7 +29,6 @@ from app.tasks.service import (
     reject_task,
     report_task_complete,
     start_task,
-    transition_task,
 )
 
 BASE_COMMIT = "a" * 40
@@ -967,7 +969,7 @@ def test_a_branch_name_that_would_break_out_of_the_script_is_refused(
 def test_every_open_status_can_reach_a_terminal_one() -> None:
     """A status whose exits are all unavailable holds the sandbox's single
     task slot forever. Walk the graph rather than trusting the table by eye."""
-    from app.tasks.models import (
+    from app.controller.store.task_status import (
         OPEN_TASK_STATUSES,
         TASK_TRANSITIONS,
         TERMINAL_TASK_STATUSES,
@@ -988,14 +990,14 @@ def test_every_open_status_can_reach_a_terminal_one() -> None:
 def test_a_reported_task_can_reach_review_without_a_preview() -> None:
     """The non-preview path a delegated run takes. A unit with nothing to
     preview must still be acceptable once its branch verifies."""
-    from app.tasks.models import TASK_TRANSITIONS, TaskStatus
+    from app.controller.store.task_status import TASK_TRANSITIONS, TaskStatus
 
     assert TaskStatus.REVIEW in TASK_TRANSITIONS[TaskStatus.REPORTED]
     assert TaskStatus.PREVIEWING in TASK_TRANSITIONS[TaskStatus.REPORTED]
 
 
 def test_a_reported_task_can_be_rejected() -> None:
-    from app.tasks.models import TASK_TRANSITIONS, TaskStatus
+    from app.controller.store.task_status import TASK_TRANSITIONS, TaskStatus
 
     assert TaskStatus.REJECTED in TASK_TRANSITIONS[TaskStatus.REPORTED]
 
@@ -1007,7 +1009,7 @@ def test_open_task_statuses_match_the_partial_index(tmp_path: Path) -> None:
     import sqlite3 as sql
 
     from app.controller.store import ControllerStore
-    from app.tasks.models import OPEN_TASK_STATUSES
+    from app.controller.store.task_status import OPEN_TASK_STATUSES
 
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()
