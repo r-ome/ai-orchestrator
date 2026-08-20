@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 from conftest import register_ready_v1_sandbox
+from docker.errors import NotFound
 
 from app.controller.store import (
     ActiveAgentRunExists,
@@ -41,6 +42,57 @@ def _agent(store: ControllerStore) -> None:
         container_id="container-1",
         status="running",
     )
+
+
+class _StubAgentContainer:
+    def __init__(self, status: str) -> None:
+        self.status = status
+        self.short_id = "container-1"
+        self.name = "agent-1"
+        self.attrs = {
+            "Config": {
+                "Labels": {
+                    "orchestrator.agent.managed": "true",
+                    "orchestrator.run.id": "agent-1",
+                }
+            }
+        }
+        self.stop_timeouts: list[int] = []
+        self.remove_forces: list[bool] = []
+
+    def stop(self, *, timeout: int) -> None:
+        self.stop_timeouts.append(timeout)
+        self.status = "exited"
+
+    def remove(self, *, force: bool) -> None:
+        self.remove_forces.append(force)
+        self.status = "removed"
+
+
+class _StubAgentContainers:
+    def __init__(
+        self,
+        container: _StubAgentContainer | None = None,
+        get_error: Exception | None = None,
+    ) -> None:
+        self.container = container
+        self.get_error = get_error
+
+    def get(self, container_id: str) -> _StubAgentContainer:
+        assert container_id == "container-1"
+        if self.get_error is not None:
+            raise self.get_error
+        assert self.container is not None
+        return self.container
+
+
+class _StubAgentDockerClient:
+    def __init__(
+        self,
+        container: _StubAgentContainer | None = None,
+        get_error: Exception | None = None,
+    ) -> None:
+        self.containers = _StubAgentContainers(container, get_error)
 
 
 def _managed_ready(store: ControllerStore, sandbox_id: str = "sandbox-1") -> None:
@@ -708,6 +760,111 @@ def test_destroy_claims_with_writer_and_blocks_new_writers(tmp_path: Path) -> No
         assert store.active_writers("sandbox-1") == []
 
     assert store.sandbox_lease("sandbox-1") is None
+
+
+def test_destroy_drain_stops_running_agent_writer_container(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _managed_ready(store)
+    _agent(store)
+    store.open_agent_writer_session(
+        session_id="writer-1",
+        sandbox_id="sandbox-1",
+        agent_run_id="agent-1",
+        kind="terminal",
+    )
+    container = _StubAgentContainer(status="running")
+    docker_client = _StubAgentDockerClient(container)
+
+    with store.sandbox_lifecycle_lease(
+        sandbox_id="sandbox-1",
+        operation="destroy",
+        operation_id="destroy-1",
+        owner="test",
+        allow_writers=True,
+    ):
+        assert (
+            sandbox_lifecycle.drain_sandbox_writers(
+                docker_client,
+                store,
+                "sandbox-1",
+            )
+            == 1
+        )
+
+    assert container.stop_timeouts == [2]
+    assert container.remove_forces == []
+    agent_run = store.agent_run("agent-1")
+    assert agent_run is not None
+    assert agent_run["status"] == "stopped"
+    assert store.active_writers("sandbox-1") == []
+
+
+def test_destroy_drain_removes_non_running_agent_writer_container(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    _managed_ready(store)
+    _agent(store)
+    store.open_agent_writer_session(
+        session_id="writer-1",
+        sandbox_id="sandbox-1",
+        agent_run_id="agent-1",
+        kind="terminal",
+    )
+    container = _StubAgentContainer(status="exited")
+    docker_client = _StubAgentDockerClient(container)
+
+    with store.sandbox_lifecycle_lease(
+        sandbox_id="sandbox-1",
+        operation="destroy",
+        operation_id="destroy-1",
+        owner="test",
+        allow_writers=True,
+    ):
+        assert (
+            sandbox_lifecycle.drain_sandbox_writers(
+                docker_client,
+                store,
+                "sandbox-1",
+            )
+            == 1
+        )
+
+    assert container.stop_timeouts == []
+    assert container.remove_forces == [True]
+
+
+def test_destroy_drain_closes_agent_writer_when_container_is_gone(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    _managed_ready(store)
+    _agent(store)
+    store.open_agent_writer_session(
+        session_id="writer-1",
+        sandbox_id="sandbox-1",
+        agent_run_id="agent-1",
+        kind="terminal",
+    )
+    docker_client = _StubAgentDockerClient(get_error=NotFound("container not found"))
+
+    with store.sandbox_lifecycle_lease(
+        sandbox_id="sandbox-1",
+        operation="destroy",
+        operation_id="destroy-1",
+        owner="test",
+        allow_writers=True,
+    ):
+        assert (
+            sandbox_lifecycle.drain_sandbox_writers(
+                docker_client,
+                store,
+                "sandbox-1",
+            )
+            == 1
+        )
+
+    assert store.active_writers("sandbox-1") == []
 
 
 def test_preview_stop_is_explicit_and_then_retries_admission(
