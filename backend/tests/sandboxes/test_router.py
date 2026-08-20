@@ -9,6 +9,8 @@ from conftest import mark_sandbox_legacy, register_ready_v1_sandbox
 from docker.errors import APIError, ContainerError, NotFound
 from fastapi.testclient import TestClient
 
+import app.sandboxes.database.mysql as sandbox_database_mysql
+import app.sandboxes.database.postgres as sandbox_database_postgres
 from app.agents.models import AgentProvider
 from app.controller.store import get_controller_store
 from app.controller.store.lifecycle_status import SandboxLifecycleStatus
@@ -91,7 +93,16 @@ def _stub_canonical_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
         sandbox_service, "verify_workspace_identity", lambda *_a, **_k: None
     )
     monkeypatch.setattr(
-        sandbox_database,
+        sandbox_database_mysql,
+        "_read_or_create_server_credentials",
+        lambda *_args, **_kwargs: {
+            "username": "shared-app",
+            "password": "shared-app-password",
+            "root_password": "root-only-password",
+        },
+    )
+    monkeypatch.setattr(
+        sandbox_database_postgres,
         "_read_or_create_server_credentials",
         lambda *_args, **_kwargs: {
             "username": "shared-app",

@@ -9,6 +9,8 @@ from conftest import FakeDockerClient
 
 import app.previews.sharing as preview_sharing
 import app.sandboxes.database as sandbox_database
+import app.sandboxes.database._engine_ops as sandbox_database_engine_ops
+import app.sandboxes.database.mysql as sandbox_database_mysql
 from app.previews.config import get_preview_settings
 from app.previews.errors import PreviewOperationError
 from app.previews.models import (
@@ -231,7 +233,7 @@ def test_server_credentials_use_one_atomic_file_across_concurrent_callers(
     )
     credentials_volume = docker.volumes.create(name="project-credentials")
     monkeypatch.setattr(
-        sandbox_database,
+        sandbox_database_engine_ops,
         "_run_database_command",
         docker.run_database_command,
     )
@@ -315,7 +317,12 @@ def test_sandbox_and_preview_shared_server_creation_use_the_same_project_lock(
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        sandbox_database,
+        sandbox_database_mysql,
+        "_run_database_command",
+        docker.run_database_command,
+    )
+    monkeypatch.setattr(
+        sandbox_database_engine_ops,
         "_run_database_command",
         docker.run_database_command,
     )
