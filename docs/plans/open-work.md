@@ -1,6 +1,6 @@
 # Open work
 
-**State:** `main` @ `7800ed0`, 20 Aug 2026
+**State:** `chore/label-constants` @ `ac144d6`, 20 Aug 2026, branched from `main` @ `c3638b1`
 **Suites:** backend 835 passed, 43 skipped, ~31s. Gated backend 874 passed, 4 skipped, ~137s,
 run twice. Frontend 80 passed, `npm run build` clean.
 **Lint:** `ruff check app tests` passes. `ruff format --check` reports 239 files formatted.
@@ -187,25 +187,36 @@ the test suite did not catch it first**, because the probe compares against a ca
 baseline instead of asking whether anything crashes. Check every new submodule name against
 the names it exports before writing the pop block.
 
-**Finding: ten patch sites do not affect their test's outcome.** A delete-test over all 50
-retargets — flip one (file, module, name) group back to the facade, run that file, require a
-failure — reported 6 groups as inert: all five sites in `tests/delegation/test_delivery.py`,
-and the five `complete_database_provision` sites in `tests/sandboxes/test_sync.py`. Aimed at
-a dead facade binding, the real function runs and succeeds harmlessly against the fake Docker
-client, so the test passes either way. The retargets themselves are correct, proved twice:
-`__globals__` identity for every entrypoint, and a counting wrapper on the real functions
-that recorded **zero** real calls with the retargets in place. This is a test-strength gap,
-not a refactor defect. It is open and nobody has decided to close it.
+**Finding, since corrected: the "ten inert patch sites" figure was wrong.** A delete-test
+over all 50 retargets — flip one (file, module, name) group back to the facade, run that
+file, require a failure — reported 6 groups as inert: all five sites in
+`tests/delegation/test_delivery.py`, and the five `complete_database_provision` sites in
+`tests/sandboxes/test_sync.py`. **That run was ungated, and `test_delivery.py` is behind
+`RUN_DOCKER_PREVIEW_TESTS=1`, so its five sites scored inert only because the test was
+skipped.** The trap was written down in the same breath as the figure, and the figure was
+recorded anyway. Re-measured gated on 20 Aug 2026, three of those five bite.
 
-**Method note: a delete-test that reports "inert" has found a weak test, not a wrong patch.**
-Prove the patch separately by `__globals__`, and confirm interception by counting real calls.
+The retargets themselves were correct all along, proved twice: `__globals__` identity for
+every entrypoint, and a counting wrapper on the real functions that recorded **zero** real
+calls with the retargets in place.
+
+**Closed by `ac144d6`, 20 Aug 2026.** See "The inert patch sites, measured and closed" in
+section 3.
+
+**Method note: "the test still passes without the patch" is not one question but two.**
+Deleting a patch and finding the test still green only says the real function is harmless
+in that fixture — here it succeeds against the fake Docker client. The question that finds
+a weak test is different: neuter the *replacement value* and see whether anything notices.
+Of the five `test_sync.py` sites, all five reached the patched function, and deleting the
+patch passed every time, but neutering the substitute failed only three. Those two numbers
+disagreeing is the gap. Run both probes, and read them separately.
 
 **Two traps in the delete-test harness itself.** Run it ungated and every gated test is
-skipped, which scores as inert; the five `tests/delegation/test_delivery.py` groups are
-gated behind `RUN_DOCKER_PREVIEW_TESTS=1` and read inert for that reason alone. And once
-step 3 pruned the facade, flipping a patch back to `sandbox_service` raises `NameError`
-because the file no longer imports it, so every group scores as biting for a trivial reason.
-The delete-test was only meaningful in the window between step 2 and step 3.
+skipped, which scores as inert — that is the error above, and it is worth more than one
+reading. And once step 3 pruned the facade, flipping a patch back to `sandbox_service`
+raises `NameError` because the file no longer imports it, so every group scores as biting
+for a trivial reason. The delete-test was only meaningful in the window between step 2 and
+step 3. **After a prune, delete the patch instead of flipping it.**
 
 **Step 3, the facade prune — done.** `__init__.py` went from 287 lines and 91 re-exported
 names to **70 lines and 19 names**: exactly the set `app/sandboxes/router.py` reaches, by
@@ -418,21 +429,49 @@ even though `main.py` and `startup.py` are the only ones left and it catches not
 today. It exists to stop the next root module from reopening the blind spot that hid a real
 cycle for eight phases.
 
-### 20 hardcoded label literals across 8 files
+### Hardcoded label literals — done, 20 Aug 2026
 
-Method: `grep -rhoE '"orchestrator\.[a-z.]+"' app`. 29 occurrences, 17 unique, 20 outside
-the canonical `app/platform/labels.py`.
+**The recorded figure was wrong.** The method line said
+`grep -rhoE '"orchestrator\.[a-z.]+"' app`, giving 29 occurrences, 17 unique, 20 outside
+`app/platform/labels.py`. That character class excludes the hyphen, so it silently dropped
+every key containing one — `orchestrator.preview.data-managed`, `orchestrator.shared-database`
+and eight more. **This is the grep-undercount trap of section 5, in a method line that was
+copied forward unread.** Corrected with `'"orchestrator\.[a-z0-9.-]+"'`: **40 occurrences,
+26 unique, 27 outside `labels.py`**, across the same 8 files.
+
+**"20 hardcoded literals" also overstated the defect.** Read, the 27 are three different
+things, and only two of the three were defects:
 
 ```text
-5  app/platform/naming.py
-4  app/sandboxes/engine_detection.py
-4  app/agents/service.py
-2  app/implementation_context/inventory.py
-2  app/delegation/verification.py
-1  app/tasks/runner.py
-1  app/startup.py
-1  app/planning/runner.py
+ 9  bare literal at a use site, constant already exists   fixed
+ 7  private alias re-spelling a labels.py value           fixed
+11  a namespace one module owns, already a constant       left alone, deliberately
 ```
+
+Fixed in `102e1ba`: `app/startup.py` (1), `app/sandboxes/engine_detection.py` (4),
+`app/implementation_context/inventory.py` (2), `app/delegation/verification.py` (2), and the
+seven private aliases in `app/platform/naming.py`. `labels.py` gained
+`LABEL_LIFECYCLE_VERSION` and `LABEL_PROJECT_MIRROR`, the two keys that had no constant.
+
+Left alone: the 8 `orchestrator.agent.*` constants in `app/agents/service.py`, the 2
+`orchestrator.planning.*` in `app/planning/runner.py`, and `orchestrator.task.id` in
+`app/tasks/runner.py`. Each is a namespace exactly one module reads, already held in a named
+constant block. `planning/runner.py` already imports the *shared* keys from `labels.py`, so
+the intended pattern was working there before anything changed. Moving these would put names
+in a shared module nothing else reads. **This was a user decision, not an oversight.**
+
+**Method: verify a literal-to-constant swap with a resolved-vocabulary oracle.**
+`/tmp/label_oracle.py` reads `labels.py` into a name-to-value map, then for each target file
+prints every `orchestrator.*` string it reaches, resolving imported constant names to their
+values. A literal becoming a constant is invisible to it; a changed *value* is not. That is
+the negative control the section 5 oracle method requires. It was byte-identical across the
+change apart from the two new names.
+
+**Tripwire: the label vocabulary is close to uncovered.** Changing
+`LABEL_CONTROLLER_MANAGED` to a junk value moves all five dependent sites, proving the
+constants are on the call path — but it fails exactly **one** test of 835,
+`tests/turns/test_events_websocket.py::test_the_context_locator_targets_the_planning_turn_container`.
+834 tests do not notice a corrupted label key. Nobody has decided to close that.
 
 ### 14 function-local imports
 
@@ -445,7 +484,7 @@ app/delegation/service.py:415          view
 app/planning/service.py:1208           _generated_at
 app/sandboxes/lifecycle.py:178,179,191 _stop_blocking_preview
 app/sandboxes/lifecycle.py:251,270     drain_sandbox_writers
-app/sandboxes/service.py:1249          resume
+app/sandboxes/service/transitions.py:259  resume
 app/startup.py:92                      _reject_abandoned_tasks
 app/tasks/service.py:208               run_task
 app/tasks/service.py:752,753           _stop_task_preview
@@ -464,8 +503,14 @@ are genuinely read, and that analysis has to come first.
 
 ## 3. Cleared, 20 Aug 2026
 
-All five items are done, on `chore/open-work-section-3`. Kept here because two of them
-returned findings worth reading, not to claim credit.
+Two rounds. The first five items landed on `chore/open-work-section-3`. Two more landed on
+`chore/label-constants` later the same day: the label literals of section 2 and the inert
+patch sites of section 1. Kept here because four of the seven returned findings worth
+reading, not to claim credit.
+
+**Both of the later two had a wrong figure recorded against them, and in both cases the
+error was already written down beside the number.** Read the caveat before trusting the
+count it qualifies.
 
 | Commit | What landed |
 |---|---|
@@ -489,6 +534,45 @@ returned findings worth reading, not to claim credit.
   `pages/planningSessionModel.ts` into `components/planningAgentInspectorModel.ts`,
   matching the existing `components/delegationWorkspaceModel.ts` convention.
 - **`ruff` is installed and green.** See below; it was not a small item.
+
+### The inert patch sites, measured and closed
+
+`ac144d6`. Section 1 recorded **ten** inert patch sites. Measured gated, the real number is
+**one dead patch and two blind tests**, and the two figures are answers to different
+questions.
+
+```text
+site                                                     delete patch   neuter value
+tests/delegation/test_delivery.py fetch_canonical_mirror  FAILS          -
+tests/delegation/test_delivery.py mirror_base_commit      FAILS          -
+tests/delegation/test_delivery.py sync_workspace_from_..  FAILS          -
+tests/delegation/test_delivery.py complete_database_pro.  passes         FAILS
+tests/delegation/test_delivery.py discover_engine         passes         never called
+tests/sandboxes/test_sync.py      complete_database_pro.  passes  x5     FAILS 3 of 5
+```
+
+Three of the five `test_delivery.py` sites bite outright. They read inert only because the
+harness ran ungated and the whole test was skipped.
+
+**`discover_engine` was genuinely dead** — replaced with a function that raises, the test
+still passes. A dead patch can also mean a patch aimed at the wrong module, the "one site
+becomes two" shape that bit the database split three times, so
+`app.sandboxes.service.transitions.discover_engine` was probed the same way. Also never
+called. Deleted, and `EngineDetection` dropped from the import with it.
+
+**Two of the five `test_sync.py` tests were blind.** All five reach
+`complete_database_provision`, and its replacement `_complete_sync` carries real assertions
+about the engine-detection snapshot. But only three tests noticed when the replacement was
+gutted, so two would not have seen `sync` drop the call entirely. A `_recording_complete_sync`
+wrapper and one assertion per test closes it. `_complete_sync`'s body is unchanged; its
+assertions are the coverage.
+
+`test_sync_merges_only_after_an_observed_open_pull_request` syncs twice, so it clears the
+recorder beside the `calls.clear()` it already had. **The delegate caught that and stopped
+rather than working around it** — the scope said one entry and the truth was two.
+
+**Tripwire.** Silencing the recorder fails all five tests. Before the change, gutting the
+substitute failed three. That difference is the whole deliverable.
 
 ### ruff was four commits, not a bullet
 
@@ -712,6 +796,36 @@ These came out of eleven phases. Each one is here because ignoring it cost somet
   standing exception is a package `__init__.py` acting as the public surface for a module
   split into a package — `app/controller/store/` and `app/sandboxes/database/`. That is a
   facade, not a shim left behind at an old path.
+- **Enumerate monkeypatch sites with an AST pass, never with grep.** `monkeypatch.setattr(`
+  often puts the module on one line and the name on the next. A grep count during the
+  `service.py` scoping said 10 names across 16 sites; the AST pass found **15 names across
+  50 sites**, and the wrong figure reached the scope doc before it was caught.
+- **Re-measure line ranges between every step of a multi-step split.** Step 1 shifts every
+  number in the file. Ranges measured before step 1 cut in the wrong places at step 2.
+- **A submodule must never share a name with a function it exports.** The facade's closing
+  `globals().pop(<submodule>)` block deletes the function instead. A module `staleness.py`
+  holding a function `staleness` lost the function this way. Check every new submodule name
+  against its exports before writing the pop block.
+- **Prune a package facade in the same session as the split, not later.** With every
+  patched name absent from the facade, a stale patch raises `AttributeError`. Pruning late
+  turns loud failures into findings you have to go looking for.
+- **Read background-command output; never trust the exit code.** One run reported exit 0
+  while every command inside had failed — the trailing `echo` succeeded. Background commands
+  do not inherit the shell's working directory, so use an absolute `cd` inside the command.
+- **A caveat written beside a figure does not correct the figure.** Twice on 20 Aug 2026
+  this doc recorded a number and, in the same block, the reason that number was wrong: the
+  "ten inert patch sites" came from an ungated run whose gated-tests-are-skipped trap was
+  written two paragraphs below, and the "20 label literals" came from a regex whose
+  character class the doc printed in full. Both survived because a caveat reads like
+  diligence. **When you write down why a measurement might be wrong, re-measure or mark the
+  figure unverified — do not record it as a finding.**
+- **A method line copied forward is not a method.** The label-literal grep was carried
+  across several handoffs without anyone running it against the question it claimed to
+  answer. Re-run the method, do not re-read it.
+- **"The test passes without the patch" and "the test notices if the patch does nothing"
+  are two different questions.** The first only tells you the real function is harmless in
+  that fixture. The second finds the weak test. Run both and read them apart; where they
+  disagree is the gap.
 - Every change leaves both suites green and the repo shippable.
 - ASD-STE100 plain language, see `CLAUDE.md`. Real figures, or write "unmeasured".
 
@@ -732,3 +846,42 @@ diff. It catches value-level defects a source diff cannot.
    diff on any move. Expected, not a defect.
 6. **Re-run a mutation harness before trusting the oracle on new work.** A byte-identical
    oracle proves nothing until you have shown it can fail.
+
+---
+
+## 6. Environment and delegation
+
+**Running anything.** Work from `backend/`, using `backend/.venv/bin/python` and
+`backend/.venv/bin/ruff`. The system python has no `app` on its path.
+
+- Ungated: `.venv/bin/python -m pytest -q` → **835 passed, 43 skipped**, ~31s.
+- Gated: `RUN_DOCKER_PREVIEW_TESTS=1` from `backend/` → **874 passed, 4 skipped**, ~137s.
+  Run it twice and read the second run; see section 5.
+- Lint: `ruff check app tests`, then `ruff format --check` (239 files).
+- Frontend gate: `npm run build`, not `tsc --noEmit`.
+
+**Colima.** Must be running for the gated suite. On a stale disk lock
+(`failed to run attach disk "colima", in use by instance "colima"`):
+`colima stop --force`, then `colima start`.
+
+**Docker leak.** Anonymous, hash-named volumes accumulate across gated runs, 6 to 8 per run.
+They are empty and reclaim 0B, so this is clutter, not a disk problem. Prune only by the
+exact prefix `orchestrator-preview-` or `orchestrator-deps-`. **Never
+`--filter name=orchestrator`** — it also matches
+`orchestrator-agent-auth-<provider>-<profile>-<digest>` and deletes agent CLI logins.
+
+**Delegation.** The standing split is: Codex implements, this side verifies. It has held
+across six mechanical steps with no rework.
+
+- Invoke Codex pinned, and close stdin or it hangs forever:
+  `codex exec -m gpt-5.6-terra -c model_reasoning_effort="high" -s workspace-write "<prompt>" < /dev/null`
+- Terra at high effort was enough for every step so far.
+- Include the line **"if you conclude an instruction of mine is wrong, STOP and say so"**.
+  It is the highest-value line in the prompt. Codex stopped twice on the `service.py` split
+  and was right both times; both were errors in the prompt.
+- Give it exact current line ranges, per-module import lists, target layering, an explicit
+  "pure move, change nothing" rule list, and a **Forbidden** section.
+- Write verification commands relative to the directory Codex runs them from — the repo
+  root, where `app/` and `tests/` do not exist.
+- Codex **cannot** reach the Docker socket here and cannot take screenshots. Its `.git` is
+  read-only: create the branch first, and commit on this side.
