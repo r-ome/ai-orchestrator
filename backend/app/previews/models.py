@@ -4,6 +4,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.controller.store.preview_status import PreviewStatus
+
 ENVIRONMENT_VARIABLE_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
@@ -279,7 +281,7 @@ class PreviewRun(BaseModel):
     task_id: str | None = None
     commit_sha: str | None = None
     runtime: PreviewRuntime
-    status: str
+    status: PreviewStatus
     selected_service: str
     container_port: int
     host_port: int | None
@@ -329,7 +331,7 @@ class PreviewProgressEvent(BaseModel):
 class PreviewLogs(BaseModel):
     proposal_id: str
     preview_id: str
-    status: str
+    status: PreviewStatus
     events: list[PreviewProgressEvent]
     logs: dict[str, str]
 

@@ -10,6 +10,7 @@ from .errors import (
     SandboxWriterAdmissionError,
 )
 from .migrations import _violates
+from .preview_status import ACTIVE_PREVIEW_STATUS_SQL
 
 
 class AgentsMixin:
@@ -174,7 +175,7 @@ class AgentsMixin:
         sandbox_id: str,
     ) -> list[dict[str, Any]]:
         rows = connection.execute(
-            """
+            f"""
             SELECT 'task' AS writer_class, id AS writer_id, status, NULL AS kind,
                    NULL AS agent_run_id
             FROM tasks
@@ -184,7 +185,7 @@ class AgentsMixin:
             SELECT 'preview', id, status, kind, NULL
             FROM preview_runs
             WHERE sandbox_id = ?
-              AND status IN ('preparing', 'running', 'restarting', 'rebuilding', 'stopping')
+              AND status IN ({ACTIVE_PREVIEW_STATUS_SQL})
             UNION ALL
             SELECT 'delegation', id, status, NULL, NULL
             FROM delegations

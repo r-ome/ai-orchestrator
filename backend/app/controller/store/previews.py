@@ -2,6 +2,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ._shared import _now, _row
+from .preview_status import ACTIVE_PREVIEW_STATUSES, TERMINAL_PREVIEW_STATUSES
 
 
 class PreviewsMixin:
@@ -11,13 +12,13 @@ class PreviewsMixin:
         return self._active_run(
             "preview_runs",
             sandbox_id,
-            ("preparing", "running", "restarting", "rebuilding", "stopping"),
+            ACTIVE_PREVIEW_STATUSES,
         )
 
     def active_previews(self) -> list[dict[str, Any]]:
         return self._active_runs(
             "preview_runs",
-            ("preparing", "running", "restarting", "rebuilding", "stopping"),
+            ACTIVE_PREVIEW_STATUSES,
         )
 
     def create_preview_run(self, values: Mapping[str, Any]) -> None:
@@ -85,7 +86,7 @@ class PreviewsMixin:
                 f"UPDATE preview_runs SET {assignments} WHERE id = ?",
                 (*values.values(), run_id),
             )
-            if values.get("status") in {"stopped", "expired", "failed", "missing"}:
+            if values.get("status") in TERMINAL_PREVIEW_STATUSES:
                 connection.execute(
                     "DELETE FROM assigned_ports WHERE preview_run_id = ?",
                     (run_id,),

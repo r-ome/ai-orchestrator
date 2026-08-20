@@ -1,4 +1,7 @@
-INITIAL_MIGRATION = """
+from .preview_status import ACTIVE_PREVIEW_STATUS_SQL
+
+INITIAL_MIGRATION = (
+    """
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -64,7 +67,9 @@ CREATE TABLE IF NOT EXISTS preview_runs (
 
 CREATE UNIQUE INDEX IF NOT EXISTS one_active_preview_per_sandbox
 ON preview_runs(sandbox_id)
-WHERE status IN ('preparing', 'running', 'restarting', 'rebuilding', 'stopping');
+WHERE status IN ("""
+    + ACTIVE_PREVIEW_STATUS_SQL
+    + """);
 
 CREATE TABLE IF NOT EXISTS assigned_ports (
     host_port INTEGER PRIMARY KEY,
@@ -417,6 +422,7 @@ CREATE TABLE IF NOT EXISTS work_item_routing (
     updated_at TEXT NOT NULL
 );
 """
+)
 
 
 _CONTEXT_UPDATABLE_COLUMNS = frozenset(
