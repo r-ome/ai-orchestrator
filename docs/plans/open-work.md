@@ -414,14 +414,15 @@ where the code actually lives.**
 
 ## 2. Structural debt, measured
 
-Two of the four items here are done, 20 Aug 2026, and keep their entries because each
-returned a finding. **What is still open is the import cycle, and 13 of the 14
-function-local imports.** One more thing is open and undecided: **two vocabularies — Docker
-labels and preview status — are each close to undefended by tests**, which is now its own
-entry.
+Three of the four items here are done, 20 Aug 2026, and keep their entries because each
+returned a finding. **What is still open is the import cycle, and the 2 function-local
+imports of the original 14 that genuinely carry it.** One more thing is open and undecided:
+**two vocabularies — Docker labels and preview status — are each close to undefended by
+tests**, which is now its own entry.
 
 Done 20 Aug 2026: the preview-status write sites (`4fe0e37`), the dead `rebuilding` status
-and migration 32 (`d0f0d07`), and the `startup.py` import hoist (`a787fdc`).
+and migration 32 (`d0f0d07`), the `startup.py` import hoist (`a787fdc`), and the remaining
+11 hoistable function-local imports.
 
 ### The 8-node domain import cycle
 
@@ -484,38 +485,68 @@ constants are on the call path — but it fails exactly **one** test of 835,
 `tests/turns/test_events_websocket.py::test_the_context_locator_targets_the_planning_turn_container`.
 834 tests do not notice a corrupted label key. Nobody has decided to close that.
 
-### 13 function-local imports — one hoisted 20 Aug 2026, the rest open
+### Function-local imports — 11 hoisted 20 Aug 2026, 2 remain
 
 Method: AST walk for `Import`/`ImportFrom` nodes inside a function body — not grep.
 
+`startup.py:98` went first, `a787fdc`. The other 11 hoistable sites followed in `283b0b1`.
+**Two remain, and both genuinely close a ring:**
+
 ```text
-app/controller/store/projects.py:23    register_v1_project
-app/delegation/execution.py:1254       _provider
-app/delegation/service.py:415          view
-app/planning/service.py:1208           _generated_at
-app/sandboxes/lifecycle.py:178,179,191 _stop_blocking_preview
-app/sandboxes/lifecycle.py:251,270     drain_sandbox_writers
-app/sandboxes/service/transitions.py:259  resume
-app/startup.py:98                      _reject_abandoned_tasks   -- HOISTED, a787fdc
-app/tasks/service.py:208               run_task
-app/tasks/service.py:752,753           _stop_task_preview
+app/delegation/service.py:415    view                latest_review
+app/tasks/service.py:749         _stop_task_preview  stop_preview
 ```
 
-Nine of the remaining 13 sit inside the 8-node cycle and are plausibly load-bearing.
+**This entry used to claim "nine of the remaining 13 sit inside the 8-node cycle and are
+plausibly load-bearing". That conflated two things.** Package membership is not
+load-bearing. The question is whether a module-scope path runs from the imported module
+back to the importer, and for 11 of 13 no such path exists. Measured with a file-level
+module-scope graph that skips `TYPE_CHECKING` blocks and function bodies, then adds the
+implicit parent-package edges, because importing `app.x.y.z` executes `app.x` and `app.x.y`.
+Three `__init__.py` files are non-trivial: `sandboxes/database`, `controller/store`,
+`sandboxes/service`. Adding those edges moved no verdict, but not checking would have been
+an assumption.
 
-**`startup.py` is done, `a787fdc`.** Its comment claimed the deferral avoided pulling in the
-preview and project services during startup. Half of that was already void:
-`app/startup.py` imports `app.previews.service` at module scope anyway. And `startup` is
-acyclic, so there was no cycle to dodge.
+**`tests/test_import_direction.py` cannot verify a hoist.** Its graph uses `ast.walk` with
+no function filter, so function-local imports already count as edges. Hoisting one adds no
+edge and the test output is byte-identical either side. It was the right proof for
+`startup.py`, where the negative control added a *new* edge. It proves nothing here.
 
-**The proof is the reusable part.** Hoisting is a behaviour change, so reading the comment
-proves nothing. What proved it: each of `app.startup`, `app.tasks.service` and `app.main`
-imports cleanly when imported first, and both orders work in one process; and
-`tests/test_import_direction.py` passes with `KNOWN_CYCLE` untouched. **The negative control
-is the important half** — adding a module-scope `import app.startup` to
-`app/tasks/service.py` makes that test fail on the `MODULES_OUTSIDE_KNOWN_CYCLE` assertion,
-which lists `startup` by name. Without running that, a passing ratchet only shows the test
-ran, not that it defends this module.
+**The oracle is a fresh-process import probe**: import each touched module first in its own
+interpreter, then `app.main`, and both orders for every pair. 57 checks.
+
+**Its negative control is the part that matters.** Hoist the one site already known to close
+a ring — `stop_preview` into `tasks/service.py` — and the probe must fail. It does: 37
+failures reading `cannot import name 'transition_task' from partially initialized module`.
+The ratchet passes on that same tree. Run the control before trusting the probe.
+
+**Two sites argued for their own deferral in comments, and both arguments were false.**
+
+- `tasks/service.py:208` named a chain: runner → `agents.service` → `previews.service` →
+  back here. `agents.service` imports `previews.config`, `previews.dependency_cache` and
+  `previews.errors` at module scope. It never imports `previews.service`. The ring did not
+  close at load time.
+- `controller/store/projects.py:23` said the local import "makes credential-free storage an
+  invariant, even when a future caller bypasses a service-layer helper". Import position
+  cannot enforce a call-site rule.
+
+**A comment that contradicts a measurement is where the measurement is usually wrong.** Here
+it was the comments. Trace the chain rather than accepting either side.
+
+**A hoist rebinds the name, so monkeypatch targets move.** The first gated run failed 9
+tests in `tests/tasks/test_service.py`: `app.tasks.runner.run_coding_turn` no longer reached
+the live binding. `run_coding_turn` has one call site, so the retarget to
+`app.tasks.service.run_coding_turn` was unambiguous. **Those 9 failures are the negative
+control for the old target** — a hoist that breaks no test either has no patch aimed at it
+or has one aimed somewhere that never mattered.
+
+**`transitions.py:259` was the free one.** `app.sandboxes.mirror` was already imported at
+module scope in that file, five names at line 35. `MirrorPin` joined the block, so no new
+module-load order existed at all.
+
+Left alone: `tasks/service.py` still guards `from app.tasks.runner import CodingTurnResult`
+behind `TYPE_CHECKING`, above an unconditional import of the same module. Harmless and now
+pointless, but it is not function-local, so it was outside this item.
 
 ### `PreviewStatus` — done, 20 Aug 2026
 
