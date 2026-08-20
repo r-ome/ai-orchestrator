@@ -1,7 +1,8 @@
 # Open work
 
-**State:** `chore/open-work-section-3` @ `93add0c`, 20 Aug 2026
-**Suites:** backend 835 passed, 43 skipped, ~33s. Frontend 80 passed, `npm run build` clean.
+**State:** `fix/gated-docker-test-rot` @ `97f98f0`, 20 Aug 2026
+**Suites:** backend 835 passed, 43 skipped, ~31s. Gated backend 874 passed, 4 skipped, ~139s.
+Frontend 80 passed, `npm run build` clean.
 **Lint:** `ruff check app tests` passes. `ruff format --check` reports 219 files formatted.
 
 This replaces `architecture-review-verification-and-plan.md` and
@@ -14,7 +15,7 @@ Section 3 is cleared. Six commits did it, `60d743d` through `93add0c`; the ruff 
 four of them and is much larger than section 3 implied. Section 3 below now records what
 landed instead of what is open.
 
-Every figure below was re-measured on `93add0c`. The method for each is given, so the next
+Every figure below was re-measured on `93add0c`, and section 1 again on `97f98f0`. The method for each is given, so the next
 reader can re-measure rather than trust. Note that the backend line counts moved: `ruff
 format` rewraps, so most files grew.
 
@@ -47,39 +48,64 @@ that section 4 closes.
 For contrast, the frontend hotspots the review named were fixed: `DelegationWorkspace.tsx`
 went 1,780 → 525 lines, `PlanningSessionPage.tsx` 1,200+ → 635.
 
-### Runtime behaviour is still only exercised with fakes
+### Runtime behaviour: the gated suite is green again
 
-Preview execution modes, Docker reconciliation, and publish pass the suite against fakes.
-The gated suite that would touch them for real has not run since `ce205cd` — four handoffs.
-Docker is up on this machine; `docker.from_env().ping()` succeeded on 19 Aug 2026, so this
-is runnable now.
+Preview execution modes, Docker reconciliation, and publish are now exercised for real.
+The gated suite ran on 20 Aug 2026 for the first time since `ce205cd`, four handoffs back.
 
-Five failures were known at `ce205cd` and are test rot, unrelated to any phase:
+Baseline on `9b729e2` was 869 passed, **5 failed**, 4 skipped in 147s — exactly the five
+failures recorded at `ce205cd`, so they were rot and nothing had regressed since. After
+`97f98f0`: **874 passed, 4 skipped, ~139s.**
 
-- `tests/previews/test_docker_integration.py::test_approved_proposal_starts_and_stops_through_the_full_service`
-- `::test_events_websocket_replays_and_streams_live_container_logs`
-- `tests/previews/test_preview_kinds.py::test_task_preview_serves_its_commit_and_keeps_it_across_a_restart`
-- `::test_failed_task_preview_returns_the_task_to_review`
+The rot was **six tests, not five.** The sixth is the one worth reading:
 
-The first four build a preview without registering its project, which a later phase made
-mandatory. The fifth,
-`tests/tasks/test_docker_tasks.py::test_an_agent_written_preview_proposal_cannot_move_the_task`,
-asserts `.agent` appears in a refusal detail that now reads
-"Task branch '...' has no commit beyond ...".
+`test_native_preview_reports_real_container_and_dependency_durations` passes cold and fails
+warm. It hardcodes the sandbox id `"timing-sandbox"`, and `_data_volume`
+(`previews/dependency_cache.py:292`) keys the *persistent* npm cache on sandbox id, not run
+id. Run 1 creates the cache. Run 2 finds it populated, short-circuits with "already
+installed ... skipping install", and emits 1 dependency event where the test asserts 2.
+**Eleven phases never saw it because nobody ran the suite twice in a row.** Proven by
+deleting that one volume and re-running: green.
 
-Gated runs leak roughly 2 containers, 5 networks and 30 volumes each. Leaked
-`orchestrator-preview-*` networks are not harmless: 28 of them exhausted Colima's address
-pool and broke 5 unrelated tests until pruned. Prune before and after.
+So the standing instruction is now: **run the gated suite twice, not once.** A single green
+run cannot distinguish a repeatable suite from one that poisons its own next run.
 
-### Planning reconcile has no Docker-down coverage
+The five documented failures were two causes, not five. Four were the same missing project
+registration; one was a stale assertion on a refusal string. Both are described in `97f98f0`.
 
-Exposed by clearing section 3, not introduced by it.
-`tests/planning/test_reconcile.py` carried a test named
-`..._when_docker_is_down` whose every assertion ran before any Docker call. It passed with
-its Docker patch deleted. The test is now renamed to what it actually asserts, which leaves
-the real gap visible: **nothing covers `reconcile_controller_state` when the daemon is
-unreachable.** Writing that test needs a decision about whether to fake the daemon or gate
-it behind the Docker suite above.
+### The leak is much smaller than recorded
+
+Measured over three gated runs on 20 Aug 2026: **0 containers, 0 networks, 6 to 8 volumes
+per run.** Every leaked volume is anonymous and hash-named; after a run no named
+`orchestrator-*` volume survives. The old entry claimed "roughly 2 containers, 5 networks
+and 30 volumes each", and warned that 28 leaked `orchestrator-preview-*` networks had
+exhausted Colima's address pool. **Neither reproduced.** Network count held at 4 across all
+three runs.
+
+Prune by the exact prefix `orchestrator-preview-` or `orchestrator-deps-`, never by
+`name=orchestrator`. The broader filter also matches
+`orchestrator-agent-auth-<provider>-<profile>-<digest>`
+(`agents/service.py:521`), which persists agent CLI logins. Deleting those costs a
+re-authentication per profile. That mistake was made on 20 Aug 2026 and cost the `claude`
+and `codex` default profiles.
+
+### Disproved: planning reconcile Docker-down coverage
+
+An earlier entry here claimed **nothing covers `reconcile_controller_state` when the daemon
+is unreachable.** That is wrong. Four tests in `tests/test_startup.py` cover it:
+`test_startup_closes_every_open_agent_writer_session`,
+`..._reclaims_a_lease_for_a_settled_operation`, `..._reclaims_a_stale_unsettled_lease`, and
+`..._orphan_reporting_degrades_when_docker_is_unavailable`. Each patches `app.startup.docker`
+so `from_env()` raises `DockerException`, then asserts the degraded counts.
+
+Proven by deletion on 20 Aug 2026, not by reading: changing `app/startup.py:227` from
+`return counts` to `raise` fails exactly those four and no others. `app/startup.py` was
+restored with zero diff.
+
+The claim came from reading `tests/planning/test_reconcile.py` alone. The function lives in
+`app/startup.py`, and its tests moved to `tests/test_startup.py` in `60d743d` — the same
+commit that wrote the claim. **A gap found in one file is not a gap until you have looked
+where the code actually lives.**
 
 ---
 
@@ -164,8 +190,9 @@ returned findings worth reading, not to claim credit.
 - **The mis-named reconcile test** is now
   `test_reconcile_settles_an_interrupted_turn_and_releases_it`, and its Docker monkeypatch
   is deleted. Confirmed the doc's claim first by deleting the patch and re-running: it
-  passes in 0.82s without it. **The Docker-down path it claimed to cover was never covered
-  and still is not.** That gap is real and now sits in section 1.
+  passes in 0.82s without it. **The Docker-down path it claimed to cover is covered
+  elsewhere**, in `tests/test_startup.py` — see the disproved entry in section 1. The
+  rename was still right; the gap it seemed to expose was not one.
 - **`tests/controller/test_lifecycle.py`** moved to `tests/test_startup.py`. It draws its
   helpers from `tests/conftest.py`, so the depth change needed no other edit.
 - **The frontend layering oddity** is fixed. `PhaseAgent` moved out of
@@ -314,10 +341,13 @@ These came out of eleven phases. Each one is here because ignoring it cost somet
 
 - **Verify every figure and every scoping claim before planning from it.** Every phase found
   the plan's module list or counts wrong. Report corrected numbers explicitly.
-- **A green suite is not proof a test covers anything.** Twelve instances so far. One phase
-  ran a green 834-test suite with the project's real `.env` file silently not loading. The
-  latest is the strongest: `app/controller/store/events.py` held a latent `NameError` in its
-  module annotations across eleven phases, because no test ever read them.
+- **A green suite is not proof a test covers anything.** Thirteen instances so far. One
+  phase ran a green 834-test suite with the project's real `.env` file silently not loading.
+  `app/controller/store/events.py` held a latent `NameError` in its module annotations across
+  eleven phases, because no test ever read them. The newest instance inverts the rule: a
+  *skipped* suite proves even less. Six gated tests rotted unnoticed over four handoffs
+  because the gate hid them, and one of the six is green on any first run and red on the
+  second.
 - **Verify a monkeypatch retarget by DELETING the patch**, not by aiming it at a module that
   binds no such name — the latter raises from `monkeypatch.setattr` itself and so fails for
   the wrong reason. If the test still passes without the patch, check whether it is green for
@@ -334,6 +364,15 @@ These came out of eleven phases. Each one is here because ignoring it cost somet
   as of `93add0c` and must stay that way. Run them from `backend/.venv/bin/ruff`. Do not
   reach for `--unsafe-fixes`, and never narrow an `except` clause to satisfy a rule: add a
   `noqa` with the reason instead.
+- **Run the Docker-gated suite twice in a row, and treat only the second run as the
+  result.** `RUN_DOCKER_PREVIEW_TESTS=1`, from `backend/`. One green run cannot tell a
+  repeatable suite from one that poisons its own next run. That is exactly how a sixth
+  rotted test survived eleven phases.
+- **Delegated work is unverified until you run what the delegate could not.** Codex cannot
+  reach the Docker socket here, so its green ungated run skipped every test it was fixing.
+  Its first report claimed the volumes met v1 ownership validation, which it had no way to
+  observe. Three rounds were needed, and each round's real diagnosis came from a run on this
+  side. Give the delegate the measured error, not the plan's description of it.
 - **A lint rule that fires 20-plus times is usually one pattern, not 20 defects.** Read a
   handful before fixing any. Of ruff's 353, the 34 `ISC004` were all deliberate multi-line
   prompt strings and the 23 `F811` were all one pytest fixture idiom. Two of the 353 were
