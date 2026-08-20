@@ -1,7 +1,10 @@
 """Sandbox workflows independent of HTTP transport."""
 
-import json
-from dataclasses import dataclass, replace
+import json as json
+from dataclasses import (
+    dataclass as dataclass,
+)
+from dataclasses import replace
 
 from docker.client import DockerClient
 from docker.errors import DockerException, NotFound
@@ -12,12 +15,16 @@ from app.platform.naming import (
     database_name,
     db_data_volume,
     feature_branch,
-    is_shared_infrastructure,
     mirror_volume,
-    orphan_ownership_sandbox_id,
     sandbox_id_for,
     validate_ownership,
     workspace_volume,
+)
+from app.platform.naming import (
+    is_shared_infrastructure as is_shared_infrastructure,
+)
+from app.platform.naming import (
+    orphan_ownership_sandbox_id as orphan_ownership_sandbox_id,
 )
 from app.platform.remote import project_id_for_remote
 from app.previews.config import get_preview_settings
@@ -63,7 +70,12 @@ from app.sandboxes.mirror import (
     validate_workspace_import,
     verify_workspace_identity,
 )
-from app.sandboxes.orphans import parse_orphan_resource_key, resource_is_claimed
+from app.sandboxes.orphans import (
+    parse_orphan_resource_key as parse_orphan_resource_key,
+)
+from app.sandboxes.orphans import (
+    resource_is_claimed as resource_is_claimed,
+)
 from app.sandboxes.publish import (
     GitHubApiError,
     PublishError,
@@ -72,123 +84,72 @@ from app.sandboxes.publish import (
     reviewed_target,
 )
 
-
-class SandboxConflict(Exception):
-    """A sandbox state conflict that maps to HTTP 409."""
-
-    status_code = 409
-
-    def __init__(self, detail: object) -> None:
-        self.detail = detail
-        super().__init__(str(detail))
-
-
-class SandboxDependencyFailure(Exception):
-    """A dependency failure that maps to HTTP 424."""
-
-    status_code = 424
-
-    @property
-    def detail(self) -> str:
-        return str(self)
-
-
-class SandboxNotFound(Exception):
-    """A missing sandbox that maps to HTTP 404."""
-
-    status_code = 404
-
-    @property
-    def detail(self) -> str:
-        return str(self)
-
-
-class SandboxUnavailable(Exception):
-    """A sandbox dependency outage that maps to HTTP 503."""
-
-    status_code = 503
-
-    @property
-    def detail(self) -> str:
-        return str(self)
-
-
-class SandboxInternalFailure(Exception):
-    """An internal sandbox failure that maps to HTTP 500."""
-
-    status_code = 500
-
-    @property
-    def detail(self) -> str:
-        return str(self)
-
-
-class SandboxValidationError(Exception):
-    """A rejected sandbox request that maps to HTTP 422."""
-
-    status_code = 422
-
-    @property
-    def detail(self) -> str:
-        return str(self)
-
-
-@dataclass(frozen=True)
-class EngineConfirmation:
-    """One human-approved engine choice, already validated by the caller."""
-
-    engine: str
-    migrate_commands: list[str]
-    seed_commands: list[str]
-    commands_source: dict[str, str]
-    actor: str
-
-
-@dataclass(frozen=True)
-class CreateOutcome:
-    sandbox: dict[str, object]
-    created: bool
-
-
-@dataclass(frozen=True)
-class EngineSyncReport:
-    confirmed_engine: str | None
-    detected_engine: str | None
-    mismatch: bool
-    detection_error: str | None = None
-
-
-@dataclass(frozen=True)
-class SyncOutcome:
-    sandbox: dict[str, object]
-    operation_id: str
-    safety_ref: str
-    strategy: str
-    engine_report: EngineSyncReport
-
-
-@dataclass(frozen=True)
-class PublishOutcome:
-    sandbox_id: str
-    operation_id: str
-    remote_branch: str
-    last_pushed_commit: str
-    remote_branch_sha: str
-    pushed: bool
-    pr_number: int | None = None
-    pr_url: str | None = None
-    pr_state: str | None = None
-    pr_merged_at: str | None = None
-
-
-@dataclass(frozen=True)
-class StalenessOutcome:
-    behind_count: int | None
-    base_ref: str
-    current_base_commit: str
-    mirror_fetched_at: str | None
-    stale_answer: bool
-    fetch_failure_reason: str | None
+from .coercion import (
+    _base_branch as _base_branch,
+)
+from .coercion import (
+    _json_value as _json_value,
+)
+from .coercion import (
+    _optional_string as _optional_string,
+)
+from .coercion import (
+    _required_staleness_value as _required_staleness_value,
+)
+from .coercion import (
+    _required_sync_value as _required_sync_value,
+)
+from .coercion import (
+    _sync_strategy as _sync_strategy,
+)
+from .coercion import (
+    require_v1 as require_v1,
+)
+from .errors import (
+    SandboxConflict as SandboxConflict,
+)
+from .errors import (
+    SandboxDependencyFailure as SandboxDependencyFailure,
+)
+from .errors import (
+    SandboxInternalFailure as SandboxInternalFailure,
+)
+from .errors import (
+    SandboxNotFound as SandboxNotFound,
+)
+from .errors import (
+    SandboxUnavailable as SandboxUnavailable,
+)
+from .errors import (
+    SandboxValidationError as SandboxValidationError,
+)
+from .outcomes import (
+    CreateOutcome as CreateOutcome,
+)
+from .outcomes import (
+    EngineConfirmation as EngineConfirmation,
+)
+from .outcomes import (
+    EngineSyncReport as EngineSyncReport,
+)
+from .outcomes import (
+    PublishOutcome as PublishOutcome,
+)
+from .outcomes import (
+    StalenessOutcome as StalenessOutcome,
+)
+from .outcomes import (
+    SyncOutcome as SyncOutcome,
+)
+from .resources import (
+    _docker_collection as _docker_collection,
+)
+from .resources import (
+    _remove_manifest_resource as _remove_manifest_resource,
+)
+from .resources import (
+    remove_orphan_resource as remove_orphan_resource,
+)
 
 
 def sync(
@@ -658,38 +619,6 @@ def staleness(
     )
 
 
-def remove_orphan_resource(
-    docker_client: DockerClient,
-    controller_store: ControllerStore,
-    *,
-    resource: str,
-) -> str:
-    """Remove one operator-selected orphan after checking live manifest ownership."""
-    try:
-        orphan = parse_orphan_resource_key(resource)
-        collection = _docker_collection(docker_client, orphan.kind)
-    except ValueError as error:
-        raise SandboxValidationError(str(error)) from error
-    try:
-        docker_resource = collection.get(orphan.name)
-    except NotFound as error:
-        raise SandboxNotFound("Orphan resource not found") from error
-    try:
-        if is_shared_infrastructure(docker_resource):
-            raise ValueError("shared infrastructure cannot be removed as an orphan")
-        # A name is only a discovery hint. Removal requires the complete v1
-        # ownership-label shape, which prevents deleting an unrelated sbx-* resource.
-        orphan_ownership_sandbox_id(docker_resource)
-        if resource_is_claimed(controller_store, orphan):
-            raise ValueError("resource is now claimed by a sandbox manifest")
-        _remove_manifest_resource(docker_resource, orphan.kind)
-    except ValueError as error:
-        raise SandboxConflict(str(error)) from error
-    except DockerException as error:
-        raise SandboxUnavailable(str(error)) from error
-    return orphan.key
-
-
 def complete_database_provision(
     docker_client: DockerClient,
     controller_store: ControllerStore,
@@ -835,60 +764,6 @@ def complete_database_provision(
     )
 
 
-def require_v1(
-    sandbox: dict[str, object] | None,
-    sandbox_id: str,
-    refusal: str,
-) -> None:
-    if sandbox is None:
-        raise SandboxNotFound("Sandbox not found")
-    if sandbox.get("lifecycle_version") != "v1":
-        raise SandboxConflict(f"Legacy sandbox '{sandbox_id}' {refusal}")
-
-
-def _required_sync_value(
-    sandbox: dict[str, object], field: str, sandbox_id: str
-) -> str:
-    value = sandbox.get(field)
-    if value is None or not str(value):
-        raise SandboxConflict(
-            f"Sandbox '{sandbox_id}' has no {field}; recreate it explicitly to use v1 sync."
-        )
-    return str(value)
-
-
-def _required_staleness_value(
-    sandbox: dict[str, object], field: str, sandbox_id: str
-) -> str:
-    value = sandbox.get(field)
-    if value is None or not str(value):
-        raise SandboxConflict(
-            f"Sandbox '{sandbox_id}' has no {field}; recreate it explicitly to use v1 staleness."
-        )
-    return str(value)
-
-
-def _sync_strategy(store: ControllerStore, sandbox_id: str) -> str:
-    """Merge only when the publication table observes an open PR."""
-    publication = store.sandbox_publication(sandbox_id)
-    if (
-        publication is not None
-        and publication.get("pr_number") is not None
-        and str(publication.get("pr_state") or "").lower() == "open"
-    ):
-        return "merge"
-    return "rebase"
-
-
-def _base_branch(base_ref: str) -> str:
-    prefix = "refs/heads/"
-    if not base_ref.startswith(prefix) or not base_ref[len(prefix) :]:
-        raise PublishError(
-            409, "Sandbox has an invalid base branch for pull request publishing"
-        )
-    return base_ref[len(prefix) :]
-
-
 def sync_engine_report(
     docker_client: DockerClient,
     controller_store: ControllerStore,
@@ -918,17 +793,6 @@ def sync_engine_report(
         detected_engine=detected_engine,
         mismatch=bool(confirmed and detected_engine and detected_engine != confirmed),
     )
-
-
-def _json_value(value: object, default: object) -> object:
-    try:
-        return json.loads(str(value))
-    except (TypeError, ValueError):
-        return default
-
-
-def _optional_string(value: object) -> str | None:
-    return str(value) if value is not None else None
 
 
 def create_or_resolve(
@@ -1475,38 +1339,6 @@ def _sweep_manifest_resources(
         _remove_manifest_resource(resource, entry["kind"])
 
 
-def _docker_collection(docker_client: DockerClient, kind: str) -> object:
-    """Return the Docker collection for a supported resource kind."""
-    collections = {
-        "volume": docker_client.volumes,
-        "container": docker_client.containers,
-        "network": docker_client.networks,
-    }
-    try:
-        return collections[kind]
-    except KeyError as error:
-        raise SandboxValidationError(
-            f"Unsupported sandbox resource kind: {kind}"
-        ) from error
-
-
-def _remove_manifest_resource(resource: object, kind: str) -> None:
-    if kind == "network":
-        try:
-            resource.reload()  # type: ignore[attr-defined]
-            endpoint_ids = list((resource.attrs.get("Containers") or {}).keys())  # type: ignore[attr-defined]
-        except DockerException:
-            endpoint_ids = []
-        for endpoint_id in endpoint_ids:
-            try:
-                resource.disconnect(endpoint_id, force=True)  # type: ignore[attr-defined]
-            except DockerException:
-                continue
-        resource.remove()  # type: ignore[attr-defined]
-        return
-    resource.remove(force=True)  # type: ignore[attr-defined]
-
-
 def _confirm_engine_snapshot(
     controller_store: ControllerStore,
     *,
@@ -1545,3 +1377,9 @@ def _confirm_engine_snapshot(
         commands_source=sources,
         actor=confirmation.actor,
     )
+
+
+globals().pop("coercion", None)
+globals().pop("errors", None)
+globals().pop("outcomes", None)
+globals().pop("resources", None)

@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 import app.sandboxes.database.mysql as sandbox_database_mysql
 import app.sandboxes.database.postgres as sandbox_database_postgres
+import app.sandboxes.service.resources as sandbox_service_resources
 from app.agents.models import AgentProvider
 from app.controller.store import get_controller_store
 from app.controller.store.lifecycle_status import SandboxLifecycleStatus
@@ -1033,7 +1034,7 @@ def test_orphan_removal_reports_a_docker_outage_as_unavailable(
         },
     )
     monkeypatch.setattr(
-        sandbox_service,
+        sandbox_service_resources,
         "_remove_manifest_resource",
         lambda *_a, **_k: (_ for _ in ()).throw(APIError("daemon said no")),
     )
