@@ -1,7 +1,6 @@
 # Open work
 
-**State:** `refactor/cycle-stage-5` @ `5a5a25b`, 20 Aug 2026. Two commits ahead of
-`origin/main` (`30da0ec`), not pushed.
+**State:** `main` @ `d195115`, 20 Aug 2026, pushed and level with `origin/main`.
 **Suites:** backend 839 passed, 43 skipped, ~28s. Gated backend 878 passed, 4 skipped, ~150s,
 run twice. Frontend 80 passed, `npm run build` clean — **not re-run since `189a840`; no
 frontend file has changed since.**
