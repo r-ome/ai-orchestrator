@@ -1,8 +1,8 @@
 # Open work
 
-**State:** `main` @ `a787fdc`, 20 Aug 2026. Three commits ahead of `origin/main` (`a74a518`),
-not pushed.
-**Suites:** backend 835 passed, 43 skipped, ~31s. Gated backend 875 passed, 4 skipped, ~140s,
+**State:** `refactor/cycle-stage-3` @ `148d907`, 20 Aug 2026. Two commits ahead of
+`origin/main` (`afec862`), not pushed.
+**Suites:** backend 836 passed, 43 skipped, ~30s. Gated backend 875 passed, 4 skipped, ~140s,
 run twice. Frontend 80 passed, `npm run build` clean — **not re-run since `189a840`; no
 frontend file has changed since.**
 **Lint:** `ruff check app tests` passes. `ruff format --check` reports 240 files formatted.
@@ -424,25 +424,53 @@ Done 20 Aug 2026: the preview-status write sites (`4fe0e37`), the dead `rebuildi
 and migration 32 (`d0f0d07`), the `startup.py` import hoist (`a787fdc`), the remaining
 11 hoistable function-local imports, stage 1 of the cycle (`6e5a30b`) and stage 2 (`ba65624`).
 
-### The domain import cycle — 5 nodes, was 8
+### The domain import cycle — 4 nodes, was 8
 
-`agents, previews, projects, sandboxes, tasks`. **15 intra-cycle edges**, was 29.
+`agents, previews, projects, sandboxes`. **9 intra-cycle edges**, was 29.
+
+**The "15 intra-cycle edges" recorded here for the 5-node graph was wrong; it was 14.**
+Re-measured with `/tmp/cycle_edges.py`. Assume the next figure on this page is wrong too.
 
 Phase 9 cut it from 10 nodes to 8. Stage 1 (`6e5a30b`, 20 Aug 2026) cut it to 6 by removing
 `delegation` and `implementation_context`. Stage 2 (`ba65624`) cut it to 5 by removing
-`planning`. See below for what each took.
+`planning`. Stage 3 (`be81e44` and `148d907`) cut it to 4 by removing `tasks`. See below for
+what each took.
 
 **The old entry claimed "no further file move can shrink it". That was wrong**, and it was
 wrong in the direction that stops work: it argued the whole cycle needed signature changes.
 Two of the three stage-1 edges were cut by moving a symbol to the package that owns it. Only
 the third needed a new seam. Re-measure before believing any claim about what is left.
 
-**What is left is genuinely harder, and this is measured, not asserted.** The exact minimum
-feedback arc set for the original graph was **8 edges, 25 symbols, 19 files**. Stages 1 and 2
-spent 4 of those edges, and they were the cheap ones. The next step is `previews -> tasks`
-plus `sandboxes -> tasks` together (5 symbols), taking it to 4 nodes; neither alone shrinks
-it. After that the remainder is `previews <-> projects`, 17 symbols across two directions,
-with no cheap cut and no agreed seam. **Grill the scope before touching it.**
+**A wrong count costs a re-plan. A wrong blocking claim costs the work entirely**, because
+nobody scopes a task the page says is impossible, so the claim is never tested. Of the seven
+edges cut across stages 1 and 2 and `be81e44`, six were cut by moving a symbol to the package
+that owns it; stage 3's remaining edge was three more such moves. Treat "this cannot be done
+cheaply" as the least-tested sentence on any page.
+
+**What is left is measured, not asserted.** The exact minimum feedback arc set for the
+original 8-node graph was **8 edges, 25 symbols, 19 files**. Stages 1 to 3 removed 20 of the
+29 intra-cycle edges. Which of those were members of that original minimum set has not been
+re-derived, so do not quote a "spent" count — re-measure the current graph instead.
+
+**What remains is not what this page predicted, and the difference is a cheap cut nobody
+had scoped.** Re-measured on the 4-node graph with `/tmp/cycle_cuts.py`:
+
+- **`sandboxes -> agents` is a single-edge cut that takes it 4 nodes -> 3.** It is **2
+  symbols in 1 file**: `AgentOperationError` and `stop_agent`, imported by
+  `app/sandboxes/lifecycle.py:14`. Only `projects -> sandboxes` is cheaper, at 1 symbol, and
+  cutting that one shrinks nothing. Cutting this one drops `agents` out. **Not scoped, not
+  approved, and the seam is not obvious — a moved refusal moves an error type, and that has
+  been the load-bearing part every time so far.**
+- **The objection recorded against this edge no longer applies.** The stage-2 handoff ruled
+  it out because the route to 4 nodes needed `tasks -> agents` cut alongside it, and that
+  meant moving `extract_payload` back out of `agents/`, undoing `ba65624`. Stage 3 took
+  `tasks` out of the cycle altogether, so `sandboxes -> agents` now stands alone and costs
+  nothing from `ba65624`. That ruling was never written into section 4, and it is now spent.
+- After that the remainder is `previews <-> projects`: **17 symbols across two directions**,
+  `projects -> previews` 10 and `previews -> projects` 7, and no cheap cut. The minimum
+  feedback arc set for the whole current graph is **3 edges, 16 symbols, 14 files**.
+
+**Grill the scope before touching either.**
 
 **Every edge has a module-scope import site.** There are no `TYPE_CHECKING`-only or
 function-local-only edges, so no edge can be cut by re-scoping an import. Each needs the
@@ -511,6 +539,42 @@ even though `main.py` and `startup.py` are the only ones left and it catches not
 today. It exists to stop the next root module from reopening the blind spot that hid a real
 cycle for eight phases.
 
+#### Stage 3, done 20 Aug 2026
+
+Two commits, because `previews -> tasks` and `sandboxes -> tasks` had to go and **neither
+alone shrinks the SCC** — `previews -> sandboxes -> tasks -> previews` still closes it.
+`be81e44` moved the task status vocabulary into the controller store, cutting
+`previews -> tasks`. `148d907` cut `sandboxes -> tasks`, and only then did `tasks` leave.
+
+All three of the second commit's import sites were in `app/sandboxes/lifecycle.py`, and each
+was a misplaced symbol rather than a real dependency. That is the ninth, tenth and eleventh
+such edge in three stages.
+
+| Symbol | Cut by |
+|---|---|
+| `LABEL_TASK_ID` | move to `app/platform/labels.py` |
+| `_stop_task_preview` | move to `app/previews/service.py` as `stop_task_preview`, taking `task_id` and `sandbox_id` |
+| `Task` | disappears once the helper takes ids — it only ever read `task.id` and `task.sandbox_id` |
+
+**The move closed the last cross-package function-local import.** `tasks/service.py` imported
+`stop_preview` inside `_stop_task_preview`, with a comment saying a module-scope import would
+close the cycle. The comment was accurate; moving the function into `previews/` removed the
+ring and the workaround together. `/tmp/localimports.py` now reports 1, down from 2, and the
+survivor is intra-package.
+
+**A brief that predicted the wrong failure was caught by Codex, not by review.** The brief for
+`be81e44` said to expect the ratchet to fail. It did not, because cutting `previews -> tasks`
+alone does not shrink the SCC. Codex reported the discrepancy rather than editing the test to
+match. **Check your own expected-failure claims before putting them in a brief.** The brief
+for `148d907` names the exact expected failure message for that reason, and it matched.
+
+**The undefended contract this exposed.** Nothing asserts which id reaches
+`controller_store.active_preview`. Passing `task_id` where `sandbox_id` belongs passes all
+875 gated tests, because `tests/tasks/test_service.py` stubs `active_preview` with a lambda
+that ignores its argument. Measured as pre-existing: the same corruption at `be81e44` passes
+all 57 tests in that file. It belongs with the two undefended vocabularies below; nobody has
+decided to close it.
+
 ### Hardcoded label literals — done, 20 Aug 2026
 
 **The recorded figure was wrong.** The method line said
@@ -535,10 +599,13 @@ Fixed in `102e1ba`: `app/startup.py` (1), `app/sandboxes/engine_detection.py` (4
 seven private aliases in `app/platform/naming.py`. `labels.py` gained
 `LABEL_LIFECYCLE_VERSION` and `LABEL_PROJECT_MIRROR`, the two keys that had no constant.
 
-Left alone: the 8 `orchestrator.agent.*` constants in `app/agents/service.py`, the 2
-`orchestrator.planning.*` in `app/planning/runner.py`, and `orchestrator.task.id` in
-`app/tasks/runner.py`. Each is a namespace exactly one module reads, already held in a named
-constant block. `planning/runner.py` already imports the *shared* keys from `labels.py`, so
+Left alone: the 8 `orchestrator.agent.*` constants in `app/agents/service.py` and the 2
+`orchestrator.planning.*` in `app/planning/runner.py`. Each is a namespace exactly one module
+reads, already held in a named constant block.
+
+**`orchestrator.task.id` was on that list and should not have been.** The justification said
+exactly one module reads it. Three did: `tasks/runner.py`, `sandboxes/lifecycle.py` and
+`turns/locators.py`. It moved to `labels.py` in stage 3 above, where it belonged all along. `planning/runner.py` already imports the *shared* keys from `labels.py`, so
 the intended pattern was working there before anything changed. Moving these would put names
 in a shared module nothing else reads. **This was a user decision, not an oversight.**
 
@@ -555,16 +622,17 @@ constants are on the call path — but it fails exactly **one** test of 835,
 `tests/turns/test_events_websocket.py::test_the_context_locator_targets_the_planning_turn_container`.
 834 tests do not notice a corrupted label key. Nobody has decided to close that.
 
-### Function-local imports — 11 hoisted 20 Aug 2026, 2 remain
+### Function-local imports — 12 hoisted or removed 20 Aug 2026, 1 remains
 
 Method: AST walk for `Import`/`ImportFrom` nodes inside a function body — not grep.
 
 `startup.py:98` went first, `a787fdc`. The other 11 hoistable sites followed in `283b0b1`.
-**Two remain, and both genuinely close a ring:**
+Two remained, and both genuinely closed a ring. **Stage 3 removed one of them by moving its
+function into `app/previews/service.py`, which dissolved the ring rather than working around
+it. One remains:**
 
 ```text
 app/delegation/service.py:415    view                latest_review
-app/tasks/service.py:749         _stop_task_preview  stop_preview
 ```
 
 **This entry used to claim "nine of the remaining 13 sit inside the 8-node cycle and are
