@@ -1,10 +1,14 @@
 # Open work
 
-**State:** `main` @ `d195115`, 20 Aug 2026, pushed and level with `origin/main`.
-**Suites:** backend 839 passed, 43 skipped, ~28s. Gated backend 878 passed, 4 skipped, ~150s,
+**State:** `main`, 20 Aug 2026, pushed and level with `origin/main`. **This header carries no
+commit hash on purpose.** A tracked file cannot state its own commit accurately, because
+recording the hash changes the hash. Read `git log` for the exact HEAD. The figures below are
+measured after the `prisma_schema_providers` move recorded in section 2.
+**Suites:** backend 845 passed, 43 skipped, ~29s. Gated backend 884 passed, 4 skipped, ~140s,
 run twice. Frontend 80 passed, `npm run build` clean — **not re-run since `189a840`; no
 frontend file has changed since.**
-**Lint:** `ruff check app tests` passes. `ruff format --check` reports 240 files formatted.
+**Lint:** `ruff check app tests` passes. `ruff format --check app tests` reports 250 files
+formatted.
 
 This replaces `architecture-review-verification-and-plan.md` and
 `ai-orchestrator-architecture-review-consolidated.md`. Both are deleted. The plan they
@@ -466,8 +470,8 @@ below held, the plan built on them did not. Measured:
 
 | Edge | Cost | Shape |
 |---|---|---|
-| `sandboxes -> previews` | 7 symbols, **11 files** | 9 of its 12 sites are `app/previews/config` |
-| `previews -> sandboxes` | 16 symbols, **3 files** | all three sites are `app/sandboxes/database` |
+| `sandboxes -> previews` | 6 symbols, **5 files** | 6 sites; 4 of them are `app/previews/config` |
+| `previews -> sandboxes` | 17 symbols, **4 files** | 3 sites in `app/sandboxes/database`, 1 in `engine_detection` |
 
 **The "shared primitive filed inside a feature package" reading of this edge was wrong, and
 it is corrected here.** Scoped 20 Aug 2026. `app/previews/config.py` is **not** a misplaced
@@ -508,17 +512,79 @@ initially, for compatibility. **Do not merge it with `app/implementation_context
 **The rewrite count for the extraction is unmeasured.** It depends on the new function
 signatures. Do not carry a figure into the plan until it is measured.
 
-**What remains is 7 sites, and the four settings sites are one concept.**
-`database/contracts.py:96`, `database/provisioning.py:37`, `service/provisioning.py:88` and
-`service/transitions.py:425` all need the whole settings object for preview resource limits —
-`preview_memory`, `shared_database_memory`, `shared_database_max_connections`,
-`prepare_timeout_seconds`. The other three are `PreviewConfiguration` plus
-`PreviewDependencyService` in `database/contracts.py:11`, `prisma_schema_providers` in
-`engine_detection.py:24`, and `stop_preview` plus `stop_task_preview` in `lifecycle.py:21`.
-**None of the seven is scoped.**
+**What remains is 6 sites**, after `prisma_schema_providers` moved to `app.sandboxes`
+(recorded below). Four are settings: `database/contracts.py:10`, `database/provisioning.py:37`,
+`service/provisioning.py:9` and `service/transitions.py:17`. All four need preview resource
+limits — `preview_memory`, `shared_database_memory`, `shared_database_max_connections`,
+`prepare_timeout_seconds`. **They are one semantic dependency in two implementation shapes**,
+which matters because the shapes admit different fixes: `database/contracts.py:96` and the four
+annotations in `database/provisioning.py` are annotation-only, while
+`service/provisioning.py:89` and `service/transitions.py:429` call `get_preview_settings()` at
+runtime. The other two sites are `PreviewConfiguration` plus `PreviewDependencyService` in
+`database/contracts.py:11`, and `stop_preview` plus `stop_task_preview` in `lifecycle.py:21`.
+
+**Only the Prisma site was ever scoped. The settings sites and `lifecycle.py:21` are
+classified, not scoped.** Do not treat the classification below as a plan.
+
+**Two rejection arguments were tested and failed. Do not reuse either.**
+
+- **"Guard the annotation-only sites behind `TYPE_CHECKING`" does not work, twice over.**
+  Neither `database/contracts.py` nor `database/provisioning.py` uses postponed annotations,
+  and **0 of 158 files under `app/` use `from __future__ import annotations`** while only 2 use
+  `TYPE_CHECKING` at all. Without postponed annotations the class body and the `def` statements
+  evaluate those names during import, so a guarded import raises `NameError`. Adding the future
+  import to reach the guard breaks a convention held by every other file. And it would not move
+  the metric anyway: `tests/test_import_direction.py:101` uses `ast.walk`, which visits imports
+  inside `TYPE_CHECKING` and inside function bodies. **Guarded imports still count as edges.**
+- **"Extracting settings would rename `PREVIEW_*` environment variables" is false.**
+  `app/containers/config.py:17` reads `PREVIEW_GIT_IMAGE` from the `containers` package: the
+  variable name survived the package move. The same technique preserves any other `PREVIEW_*`
+  name. **This does not make extraction correct — it only voids that objection.** The settings
+  decision stays open.
+
+**The known cost of value-passing.** `complete_database_provision` serves create, confirm,
+reset, resume and sync; destroy takes a separate settings path. Threading settings inward
+therefore widens preview vocabulary across sandbox signatures and their callers rather than
+removing it. Weigh that against extraction when the sites are scoped.
 
 **Preserve `previews -> sandboxes` as the surviving direction.** It matches the domain flow: a
 preview operates on a sandbox, so previews depending on sandboxes is the natural dependency.
+
+#### `prisma_schema_providers` moved to `app.sandboxes`, 20 Aug 2026 — done
+
+**Decided and applied on ownership grounds, not to move the metric.** The function was defined
+in `app/previews/detection.py` and had **two callers in `sandboxes`** (`engine_detection.py:101`
+and `:335`) against **one in `previews`** — the private wrapper `_prisma_schema_provider`, whose
+own docstring reads "for preview compatibility callers". The general parser lived in the lighter
+consumer while the preview-specific wrapper wrapped it. That is inverted ownership.
+
+The function is pure — `dict[str, bytes] -> list[tuple[str, str]]`, no preview type in its
+signature, a stdlib-only body — and its docstring already said "without choosing an engine".
+
+**It went into `app/sandboxes/engine_detection.py`, beside its two callers, not into a neutral
+module.** A neutral module would create a shared bucket without a broader shared concept.
+`app/previews/detection.py` now imports it back, which lands the new edge on
+`previews -> sandboxes`, the preserved direction, where three preview modules already import
+from `app.sandboxes.database`. The wrapper stays in `previews` unchanged.
+
+**Cost: 2 files, +23/-22.** `re` was already imported in the destination; `PurePosixPath` was
+added. Both names stay in use in the source file, so neither import was dropped there.
+
+**Effect: `sandboxes -> previews` goes 7 sites to 6, 6 files to 5, 7 symbols to 6.**
+`previews -> sandboxes` goes 16 symbols in 3 files to 17 in 4. **`KNOWN_CYCLE` does not
+change and must stay `{previews, sandboxes}`** — the strongly connected component still holds
+both packages; only the site count inside it shrank.
+
+**Verified:** targeted tests 53 passed; `probe_all.py` 157 modules, 0 failed; gated suite
+884 passed, 4 skipped, run twice; ungated 845 passed, 43 skipped; `ruff check` and
+`ruff format --check` clean; OpenAPI byte-identical to the baseline. **Delete-test run:**
+renaming the symbol at its new definition broke importing modules and restoring returned
+157/0, so the new import is load-bearing rather than decorative.
+
+**The near-miss that the brief had to name.** `app/previews/detection.py:366`, inside
+`schema_environment_names`, contains a line almost identical to one in the moved function:
+`if PurePosixPath(path).name != "schema.prisma":`. It belongs to a different function and was
+verified untouched.
 
 #### The extraction, measured 20 Aug 2026 — 19 files, not a pure move
 
@@ -564,7 +630,8 @@ take `*args, **kwargs` and need no change.
 validated stages 3 to 5 does not apply. Verification has to be behavioural.
 
 **It cuts 5 of 12 sites and leaves 7. `KNOWN_CYCLE` stays 2.** Do not expect the ratchet to
-move.
+move. **That 7 is the state at this extraction, not the current figure** — the Prisma move
+recorded above took it to 6.
 
 **Method note: `grep -v "app.containers"` deletes the whole package.** The `.` is a regex
 wildcard, so it matches the `/` in the *path* `app/containers/...` and silently drops every
