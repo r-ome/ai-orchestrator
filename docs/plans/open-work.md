@@ -1,9 +1,9 @@
 # Open work
 
-**State:** `main` @ `27447e2`, 20 Aug 2026
+**State:** `main` @ `7800ed0`, 20 Aug 2026
 **Suites:** backend 835 passed, 43 skipped, ~31s. Gated backend 874 passed, 4 skipped, ~137s,
 run twice. Frontend 80 passed, `npm run build` clean.
-**Lint:** `ruff check app tests` passes. `ruff format --check` reports 223 files formatted.
+**Lint:** `ruff check app tests` passes. `ruff format --check` reports 239 files formatted.
 
 This replaces `architecture-review-verification-and-plan.md` and
 `ai-orchestrator-architecture-review-consolidated.md`. Both are deleted. The plan they
@@ -39,9 +39,9 @@ three steps, `27447e2`, `d1216a3` and `0366c17`, all on 20 Aug 2026. Its largest
 this table. See "Decomposing `sandboxes/database.py`" below for the measured seam, the
 method, and the four findings the three steps produced.
 
-`sandboxes/service.py` was 1,547 lines and is now a package too, after steps 1 and 2 on 20 Aug 2026, so it has also left this table. Its largest module
-is `transitions.py` at 485 lines. Step 3, pruning its facade, is still open. **No backend
-module is over 1,400 lines any more.**
+`sandboxes/service.py` was 1,547 lines and is now a package too, after three steps on 20 Aug 2026, so it has also left this table. Its largest module is
+`transitions.py` at 485 lines and its `__init__.py` is a 70-line, 19-name facade. **No
+backend module is over 1,400 lines any more.**
 
 Measured on `93add0c`, five of the six had grown by 2 to 65 lines against the previous
 reading. That was `ruff format` rewrapping, not new code. `previews/service.py` was the
@@ -59,11 +59,11 @@ that section 4 closes.
 For contrast, the frontend hotspots the review named were fixed: `DelegationWorkspace.tsx`
 went 1,780 → 525 lines, `PlanningSessionPage.tsx` 1,200+ → 635.
 
-### Decomposing `sandboxes/service.py` — steps 1 and 2 done, 20 Aug 2026
+### Decomposing `sandboxes/service.py` — done, 20 Aug 2026
 
-Scoped at `eb35b56`. Steps 1 and 2 landed on 20 Aug 2026 as `6911f82` and the commit that
-follows it. Step 3, pruning the facade, is still open. Every figure below was measured from
-the tree by an AST pass, not carried over from a handoff.
+Scoped at `eb35b56`. All three steps landed on 20 Aug 2026. The decomposition is
+**complete** and needs no follow-up. Every figure below was measured from the tree by an AST
+pass, not carried over from a handoff.
 
 **The module.** 1,547 lines: 75 lines of imports, 34 top-level definitions totalling 1,406
 lines, and **no module-level state**. The split has no shared mutable globals to preserve.
@@ -155,7 +155,7 @@ The patched test drives the orphan-removal route, so that one site retargets to
 **Steps 1 and 2, as landed.** The package is now:
 
 ```text
- 287  __init__.py           facade only, zero definitions
+  70  __init__.py           facade only, 19 names, zero definitions
  485  transitions.py        create_or_resolve, resume, destroy, _sweep_manifest_resources
  247  syncing.py            sync, sync_engine_report
  234  publishing.py         publish
@@ -166,7 +166,7 @@ The patched test drives the orphan-removal route, so that one site retargets to
   71  coercion.py           require_v1 + 6 private helpers
   59  outcomes.py           6 result dataclasses
   58  errors.py             6 exception classes
-1935  total
+1718  total
 ```
 
 `sandboxes/service.py` has left the over-1,400-line table. The largest module is
@@ -200,9 +200,42 @@ not a refactor defect. It is open and nobody has decided to close it.
 **Method note: a delete-test that reports "inert" has found a weak test, not a wrong patch.**
 Prove the patch separately by `__globals__`, and confirm interception by counting real calls.
 
-**Still open: step 3.** Reduce `__init__.py` from the 91-name surface to the names
-`app/sandboxes/router.py` and the tests actually reach, about 21. That is what turns a stale
-monkeypatch into a loud `AttributeError` instead of a silent no-op.
+**Two traps in the delete-test harness itself.** Run it ungated and every gated test is
+skipped, which scores as inert; the five `tests/delegation/test_delivery.py` groups are
+gated behind `RUN_DOCKER_PREVIEW_TESTS=1` and read inert for that reason alone. And once
+step 3 pruned the facade, flipping a patch back to `sandbox_service` raises `NameError`
+because the file no longer imports it, so every group scores as biting for a trivial reason.
+The delete-test was only meaningful in the window between step 2 and step 3.
+
+**Step 3, the facade prune — done.** `__init__.py` went from 287 lines and 91 re-exported
+names to **70 lines and 19 names**: exactly the set `app/sandboxes/router.py` reaches, by
+direct import or as `service.<name>`.
+
+```text
+EngineConfirmation          SandboxUnavailable          destroy
+SandboxConflict             SandboxValidationError      publish
+SandboxDependencyFailure    _json_value                 remove_orphan_resource
+SandboxInternalFailure      _optional_string            require_v1
+SandboxNotFound             confirm_engine              reset_database
+                            create_or_resolve           resume
+                                                        staleness
+                                                        sync
+```
+
+The keep-list is 19, not the 21 that scoping predicted. Three names were reached only by
+tests, and the user chose to move those four call sites onto the owning module instead of
+holding them on the facade: `complete_database_provision` to `provisioning`,
+`sync_engine_report` to `syncing`, and two `ensure_workspace_import` reads to `transitions`.
+`tests/sandboxes/test_router.py` and `test_sync.py` no longer import the facade at all.
+
+That choice is what finishes the job. **All 15 monkeypatched names are now absent from the
+facade**, so a patch aimed at the old target raises `AttributeError` instead of silently
+patching a binding nothing resolves through. Had the facade been pruned first, both step-2
+findings above would have surfaced as loud failures rather than through a probe. Keeping
+`complete_database_provision` would have left that hazard half-open for the one name whose
+patches were already proved inert.
+
+The prune moved no definitions. The AST dump is byte-identical across the step.
 
 ### Decomposing `sandboxes/database.py` — done, 20 Aug 2026
 
