@@ -599,9 +599,13 @@ def restart_preview(
             )
     containers = _preview_containers(docker_client, str(record["id"]), all=True)
     if not containers:
-        controller_store.update_preview_run(str(record["id"]), status=PreviewStatus.MISSING)
+        controller_store.update_preview_run(
+            str(record["id"]), status=PreviewStatus.MISSING
+        )
         raise PreviewOperationError(409, "Preview containers are missing; rebuild it")
-    controller_store.update_preview_run(str(record["id"]), status=PreviewStatus.RESTARTING)
+    controller_store.update_preview_run(
+        str(record["id"]), status=PreviewStatus.RESTARTING
+    )
     try:
         if kind is PreviewKind.TASK:
             # Containers restart against the same workspace volume, so the
@@ -686,10 +690,14 @@ def restart_preview(
             for container in containers:
                 container.restart(timeout=5)
     except DockerException:
-        controller_store.update_preview_run(str(record["id"]), status=PreviewStatus.FAILED)
+        controller_store.update_preview_run(
+            str(record["id"]), status=PreviewStatus.FAILED
+        )
         raise
     except PreviewOperationError:
-        controller_store.update_preview_run(str(record["id"]), status=PreviewStatus.FAILED)
+        controller_store.update_preview_run(
+            str(record["id"]), status=PreviewStatus.FAILED
+        )
         raise
     expires_at = _expiry(config.expiry_minutes)
     controller_store.update_preview_run(
