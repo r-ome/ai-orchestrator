@@ -139,7 +139,7 @@ bit the database refactor three times.
 The patched test drives the orphan-removal route, so that one site retargets to
 `sandbox_service.resources`. One retarget, and it must be proved by `__globals__`.
 
-`KNOWN_CYCLE` stays where it is — 6 since `6e5a30b`. This is an intra-package split.
+`KNOWN_CYCLE` stays where it is — 5 since `ba65624`. This is an intra-package split.
 
 **Decisions taken, 20 Aug 2026.** The user chose all three:
 
@@ -415,21 +415,22 @@ where the code actually lives.**
 ## 2. Structural debt, measured
 
 Three of the four items here are done, 20 Aug 2026, and keep their entries because each
-returned a finding. **What is still open is the 6-node import cycle, and the 2
+returned a finding. **What is still open is the 5-node import cycle, and the 2
 function-local imports of the original 14 that genuinely carry it.** One more thing is open
 and undecided: **two vocabularies — Docker labels and preview status — are each close to
 undefended by tests**, which is now its own entry.
 
 Done 20 Aug 2026: the preview-status write sites (`4fe0e37`), the dead `rebuilding` status
 and migration 32 (`d0f0d07`), the `startup.py` import hoist (`a787fdc`), the remaining
-11 hoistable function-local imports, and stage 1 of the cycle (`6e5a30b`).
+11 hoistable function-local imports, stage 1 of the cycle (`6e5a30b`) and stage 2 (`ba65624`).
 
-### The domain import cycle — 6 nodes, was 8
+### The domain import cycle — 5 nodes, was 8
 
-`agents, planning, previews, projects, sandboxes, tasks`. **18 intra-cycle edges**, was 29.
+`agents, previews, projects, sandboxes, tasks`. **15 intra-cycle edges**, was 29.
 
 Phase 9 cut it from 10 nodes to 8. Stage 1 (`6e5a30b`, 20 Aug 2026) cut it to 6 by removing
-`delegation` and `implementation_context`. See "Stage 1" below for what that took.
+`delegation` and `implementation_context`. Stage 2 (`ba65624`) cut it to 5 by removing
+`planning`. See below for what each took.
 
 **The old entry claimed "no further file move can shrink it". That was wrong**, and it was
 wrong in the direction that stops work: it argued the whole cycle needed signature changes.
@@ -437,12 +438,11 @@ Two of the three stage-1 edges were cut by moving a symbol to the package that o
 the third needed a new seam. Re-measure before believing any claim about what is left.
 
 **What is left is genuinely harder, and this is measured, not asserted.** The exact minimum
-feedback arc set for the original graph was **8 edges, 25 symbols, 19 files**. Stage 1 spent
-3 of those edges. The cheapest continuation is `tasks -> planning` alone — 1 symbol,
-`extract_payload` at `app/tasks/runner.py:25` — taking it to 5 nodes, then `previews -> tasks`
-plus `sandboxes -> tasks` (5 symbols) taking it to 4. The last pair, `previews <-> projects`
-at 17 symbols across two directions, has no cheap cut and no agreed seam. **Grill the scope
-before touching it.**
+feedback arc set for the original graph was **8 edges, 25 symbols, 19 files**. Stages 1 and 2
+spent 4 of those edges, and they were the cheap ones. The next step is `previews -> tasks`
+plus `sandboxes -> tasks` together (5 symbols), taking it to 4 nodes; neither alone shrinks
+it. After that the remainder is `previews <-> projects`, 17 symbols across two directions,
+with no cheap cut and no agreed seam. **Grill the scope before touching it.**
 
 **Every edge has a module-scope import site.** There are no `TYPE_CHECKING`-only or
 function-local-only edges, so no edge can be cut by re-scoping an import. Each needs the
@@ -481,6 +481,28 @@ attempt wrapped only `capture_feature_target`, silently changing what `feature_d
 
 **Ruff sorts imports in this project.** An earlier handoff said the default rule set has no
 isort and placement is by hand. `I` is configured here — `ruff check --fix` did the sorting.
+
+#### Stage 2, done 20 Aug 2026
+
+`extract_payload` was the only thing `tasks` imported from `planning`. It parses one agent
+provider's stdout keyed on `AgentProvider`, so it moved to `app/agents/output.py` with its
+two private helpers. That is a third misplaced-symbol edge, after the two in stage 1.
+
+**The cost was in the error contract, not the move.** The moved code raises a new
+`AgentOutputError`; `PlanningTurnError` stays in `planning/runner.py`, where three routers
+import it. `run_planning_turn` converts one to the other, preserving status code, detail and
+raw output, because `run_validated_turn` catches a 422 and reads `raw_output` to drive its
+repair loop. Replacing the preserved status code with a literal 500 fails two tests, so the
+loop is defended and the conversion is what defends it. This is the same shape as stage 1's
+`_ensure_dirty_state`: **moving a refusal across a package boundary moves an error type, and
+the error type is usually the load-bearing part.**
+
+`tasks/runner.py` needed one import line changed. Both its call sites already catch bare
+`Exception`.
+
+The code changes were delegated to Codex; the verification was not. The three moved
+functions and the five moved tests were checked AST-identical to their originals, because
+Codex has produced correct code with a false proof before.
 
 `tests/test_import_direction.py` guards it. Note it is a **two-way ratchet**: it fails if
 the cycle grows *and* if it shrinks, telling you to tighten `KNOWN_CYCLE`. Nobody can cut an
