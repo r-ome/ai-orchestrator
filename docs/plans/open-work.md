@@ -34,11 +34,13 @@ format` rewraps, so most files grew.
   912  app/controller/store/sandboxes.py
 ```
 
-`database.py` was 1,713 lines and is now a package. Steps 1 and 2 of its decomposition
-landed in `27447e2` and `d1216a3`; its `__init__.py` is down to 767 lines and it has left
-this table. Step 3 is still open. See "Decomposing `sandboxes/database.py`" below for the
-measured seam, the remaining step, and why the split is safe. `sandboxes/service.py` is
-now the only backend module over 1,400 lines and is still unscoped.
+`database.py` was 1,713 lines and is now a package. Its decomposition is **complete**:
+three steps, `27447e2`, `d1216a3` and `0366c17`, all on 20 Aug 2026. Its largest module is
+`provisioning.py` at 650 lines and its `__init__.py` is a 201-line facade, so it has left
+this table. See "Decomposing `sandboxes/database.py`" below for the measured seam, the
+method, and the four findings the three steps produced. That leaves `sandboxes/service.py`
+as the only backend module over 1,400 lines, and the only one of the two that no phase
+covered. It is still unscoped.
 
 Measured on `93add0c`, five of the six had grown by 2 to 65 lines against the previous
 reading. That was `ruff format` rewrapping, not new code. `previews/service.py` was the
@@ -56,94 +58,104 @@ that section 4 closes.
 For contrast, the frontend hotspots the review named were fixed: `DelegationWorkspace.tsx`
 went 1,780 → 525 lines, `PlanningSessionPage.tsx` 1,200+ → 635.
 
-### Decomposing `sandboxes/database.py`
+### Decomposing `sandboxes/database.py` — done, 20 Aug 2026
 
-Step 1 landed in `27447e2` and step 2 in `d1216a3`, both on 20 Aug 2026.
-`app/sandboxes/database.py` is now the package `app/sandboxes/database/`.
+All three steps landed on 20 Aug 2026: `27447e2`, `d1216a3`, `0366c17`. The 1,713-line
+`app/sandboxes/database.py` is now the package `app/sandboxes/database/`, and its
+`__init__.py` is a pure facade holding zero `def` and zero `class` statements.
 
 ```text
-  767  __init__.py     orchestration functions and the re-export facade
-  349  mysql.py        MySQLDatabaseEngine
-  195  postgres.py     PostgreSQLDatabaseEngine
-  164  shared.py       shared-server lock, naming, identifier, statement, health, hash
-  147  _engine_ops.py  sqlite volume, server credentials, database command runner
-  139  contracts.py    ErrorFactory, runtime, six request dataclasses, DatabaseEngine
-  128  sqlite.py       SQLiteDatabaseEngine
-   25  registry.py     four engine singletons, DATABASE_ENGINES, database_engine
-   15  constants.py    the eleven module-level literals
-    9  errors.py       SandboxDatabaseError, SandboxMigrationError
+  650  provisioning.py  the orchestration layer, 15 definitions
+  349  mysql.py         MySQLDatabaseEngine
+  201  __init__.py      63 re-exports, nothing else
+  195  postgres.py      PostgreSQLDatabaseEngine
+  164  shared.py        shared-server lock, naming, identifier, statement, health, hash
+  147  _engine_ops.py   sqlite volume, server credentials, database command runner
+  139  contracts.py     ErrorFactory, runtime, six request dataclasses, DatabaseEngine
+  128  sqlite.py        SQLiteDatabaseEngine
+   25  registry.py      four engine singletons, DATABASE_ENGINES, database_engine
+   15  constants.py     the eleven module-level literals
+    9  errors.py        SandboxDatabaseError, SandboxMigrationError
 ```
 
 **The seam was measured before anything moved,** with an AST pass that built the internal
-reference graph over 14 regions. The result is why this is safe to do incrementally: the
+reference graph over 14 regions. The result is why this was safe to do incrementally: the
 graph is a **DAG**, and the engine layer never calls the orchestration layer. The file was
-not tangled. It was two stacked layers sharing one file.
+not tangled. It was two stacked layers sharing one file, and that held for all three steps.
 
-Layering now, verified acyclic with no module importing its own package:
+Final layering, verified acyclic with no module importing its own package:
 
 ```text
 constants <- contracts <- shared
                    \
                     _engine_ops <- mysql <- postgres
                                        \ <- sqlite
-                                            registry <- __init__
+                                            registry <- provisioning <- __init__
 ```
 
 `postgres.py` and `sqlite.py` import `mysql.py` because both engines subclass
 `MySQLDatabaseEngine`. That is expected, not a smell.
 
-One step remains:
-
-- **Step 3** — extract the orchestration layer into `provisioning.py` (~590), leaving
-  `__init__.py` as a pure facade.
-
 Findings worth keeping:
 
-- **The import ratchet cannot move.** `KNOWN_CYCLE` names top-level packages, not modules,
-  so no intra-package split touches it. It stayed at 8 through steps 1 and 2. Do not expect
-  to edit it in step 3 either.
+- **The import ratchet never moved.** `KNOWN_CYCLE` names top-level packages, not modules,
+  so no intra-package split touches it. It stayed at 8 through all three steps. If a split
+  like this ever appears to move it, something other than a move happened.
 - **The `__init__.py` re-export is deliberate,** and is the one documented exception to
   "no shim, alias or re-export". It follows the `app/controller/store/` precedent and keeps
   all eight consumer modules untouched. The rule still holds for everything else.
-- **The facade preserves consumers, not the whole namespace.** Step 2 pruned 17 names that
-  only the moved code had imported — `Mount`, `run_hardened`, `Capabilities`, `Capture`,
-  `Egress`, `create_hardened`, `HardenedContainerSpec`, `HardenedRunSpec`, `ContainerError`,
-  `ReadTimeout`, `MYSQL_PORT`, `POSTGRES_PORT`, the two `DATABASE_COMMAND_*` literals,
-  `base64`, `json` and `re`. An AST scan over `app/` and `tests/` found no importer of any
-  of them from this package. Decided on 20 Aug 2026: incidental imports may leave the
-  surface once proved unused; deliberate re-exports may not.
+- **The facade preserves consumers, not the whole namespace.** Steps 2 and 3 dropped 55
+  names that only the moved code had imported: 17 in `d1216a3` (`Mount`, `run_hardened`,
+  the `Hardened*` specs, `Capabilities`, `Capture`, `Egress`, `create_hardened`,
+  `ContainerError`, `ReadTimeout`, `MYSQL_PORT`, `POSTGRES_PORT`, the two
+  `DATABASE_COMMAND_*` literals, `base64`, `json`, `re`) and 38 in `0366c17` (thirteen
+  stdlib names, five docker names, the seven `LABEL_*` literals, `ControllerStore`,
+  `PreviewSettings`, `PreviewConfiguration`, `PreviewDependencyService`, `NO_DATABASE`,
+  `ensure_image`, `database_name`, `db_data_volume`, `workspace_volume`, `ownership_labels`,
+  `validate_ownership`, `sandbox_network_name`). An AST scan over `app/` and `tests/` found
+  no importer of any of them from this package. **Decided on 20 Aug 2026:** incidental
+  imports may leave the surface once proved unused; deliberate re-exports may not. The
+  facade now carries exactly the 63 names the package itself defines.
 
-- **The test trap fired in step 2, and it fired wider than predicted.** The prediction here
-  was that only step 3 was at risk, and that the `_run_database_command` patch in the
+- **The test trap fired in step 2, wider than predicted, and again in step 3.** The original
+  note said only step 3 was at risk, and that the `_run_database_command` patch in the
   `_ensure_shared_server` test was already dead because that function has no direct call to
   the helper. **Both halves were wrong.** `_ensure_shared_server` reaches the helper
   indirectly, through `database_engine(...).provision(...)`. Reading a function's own body
   is not enough; follow the call graph.
 
-  Worse, one patch site became two. `MySQLDatabaseEngine.provision` calls
+  One patch site also became two. `MySQLDatabaseEngine.provision` calls
   `_run_database_command` through the binding in `mysql.py`, and *also* calls
   `_read_or_create_server_credentials`, which resolves the same helper inside
-  `_engine_ops.py`. Before the split both were one module and one patch covered both. The
-  shared-server lock test now needs a patch on each module. A third site, the
-  `_read_or_create_server_credentials` patch in the `test_router.py` fixture, was never
-  listed in any earlier note and needed splitting across `mysql` and `postgres`.
+  `_engine_ops.py`. Before the split both were one module and one patch covered both. A
+  third site, in the `test_router.py` fixture, was listed in no earlier note and needed
+  splitting across `mysql` and `postgres`.
 
-  **The rule, restated:** patch every module that binds the name *and* sits on the call
-  path, never the package facade. Enumerate those modules from the call graph, not from
-  the caller's body. Prove each one load-bearing by reverting it to the facade and
-  confirming the test fails — that is stronger than the AttributeError deletion check,
-  because it shows the patch does work rather than merely aiming at a real attribute.
+  **The rule:** patch every module that binds the name *and* sits on the call path, never
+  the package facade. Enumerate those modules from the call graph, not the caller's body.
+  The cheapest reliable check is `func.__globals__` — a function's globals dict *is* the
+  namespace its names resolve in, so `f.__globals__ is target.__dict__` settles the
+  question without running anything.
 
-- **Still live for step 3.** In `tests/sandboxes/test_database.py`, the patches of
-  `_wait_for_server_health`, `shared_database_names`, `ensure_image` and `database_engine`
-  still target the package because `_ensure_shared_server` still lives in `__init__.py`.
-  Moving it to `provisioning.py` makes all four live at once.
+- **A passing revert does not clear a retarget.** Step 3 retargeted five patches. Reverting
+  `_wait_for_server_health` to the facade left the test green, which looks like proof the
+  patch is cosmetic. It is not: the real health wait simply succeeds harmlessly against the
+  fake Docker client. A tripwire on the real binding showed it reached once before the
+  retarget and zero times after. That tripwire also caught a retarget the delegate had
+  silently skipped — four of the five were done, and the suite was green either way. When a
+  revert passes, install a tripwire before concluding anything.
 
-Verification method, used on steps 1 and 2 and worth repeating for step 3: compare all 67
-top-level definitions by `ast.dump` between the old tree and the new tree, then diff a
-normalised public-surface probe of the package. The AST comparison is the check that
-cannot be gamed, and it should be the primary one. On step 2 it caught nothing and the
-surface probe caught the 17 pruned names, so run both. See section 5.
+- **A guard patch cannot be proved by reverting it.** The `database_engine` patch in
+  `test_sandbox_shared_server_refuses_an_existing_container_with_another_image` raises on
+  call, asserting provisioning never starts. The test passes with the patch deleted, because
+  it is never invoked. Prove that kind of patch by `__globals__` identity instead.
+
+Verification method, used on all three steps and worth repeating for any package split:
+compare every top-level definition by `ast.dump` between the old tree and the new tree, then
+diff a normalised public-surface probe of the package. The AST comparison is the check that
+cannot be gamed and should be the primary one; it was clean on all three steps. The surface
+probe is what actually caught things — the 17 pruned names in step 2 and the exact 38 in
+step 3. Run both. See section 5.
 
 ---
 
@@ -461,7 +473,18 @@ These came out of eleven phases. Each one is here because ignoring it cost somet
   `_ensure_shared_server` never calls the helper. It reaches it through
   `database_engine(...).provision(...)`. The same split turned one patch site into two,
   because a method and a helper it calls came to live in different modules. Patch every
-  module that binds the name *and* sits on the call path.
+  module that binds the name *and* sits on the call path. The cheapest reliable check is
+  `f.__globals__ is target.__dict__` — a function's globals dict *is* the namespace its
+  names resolve in, so it settles the question without running the test.
+- **When a reverted patch still passes, install a tripwire before believing it.** Step 3
+  (`0366c17`) reverted `_wait_for_server_health` to the package facade and the test stayed
+  green — the real health wait just succeeds harmlessly against the fake Docker client.
+  Replacing the real binding with a recorder proved it was reached once before the retarget
+  and zero times after. The same tripwire caught a retarget the delegate had silently
+  skipped, four of five done, suite green either way. A green suite is not coverage.
+- **A guard patch cannot be proved by reverting it.** A patch whose value raises on call
+  asserts that a path is never taken, so the test passes with it deleted. Prove those by
+  `__globals__` identity, never by deletion.
 - **Any move that changes a file's depth must be checked for `__file__`-derived constants.**
   Grep `__file__`, `Path(`, `parents[`, `parent.` before moving. A depth change once
   rewrote `ENV_FILE` silently and 834 tests stayed green.
