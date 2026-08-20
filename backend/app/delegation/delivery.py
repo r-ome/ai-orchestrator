@@ -6,6 +6,7 @@ from typing import Any
 
 from docker.client import DockerClient
 
+from app.containers.git import run_git
 from app.controller.store import ControllerStore
 from app.controller.store.delegation_status import DelegationStatus
 from app.controller.store.task_status import TaskStatus
@@ -24,7 +25,6 @@ from app.sandboxes.feature_target import (
     ensure_original_dirty_state,
     sandbox_state,
 )
-from app.sandboxes.git import run_git
 
 _COMMIT_PATTERN = re.compile(r"^[0-9a-f]{7,64}$")
 _BRANCH_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")

@@ -11,6 +11,7 @@ from typing import Any
 
 from docker.client import DockerClient
 
+from app.containers.git import run_git
 from app.controller.store import ControllerStore
 from app.platform.dirty_state import (
     DirtyEntry,
@@ -22,7 +23,6 @@ from app.platform.dirty_state import (
 )
 from app.platform.errors import OperationError
 from app.previews.config import PreviewSettings
-from app.sandboxes.git import run_git
 
 
 class FeatureTargetError(OperationError):

@@ -10,8 +10,7 @@ import pytest
 from docker.errors import ContainerError, ImageNotFound
 from requests.exceptions import ReadTimeout
 
-from app.controller.config import get_controller_settings
-from app.sandboxes.git import (
+from app.containers.git import (
     GITHUB_READ_TOKEN_ENVIRONMENT_VARIABLE,
     GITHUB_READ_TOKEN_PATH,
     GITHUB_WRITE_TOKEN_ENVIRONMENT_VARIABLE,
@@ -29,6 +28,7 @@ from app.sandboxes.git import (
     run_git,
     run_git_with_write_credentials,
 )
+from app.controller.config import get_controller_settings
 
 requires_docker = pytest.mark.skipif(
     os.getenv("RUN_DOCKER_PREVIEW_TESTS") != "1",

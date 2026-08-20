@@ -3,11 +3,11 @@ from dataclasses import replace
 from docker.client import DockerClient
 from docker.errors import DockerException
 
+from app.containers.git import describe_git_failure
 from app.controller.store import ControllerStore, SandboxAdmissionError
 from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.platform.naming import workspace_volume
 from app.previews.config import get_preview_settings
-from app.sandboxes.git import describe_git_failure
 from app.sandboxes.lifecycle import (
     lifecycle_conflict_detail,
     lifecycle_lease,

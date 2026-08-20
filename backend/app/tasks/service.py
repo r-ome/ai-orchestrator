@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from docker.client import DockerClient
 
+from app.containers.git import run_git
 from app.controller.store import (
     ControllerStore,
     OpenTaskExists,
@@ -28,7 +29,6 @@ from app.projects.service import (
     ensure_sandbox_registered,
     inspect_registered_project,
 )
-from app.sandboxes.git import run_git
 from app.tasks.config import CodingTurnSettings
 
 if TYPE_CHECKING:  # pragma: no cover - types only

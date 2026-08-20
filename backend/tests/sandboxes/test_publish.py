@@ -1,7 +1,8 @@
 import pytest
 
+from app.containers import git
 from app.previews.config import PreviewSettings
-from app.sandboxes import git, publish
+from app.sandboxes import publish
 from app.sandboxes.feature_target import FeatureTargetError
 
 HEAD = "b" * 40

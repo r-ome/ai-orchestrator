@@ -1,6 +1,6 @@
 from docker.errors import ContainerError
 
-from app.sandboxes.git import describe_git_failure
+from app.containers.git import describe_git_failure
 
 
 def _container_error(

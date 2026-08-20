@@ -1,8 +1,8 @@
 from docker.client import DockerClient
 
+from app.containers.git import count_mirror_staleness, fetch_canonical_mirror
 from app.controller.store import ControllerStore, SandboxAdmissionError
 from app.previews.config import get_preview_settings
-from app.sandboxes.git import count_mirror_staleness, fetch_canonical_mirror
 from app.sandboxes.lifecycle import lifecycle_conflict_detail, project_mirror_lock
 
 from .coercion import _optional_string, _required_staleness_value, require_v1

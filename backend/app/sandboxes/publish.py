@@ -9,20 +9,20 @@ from urllib.parse import urlsplit
 import requests
 from docker.client import DockerClient
 
-from app.controller.store import ControllerStore
-from app.previews.config import PreviewSettings
-from app.sandboxes.feature_target import (
-    FeatureTarget,
-    FeatureTargetError,
-    ensure_target_unchanged,
-)
-from app.sandboxes.git import (
+from app.containers.git import (
     GITHUB_WRITE_TOKEN_ENVIRONMENT_VARIABLE,
     GitWriteCredentialSource,
     assert_workspace_has_no_remotes,
     push_mirror_to_remote,
     push_workspace_to_mirror,
     remote_branch_sha,
+)
+from app.controller.store import ControllerStore
+from app.previews.config import PreviewSettings
+from app.sandboxes.feature_target import (
+    FeatureTarget,
+    FeatureTargetError,
+    ensure_target_unchanged,
 )
 
 GITHUB_API_URL = "https://api.github.com"

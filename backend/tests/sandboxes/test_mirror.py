@@ -7,6 +7,7 @@ from uuid import uuid4
 import docker
 import pytest
 
+from app.containers.git import clone_mirror_to_workspace, ensure_canonical_mirror
 from app.controller.config import get_controller_settings
 from app.platform.naming import (
     mirror_ownership_labels,
@@ -14,7 +15,6 @@ from app.platform.naming import (
     ownership_labels,
     sandbox_id_for,
 )
-from app.sandboxes.git import clone_mirror_to_workspace, ensure_canonical_mirror
 from app.sandboxes.mirror import (
     MirrorPin,
     ensure_project_mirror,

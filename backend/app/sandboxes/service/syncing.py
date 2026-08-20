@@ -3,13 +3,7 @@ from dataclasses import replace
 from docker.client import DockerClient
 from docker.errors import DockerException
 
-from app.controller.store import ControllerStore, SandboxAdmissionError
-from app.controller.store.lifecycle_status import SandboxLifecycleStatus
-from app.platform.naming import workspace_volume
-from app.previews.config import get_preview_settings
-from app.sandboxes.database import SandboxDatabaseError
-from app.sandboxes.engine_detection import discover_engine
-from app.sandboxes.git import (
+from app.containers.git import (
     create_workspace_safety_ref,
     fetch_canonical_mirror,
     mirror_base_commit,
@@ -17,6 +11,12 @@ from app.sandboxes.git import (
     restore_workspace_safety_ref,
     sync_workspace_from_mirror,
 )
+from app.controller.store import ControllerStore, SandboxAdmissionError
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
+from app.platform.naming import workspace_volume
+from app.previews.config import get_preview_settings
+from app.sandboxes.database import SandboxDatabaseError
+from app.sandboxes.engine_detection import discover_engine
 from app.sandboxes.lifecycle import (
     lifecycle_conflict_detail,
     lifecycle_lease,

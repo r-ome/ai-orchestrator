@@ -8,6 +8,7 @@ from docker.models.containers import Container
 from docker.types import Mount
 from requests.exceptions import ReadTimeout
 
+from app.containers.git import run_git
 from app.containers.hardened import (
     Egress,
     HardenedContainerSpec,
@@ -66,7 +67,6 @@ from app.sandboxes.database import (
     SandboxDatabaseRuntime,
     sandbox_database_runtime,
 )
-from app.sandboxes.git import run_git
 
 # Controller metadata a preview has no business reading. A directory, so tmpfs
 # masks it.

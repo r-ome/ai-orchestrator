@@ -13,14 +13,7 @@ from fastapi.testclient import TestClient
 
 import app.sandboxes.service.publishing as sandbox_service_publishing
 import app.sandboxes.service.syncing as sandbox_service_syncing
-from app.controller.store import get_controller_store
-from app.controller.store.lifecycle_status import SandboxLifecycleStatus
-from app.main import app
-from app.platform.naming import mirror_ownership_labels, ownership_labels
-from app.sandboxes import database as sandbox_database
-from app.sandboxes import lifecycle as sandbox_lifecycle
-from app.sandboxes.engine_detection import EngineDetection, EngineSignal
-from app.sandboxes.git import (
+from app.containers.git import (
     GitNetworkMode,
     clone_mirror_to_workspace,
     create_workspace_safety_ref,
@@ -31,6 +24,13 @@ from app.sandboxes.git import (
     run_git,
     sync_workspace_from_mirror,
 )
+from app.controller.store import get_controller_store
+from app.controller.store.lifecycle_status import SandboxLifecycleStatus
+from app.main import app
+from app.platform.naming import mirror_ownership_labels, ownership_labels
+from app.sandboxes import database as sandbox_database
+from app.sandboxes import lifecycle as sandbox_lifecycle
+from app.sandboxes.engine_detection import EngineDetection, EngineSignal
 from app.sandboxes.manifest import (
     SandboxManifest,
     read_manifest,
