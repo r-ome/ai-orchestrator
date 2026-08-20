@@ -6,23 +6,26 @@ connection, migration, and administrative-SQL details.
 """
 
 import base64
-import hashlib
+import hashlib as hashlib
 import json
 import os
 import re
 import secrets
 import time
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
+from collections.abc import Iterator as Iterator
+from contextlib import contextmanager as contextmanager
 from dataclasses import dataclass
-from threading import Lock
-from typing import Any, Protocol, runtime_checkable
+from threading import Lock as Lock
+from typing import Any
+from typing import Protocol as Protocol
+from typing import runtime_checkable as runtime_checkable
 from urllib.parse import quote
 
 from docker.client import DockerClient
 from docker.errors import APIError, ContainerError, DockerException, NotFound
 from docker.models.containers import Container
-from docker.types import Mount
+from docker.types import Mount as Mount
 from requests.exceptions import ReadTimeout
 
 from app.containers.hardened import (
@@ -57,174 +60,96 @@ from app.platform.naming import (
     network as sandbox_network_name,
 )
 from app.previews.config import PreviewSettings
-from app.previews.models import PreviewConfiguration, PreviewDependencyService
+from app.previews.models import (
+    PreviewConfiguration as PreviewConfiguration,
+)
+from app.previews.models import (
+    PreviewDependencyService as PreviewDependencyService,
+)
 from app.sandboxes.engine_detection import NO_DATABASE
 
-ErrorFactory = Callable[[int, str], Exception]
-MYSQL_PORT = 3306
-POSTGRES_PORT = 5432
-SHARED_DATABASE_PREFIX = "orchestrator-shared-db-"
-# This path is deliberately not below /workspace.  The workspace is the Git
-# clone in every runtime, while this mount always holds sandbox-owned data.
-SQLITE_DATA_MOUNT_PATH = "/var/lib/orchestrator/sqlite"
-SQLITE_DATABASE_PATH = f"{SQLITE_DATA_MOUNT_PATH}/database.sqlite3"
-SQLITE_HELPER_IMAGE = "alpine:3.21"
-DEFAULT_MYSQL_IMAGE = "mysql:8.4"
-DEFAULT_POSTGRES_IMAGE = "postgres:17"
-DEFAULT_MIGRATION_IMAGE = "node:22-bookworm-slim"
-# These administrative commands had no Docker timeout before ADR-0006.  They
-# now fail after one minute instead of holding a request worker indefinitely.
-DATABASE_COMMAND_TIMEOUT_SECONDS = 60
-DATABASE_COMMAND_MAX_LOG_BYTES = 1_048_576
-_shared_database_locks_guard = Lock()
-_shared_database_locks: dict[str, Lock] = {}
+from .constants import (
+    DATABASE_COMMAND_MAX_LOG_BYTES,
+    DATABASE_COMMAND_TIMEOUT_SECONDS,
+    DEFAULT_MIGRATION_IMAGE,
+    DEFAULT_MYSQL_IMAGE,
+    DEFAULT_POSTGRES_IMAGE,
+    MYSQL_PORT,
+    POSTGRES_PORT,
+    SQLITE_DATABASE_PATH,
+    SQLITE_HELPER_IMAGE,
+)
+from .constants import (
+    SHARED_DATABASE_PREFIX as SHARED_DATABASE_PREFIX,
+)
+from .constants import (
+    SQLITE_DATA_MOUNT_PATH as SQLITE_DATA_MOUNT_PATH,
+)
+from .contracts import (
+    DatabaseConnectionRequest,
+    DatabaseDropRequest,
+    DatabaseEngine,
+    DatabaseMigrationRequest,
+    DatabaseProvision,
+    DatabaseProvisionRequest,
+    DatabaseSchemaProvisionRequest,
+    ErrorFactory,
+    ProvisionRequest,
+    SandboxDatabaseRuntime,
+)
+from .contracts import (
+    sqlite_data_volume as sqlite_data_volume,
+)
+from .errors import SandboxDatabaseError, SandboxMigrationError
+from .shared import (
+    _shared_database_locks as _shared_database_locks,
+)
+from .shared import (
+    _shared_database_locks_guard as _shared_database_locks_guard,
+)
+from .shared import (
+    mysql_identifier as mysql_identifier,
+)
+from .shared import (
+    mysql_shared_database_names as mysql_shared_database_names,
+)
+from .shared import (
+    mysql_shared_schema_name as mysql_shared_schema_name,
+)
+from .shared import (
+    mysql_shared_user_name as mysql_shared_user_name,
+)
+from .shared import (
+    postgres_drop_statements as postgres_drop_statements,
+)
+from .shared import (
+    postgres_identifier as postgres_identifier,
+)
+from .shared import (
+    postgres_provision_statements as postgres_provision_statements,
+)
+from .shared import (
+    postgres_shared_database_name as postgres_shared_database_name,
+)
+from .shared import (
+    postgres_shared_database_names as postgres_shared_database_names,
+)
+from .shared import (
+    postgres_shared_role_name as postgres_shared_role_name,
+)
+from .shared import (
+    schema_baseline_hash,
+    shared_database_names,
+    shared_database_server_lock,
+)
+from .shared import (
+    wait_for_mysql_health as wait_for_mysql_health,
+)
 
-
-@contextmanager
-def shared_database_server_lock(server_name: str) -> Iterator[None]:
-    """Serialize one shared server without blocking unrelated projects."""
-    with _shared_database_locks_guard:
-        lock = _shared_database_locks.get(server_name)
-        if lock is None:
-            lock = Lock()
-            _shared_database_locks[server_name] = lock
-    with lock:
-        yield
-
-
-class SandboxDatabaseError(Exception):
-    def __init__(self, status_code: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.detail = detail
-
-
-class SandboxMigrationError(SandboxDatabaseError):
-    """The approved snapshot failed inside the restricted runtime."""
-
-
-@dataclass(frozen=True)
-class SandboxDatabaseRuntime:
-    sandbox_id: str
-    engine: str
-    db_name: str
-    database_url: str
-    network_name: str
-    data_volume: str | None
-
-    @property
-    def environment(self) -> dict[str, str]:
-        return {"DATABASE_URL": self.database_url}
-
-    @property
-    def volumes(self) -> dict[str, dict[str, str]]:
-        if self.data_volume is None:
-            return {}
-        return {
-            self.data_volume: {
-                "bind": SQLITE_DATA_MOUNT_PATH,
-                "mode": "rw",
-            }
-        }
-
-
-def sqlite_data_volume(sandbox_id: str) -> str:
-    """Return the deterministic sandbox-owned SQLite data-volume name."""
-    return db_data_volume(sandbox_id)
-
-
-@dataclass(frozen=True)
-class DatabaseProvisionRequest:
-    docker_client: DockerClient
-    image: str
-    database: str
-    container_name: str
-    labels: dict[str, str]
-    data_volume: str
-    credentials_volume: Any
-    network_name: str
-    memory_limit: str
-    nano_cpus: int
-    pids_limit: int
-    error: ErrorFactory
-    shared: bool = False
-    max_connections: int | None = None
-    existing_container: Container | None = None
-
-
-@dataclass(frozen=True)
-class DatabaseProvision:
-    container: Container | None
-    credentials: dict[str, str]
-
-
-@dataclass(frozen=True)
-class DatabaseSchemaProvisionRequest:
-    docker_client: DockerClient
-    image: str
-    network_name: str
-    host: str
-    credentials_volume: Any
-    statements: list[str]
-    error: ErrorFactory
-
-
-@dataclass(frozen=True)
-class DatabaseConnectionRequest:
-    config: PreviewConfiguration
-    database: PreviewDependencyService
-    credentials: dict[str, str]
-    error: ErrorFactory
-    database_name: str = ""
-
-
-@dataclass(frozen=True)
-class DatabaseMigrationRequest:
-    docker_client: DockerClient
-    settings: PreviewSettings
-    image: str
-    commands: list[str]
-    runtime: str
-    environment: dict[str, str]
-    volumes: dict[str, dict[str, str]]
-    labels: dict[str, str]
-    network: Any
-    run_id: str
-    error: ErrorFactory
-    mounts: list[Mount] | None = None
-    tmpfs: dict[str, str] | None = None
-    container_name: str | None = None
-    service_label: str = "initialize"
-
-
-@dataclass(frozen=True)
-class DatabaseDropRequest:
-    docker_client: DockerClient
-    image: str
-    network_name: str
-    host: str
-    credentials_volume: Any
-    statements: list[str]
-    error: ErrorFactory
-    data_volume: str = ""
-
-
-ProvisionRequest = DatabaseProvisionRequest | DatabaseSchemaProvisionRequest
-
-
-@runtime_checkable
-class DatabaseEngine(Protocol):
-    """The complete database-engine surface for this phase."""
-
-    supports_template: bool
-
-    def provision(self, request: ProvisionRequest) -> DatabaseProvision | None: ...
-
-    def connection_url(self, request: DatabaseConnectionRequest) -> dict[str, str]: ...
-
-    def run_migrations(self, request: DatabaseMigrationRequest) -> Container: ...
-
-    def drop(self, request: DatabaseDropRequest) -> None: ...
+globals().pop("constants", None)
+globals().pop("contracts", None)
+globals().pop("errors", None)
+globals().pop("shared", None)
 
 
 class MySQLDatabaseEngine:
@@ -963,144 +888,6 @@ def _run_database_command(
     if result.exit_code != 0:
         raise ContainerError(None, result.exit_code, command, image, result.stderr)
     return result.stdout
-
-
-def mysql_shared_database_names(project_key: str) -> dict[str, str]:
-    """Return stable shared-server resources for one project and engine.
-
-    The name carries the engine, so a future engine change cannot reuse MySQL
-    data or a server.
-    """
-    key = project_key[:12]
-    prefix = f"{SHARED_DATABASE_PREFIX}{key}-mysql"
-    return {
-        "container": prefix,
-        "data": f"{prefix}-data",
-        "credentials": f"{prefix}-credentials",
-        "network": f"{prefix}-net",
-    }
-
-
-def postgres_shared_database_names(project_key: str) -> dict[str, str]:
-    """Return stable PostgreSQL shared-server resource names.
-
-    The name carries the engine, matching `mysql_shared_database_names`.
-    """
-    key = project_key[:12]
-    prefix = f"{SHARED_DATABASE_PREFIX}{key}-postgres"
-    return {
-        "container": prefix,
-        "data": f"{prefix}-data",
-        "credentials": f"{prefix}-credentials",
-        "network": f"{prefix}-net",
-    }
-
-
-def shared_database_names(project_key: str, engine: str) -> dict[str, str]:
-    """Resolve server resource names without assigning any SQLite resources."""
-    if engine == "mysql":
-        return mysql_shared_database_names(project_key)
-    if engine == "postgres":
-        return postgres_shared_database_names(project_key)
-    raise ValueError(f"Database engine {engine!r} has no shared server")
-
-
-def mysql_shared_schema_name(sandbox_id: str, error: ErrorFactory) -> str:
-    return f"sbx_{mysql_identifier(sandbox_id, error)}"
-
-
-def mysql_shared_user_name(sandbox_id: str, error: ErrorFactory) -> str:
-    return f"sbx_{mysql_identifier(sandbox_id, error)}"
-
-
-def mysql_identifier(sandbox_id: str, error: ErrorFactory) -> str:
-    """Reduce a sandbox id to characters MySQL accepts unquoted."""
-    cleaned = re.sub(r"[^a-z0-9]+", "", sandbox_id.casefold())[:16]
-    if not cleaned:
-        raise error(422, "Sandbox id cannot name a database schema")
-    return cleaned
-
-
-def postgres_identifier(sandbox_id: str, error: ErrorFactory) -> str:
-    """Return the conservative unquoted identifier shared by role and database."""
-    cleaned = re.sub(r"[^a-z0-9]+", "", sandbox_id.casefold())[:16]
-    if not cleaned:
-        raise error(422, "Sandbox id cannot name a PostgreSQL database")
-    return cleaned
-
-
-def postgres_shared_database_name(sandbox_id: str, error: ErrorFactory) -> str:
-    return f"sbx_{postgres_identifier(sandbox_id, error)}"
-
-
-def postgres_shared_role_name(sandbox_id: str, error: ErrorFactory) -> str:
-    return f"sbx_{postgres_identifier(sandbox_id, error)}"
-
-
-def postgres_provision_statements(
-    sandbox_id: str,
-    password: str,
-    error: ErrorFactory,
-) -> list[str]:
-    """Build root-only SQL for one sandbox database and login role."""
-    name = postgres_shared_database_name(sandbox_id, error)
-    escaped_password = password.replace("'", "''")
-    return [
-        f"CREATE ROLE \"{name}\" LOGIN PASSWORD '{escaped_password}'",
-        f'CREATE DATABASE "{name}" OWNER "{name}"',
-    ]
-
-
-def postgres_drop_statements(sandbox_id: str, error: ErrorFactory) -> list[str]:
-    """Terminate clients before dropping the sandbox database and role."""
-    name = postgres_shared_database_name(sandbox_id, error)
-    escaped_name = name.replace("'", "''")
-    return [
-        (
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-            f"WHERE datname = '{escaped_name}' AND pid <> pg_backend_pid()"
-        ),
-        f'DROP DATABASE IF EXISTS "{name}"',
-        f'DROP ROLE IF EXISTS "{name}"',
-    ]
-
-
-def wait_for_mysql_health(
-    container: Container,
-    *,
-    timeout_seconds: int,
-    error: ErrorFactory,
-) -> None:
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        container.reload()
-        state = container.attrs.get("State") or {}
-        status = str(state.get("Status") or container.status)
-        health = str((state.get("Health") or {}).get("Status") or "")
-        if status == "running" and health == "healthy":
-            return
-        if status in {"dead", "exited"} or health == "unhealthy":
-            logs = container.logs(stdout=True, stderr=True, tail=100)
-            detail = (
-                logs.decode("utf-8", errors="replace")
-                if isinstance(logs, bytes)
-                else str(logs)
-            )[-8_192:]
-            raise error(422, f"MySQL failed its health check: {detail}")
-        time.sleep(0.5)
-    raise error(408, f"MySQL health check exceeded {timeout_seconds} seconds")
-
-
-def schema_baseline_hash(files: dict[str, bytes]) -> str:
-    """Hash sorted path-and-byte pairs without parsing project content."""
-    digest = hashlib.sha256()
-    for path, content in sorted(files.items()):
-        encoded_path = path.encode("utf-8", errors="surrogateescape")
-        digest.update(len(encoded_path).to_bytes(8, "big"))
-        digest.update(encoded_path)
-        digest.update(len(content).to_bytes(8, "big"))
-        digest.update(content)
-    return digest.hexdigest()
 
 
 def sandbox_database_runtime(
