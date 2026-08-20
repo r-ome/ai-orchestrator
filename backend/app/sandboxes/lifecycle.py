@@ -11,14 +11,13 @@ from uuid import uuid4
 from docker.client import DockerClient
 from docker.errors import NotFound
 
-from app.agents.service import AgentOperationError, stop_agent
 from app.controller.store import (
     ControllerStore,
     SandboxAdmissionError,
     SandboxLeaseBlockedByWriterError,
     SandboxLeaseHeldError,
 )
-from app.platform.labels import LABEL_TASK_ID
+from app.platform.labels import LABEL_RUN_ID, LABEL_TASK_ID
 from app.previews.service import stop_preview, stop_task_preview
 
 _LEASE = "lease"
@@ -247,15 +246,23 @@ def drain_sandbox_writers(
         run = store.agent_run(agent_run_id) if agent_run_id else None
         container_id = str((run or {}).get("container_id") or "")
         if container_id:
+            # Stopped here rather than through agents.stop_agent, which would
+            # put `sandboxes` back inside the import cycle. There is no managed
+            # label check because this id comes from the controller store, not
+            # from a caller. The run id is read from the container rather than
+            # from agent_run_id above, because that is what stop_agent did.
             try:
-                stop_agent(
-                    docker_client,
-                    container_id,
-                    controller_store=store,
-                )
-            except (AgentOperationError, NotFound) as error:
-                if getattr(error, "status_code", 404) != 404:
-                    raise
+                container = docker_client.containers.get(container_id)
+                if container.status == "running":
+                    container.stop(timeout=2)
+                else:
+                    container.remove(force=True)
+                labels = (container.attrs.get("Config") or {}).get("Labels") or {}
+                run_id = labels.get(LABEL_RUN_ID, "")
+                if run_id:
+                    store.update_agent_run(run_id, status="stopped")
+            except NotFound:
+                pass
         store.close_agent_writer_session(session_id)
 
     task_ids = [

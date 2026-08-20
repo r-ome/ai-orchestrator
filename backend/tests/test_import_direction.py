@@ -18,7 +18,6 @@ from pathlib import Path
 # This known-bad baseline must shrink as later architecture phases land.
 KNOWN_CYCLE = frozenset(
     {
-        "agents",
         "previews",
         "projects",
         "sandboxes",
@@ -26,6 +25,7 @@ KNOWN_CYCLE = frozenset(
 )
 MODULES_OUTSIDE_KNOWN_CYCLE = frozenset(
     {
+        "agents",
         "containers",
         "controller",
         "delegation",
