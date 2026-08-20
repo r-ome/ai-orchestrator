@@ -415,10 +415,11 @@ where the code actually lives.**
 ## 2. Structural debt, measured
 
 Three of the four items here are done, 20 Aug 2026, and keep their entries because each
-returned a finding. **What is still open is the 5-node import cycle, and the 2
-function-local imports of the original 14 that genuinely carry it.** One more thing is open
-and undecided: **two vocabularies — Docker labels and preview status — are each close to
-undefended by tests**, which is now its own entry.
+returned a finding. **What is still open is the 3-node import cycle.** The function-local
+imports are no longer part of it: 1 of the original 14 remains and it is intra-package. One
+more thing is open and undecided: **two vocabularies — Docker labels and preview status —
+are each close to undefended by tests**, which is now its own entry, and stage 3 added a
+third case of the same shape to it.
 
 Done 20 Aug 2026: the preview-status write sites (`4fe0e37`), the dead `rebuilding` status
 and migration 32 (`d0f0d07`), the `startup.py` import hoist (`a787fdc`), the remaining
