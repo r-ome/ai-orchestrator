@@ -19,6 +19,7 @@ from app.agents.models import (
     ReplaceAgentRequest,
     StopAgentResponse,
 )
+from app.containers.config import get_git_settings
 from app.containers.hardened import (
     Egress,
     HardenedContainerSpec,
@@ -465,7 +466,7 @@ def _ensure_sandbox_git_baseline(
     """
     if controller_store.sandbox_baseline_commit(sandbox_id):
         return
-    git_image = get_preview_settings().git_image
+    git_image = get_git_settings().git_image
     baseline_commit = ensure_git_baseline(docker_client, git_image, project_volume)
     controller_store.set_sandbox_baseline_commit(
         sandbox_id=sandbox_id,

@@ -8,6 +8,7 @@ from docker.models.containers import Container
 from docker.types import Mount
 from requests.exceptions import ReadTimeout
 
+from app.containers.config import get_git_settings
 from app.containers.git import run_git
 from app.containers.hardened import (
     Egress,
@@ -105,7 +106,8 @@ def _start_native(
         with _timed_step(
             report, "workspace", f"Exporting sandbox commit {commit_sha[:12]}"
         ) as finish:
-            _ensure_preview_image(docker_client, settings.git_image)
+            git_image = get_git_settings().git_image
+            _ensure_preview_image(docker_client, git_image)
             workspace = _data_volume(
                 docker_client,
                 run_id,
@@ -116,7 +118,7 @@ def _start_native(
             data_volumes.append(workspace)
             _export_commit(
                 docker_client,
-                settings.git_image,
+                git_image,
                 project_volume,
                 workspace.name,
                 commit_sha,

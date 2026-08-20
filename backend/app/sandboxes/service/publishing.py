@@ -3,11 +3,11 @@ from dataclasses import replace
 from docker.client import DockerClient
 from docker.errors import DockerException
 
+from app.containers.config import get_git_settings
 from app.containers.git import describe_git_failure
 from app.controller.store import ControllerStore, SandboxAdmissionError
 from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.platform.naming import workspace_volume
-from app.previews.config import get_preview_settings
 from app.sandboxes.lifecycle import (
     lifecycle_conflict_detail,
     lifecycle_lease,
@@ -74,7 +74,7 @@ def publish(
     base_ref = _required_sync_value(sandbox, "base_ref", sandbox_id)
     workspace_name = workspace_volume(sandbox_id)
     mirror_name = str(project["mirror_volume"])
-    preview_settings = get_preview_settings()
+    git_image = get_git_settings().git_image
 
     try:
         # This reads the stored review only. It must run before the lifecycle
@@ -114,7 +114,7 @@ def publish(
                     outcome = publish_reviewed_feature(
                         docker_client,
                         store=controller_store,
-                        preview_settings=preview_settings,
+                        git_image=git_image,
                         sandbox_id=sandbox_id,
                         workspace_volume=workspace_name,
                         mirror_volume=mirror_name,

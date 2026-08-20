@@ -17,7 +17,6 @@ from app.delegation.models import (
     FeatureDiffFile,
     RunStatus,
 )
-from app.previews.config import PreviewSettings
 from app.sandboxes.feature_target import (
     FeatureTarget,
     FeatureTargetError,
@@ -54,7 +53,7 @@ def _ensure_dirty_state(
 
 def capture_feature_target(
     docker_client: DockerClient,
-    settings: PreviewSettings,
+    git_image: str,
     store: ControllerStore,
     delegation_view: DelegationView,
 ) -> FeatureTarget:
@@ -98,7 +97,7 @@ def capture_feature_target(
         raise service.DelegationOperationError(404, "Delegation sandbox was not found")
     state = sandbox_state(
         docker_client,
-        settings.git_image,
+        git_image,
         str(sandbox["volume_name"]),
     )
     _ensure_dirty_state(
@@ -123,7 +122,7 @@ def capture_feature_target(
 
 def feature_diff(
     docker_client: DockerClient,
-    settings: PreviewSettings,
+    git_image: str,
     store: ControllerStore,
     delegation_view: DelegationView,
 ) -> FeatureDiff:
@@ -157,7 +156,7 @@ def feature_diff(
             )
         state = sandbox_state(
             docker_client,
-            settings.git_image,
+            git_image,
             str(sandbox["volume_name"]),
         )
         _ensure_dirty_state(
@@ -169,7 +168,7 @@ def feature_diff(
     else:
         target = capture_feature_target(
             docker_client,
-            settings,
+            git_image,
             store,
             delegation_view,
         )
@@ -182,7 +181,7 @@ def feature_diff(
     _validate_target(target)
     numstat = _bounded_diff(
         docker_client,
-        settings.git_image,
+        git_image,
         volume_name,
         target,
         "--numstat --no-renames",
@@ -190,7 +189,7 @@ def feature_diff(
     )
     raw_patch = _bounded_diff(
         docker_client,
-        settings.git_image,
+        git_image,
         volume_name,
         target,
         "--no-ext-diff --find-renames --unified=3",

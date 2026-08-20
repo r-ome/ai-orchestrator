@@ -32,6 +32,7 @@ BASE = "1" * 40
 MIDDLE = "2" * 40
 HEAD = "3" * 40
 NOW = "2026-08-09T00:00:00Z"
+GIT_IMAGE = "alpine/git:latest"
 PREVIEW_SETTINGS = PreviewSettings(
     inspection_image="inspect",
     default_expiry_minutes=30,
@@ -40,7 +41,6 @@ PREVIEW_SETTINGS = PreviewSettings(
     proposal_lifetime_seconds=900,
     prepare_timeout_seconds=600,
     build_timeout_seconds=900,
-    git_image="alpine/git:latest",
 )
 requires_docker = pytest.mark.skipif(
     os.getenv("RUN_DOCKER_PREVIEW_TESTS") != "1",
@@ -232,7 +232,7 @@ def test_capture_feature_target_follows_the_accepted_task_chain() -> None:
 
     target = delivery.capture_feature_target(
         docker,
-        PREVIEW_SETTINGS,
+        GIT_IMAGE,
         store,
         view,
     )
@@ -247,7 +247,7 @@ def test_unchanged_pre_existing_untracked_file_allows_feature_review() -> None:
 
     target = delivery.capture_feature_target(
         _Docker(_state(position)),
-        PREVIEW_SETTINGS,
+        GIT_IMAGE,
         _DirtyStore([position]),
         _one_task_view(),
     )
@@ -261,7 +261,7 @@ def test_modified_pre_existing_file_blocks_feature_review() -> None:
     with pytest.raises(service.DelegationOperationError) as error:
         delivery.capture_feature_target(
             _Docker(_state(_untracked(position.path, "sha256:changed"))),
-            PREVIEW_SETTINGS,
+            GIT_IMAGE,
             _DirtyStore([position]),
             _one_task_view(),
         )
@@ -277,7 +277,7 @@ def test_new_untracked_file_blocks_feature_review() -> None:
     with pytest.raises(service.DelegationOperationError) as error:
         delivery.capture_feature_target(
             _Docker(_state(added)),
-            PREVIEW_SETTINGS,
+            GIT_IMAGE,
             _DirtyStore([]),
             _one_task_view(),
         )
@@ -292,7 +292,7 @@ def test_removed_pre_existing_file_blocks_feature_review() -> None:
     with pytest.raises(service.DelegationOperationError) as error:
         delivery.capture_feature_target(
             _Docker(_state()),
-            PREVIEW_SETTINGS,
+            GIT_IMAGE,
             _DirtyStore([removed]),
             _one_task_view(),
         )
@@ -304,7 +304,7 @@ def test_removed_pre_existing_file_blocks_feature_review() -> None:
 def test_clean_sandbox_still_allows_feature_review() -> None:
     target = delivery.capture_feature_target(
         _Docker(_state()),
-        PREVIEW_SETTINGS,
+        GIT_IMAGE,
         _DirtyStore([]),
         _one_task_view(),
     )
@@ -325,7 +325,7 @@ def test_dirty_error_identifies_every_blocking_path_and_change() -> None:
                     added,
                 )
             ),
-            PREVIEW_SETTINGS,
+            GIT_IMAGE,
             _DirtyStore([modified, removed]),
             _one_task_view(),
         )
@@ -344,7 +344,7 @@ def test_legacy_directory_baseline_seeds_exact_fingerprints_once() -> None:
 
     delivery.capture_feature_target(
         _Docker(_state(position)),
-        PREVIEW_SETTINGS,
+        GIT_IMAGE,
         store,
         _one_task_view(),
     )
@@ -369,7 +369,7 @@ def test_feature_diff_returns_file_totals_and_a_unified_patch() -> None:
 
     result = delivery.feature_diff(
         docker,
-        PREVIEW_SETTINGS,
+        GIT_IMAGE,
         store,
         _view(_review()),
     )
@@ -389,7 +389,7 @@ def test_feature_diff_checks_dirty_state_before_generating_the_patch() -> None:
     with pytest.raises(service.DelegationOperationError) as error:
         delivery.feature_diff(
             docker,
-            PREVIEW_SETTINGS,
+            GIT_IMAGE,
             _DirtyStore([position]),
             _view(_review()),
         )
@@ -451,7 +451,7 @@ def test_incorporated_change_invalidates_the_previous_review_target(
         b"diff --git a/src/app.py b/src/app.py\n+refined\n",
     )
 
-    result = delivery.feature_diff(docker, PREVIEW_SETTINGS, store, view)
+    result = delivery.feature_diff(docker, GIT_IMAGE, store, view)
 
     assert result.review_id is None
     assert result.head_commit == HEAD
@@ -513,7 +513,7 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
 
     def git(script: str, volumes: dict[str, dict[str, str]]) -> bytes:
         return client.containers.run(
-            PREVIEW_SETTINGS.git_image,
+            GIT_IMAGE,
             entrypoint=["sh", "-c"],
             command=[script],
             remove=True,

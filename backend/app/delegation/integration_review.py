@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from docker.client import DockerClient
 
+from app.containers.config import get_git_settings
 from app.controller.store import ControllerStore, ReviewGenerating, RevisionTaken
 from app.controller.store.delegation_status import DelegationStatus
 from app.delegation import service
@@ -24,7 +25,6 @@ from app.planning.config import PlanningSettings
 from app.planning.models import PlanningRole
 from app.planning.runner import TurnRequest, run_planning_turn, run_validated_turn
 from app.platform.coercions import json_object
-from app.previews.config import get_preview_settings
 from app.sandboxes.feature_target import (
     FeatureTargetError,
     ensure_target_unchanged,
@@ -177,11 +177,11 @@ def execute_integration_review(
     delegation_id = claim.delegation_id
     review_id = claim.review_id
     model = claim.model
-    preview_settings = get_preview_settings()
+    git_image = get_git_settings().git_image
     try:
         target = capture_feature_target(
             docker_client,
-            preview_settings,
+            git_image,
             store,
             service.view(store, delegation_id),
         )
@@ -285,7 +285,7 @@ def execute_integration_review(
     try:
         ensure_target_unchanged(
             docker_client,
-            preview_settings,
+            git_image,
             store,
             claim.sandbox_id,
             target,

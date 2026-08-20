@@ -1,8 +1,8 @@
 from docker.client import DockerClient
 
+from app.containers.config import get_git_settings
 from app.containers.git import count_mirror_staleness, fetch_canonical_mirror
 from app.controller.store import ControllerStore, SandboxAdmissionError
-from app.previews.config import get_preview_settings
 from app.sandboxes.lifecycle import lifecycle_conflict_detail, project_mirror_lock
 
 from .coercion import _optional_string, _required_staleness_value, require_v1
@@ -34,7 +34,7 @@ def staleness(
         sandbox, "current_base_commit", sandbox_id
     )
     mirror_name = str(project["mirror_volume"])
-    git_image = get_preview_settings().git_image
+    git_image = get_git_settings().git_image
     fetch_failure_reason: str | None = None
 
     # Staleness is sandbox read-only. It intentionally takes no lifecycle

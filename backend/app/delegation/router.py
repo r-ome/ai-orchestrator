@@ -5,6 +5,7 @@ from docker.client import DockerClient
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 
 from app.agents.service import AgentOperationError
+from app.containers.config import get_git_settings
 from app.controller.store import ControllerStore, get_controller_store
 from app.controller.store.delegation_status import DelegationStatus
 from app.delegation.change_requests import (
@@ -71,7 +72,6 @@ from app.platform.docker_errors import (
     PassThroughApiError,
     docker_response,
 )
-from app.previews.config import PreviewSettings, get_preview_settings
 from app.tasks.config import CodingTurnSettings, get_coding_turn_settings
 from app.tasks.runner import CodingTurnError
 
@@ -592,13 +592,12 @@ def read_feature_diff(
     session_id: str,
     delegation_id: str,
     docker_client: Annotated[DockerClient, Depends(get_docker_client)],
-    settings: Annotated[PreviewSettings, Depends(get_preview_settings)],
     store: StoreDep,
 ) -> FeatureDiff:
     return _response(
         lambda: feature_diff(
             docker_client,
-            settings,
+            get_git_settings().git_image,
             store,
             view(
                 store,

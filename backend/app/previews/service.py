@@ -11,6 +11,7 @@ from docker.errors import (
 )
 from docker.models.containers import Container
 
+from app.containers.config import get_git_settings
 from app.controller.store import ControllerStore, SandboxWriterAdmissionError
 from app.controller.store.preview_status import PreviewStatus
 from app.controller.store.task_status import TaskStatus, transition_task
@@ -614,7 +615,7 @@ def restart_preview(
             # phase fixes.
             _export_commit(
                 docker_client,
-                settings.git_image,
+                get_git_settings().git_image,
                 project.volume_name,
                 _run_volume_name(str(record["id"]), "runtime-workspace"),
                 commit_sha,

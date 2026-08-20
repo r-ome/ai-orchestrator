@@ -22,7 +22,6 @@ from app.platform.dirty_state import (
     snapshot_shell,
 )
 from app.platform.errors import OperationError
-from app.previews.config import PreviewSettings
 
 
 class FeatureTargetError(OperationError):
@@ -46,7 +45,7 @@ class SandboxState:
 
 def ensure_target_unchanged(
     docker_client: DockerClient,
-    settings: PreviewSettings,
+    git_image: str,
     store: ControllerStore,
     sandbox_id: str,
     target: FeatureTarget,
@@ -57,7 +56,7 @@ def ensure_target_unchanged(
         raise FeatureTargetError(404, "Delegation sandbox was not found")
     state = sandbox_state(
         docker_client,
-        settings.git_image,
+        git_image,
         str(sandbox["volume_name"]),
     )
     ensure_original_dirty_state(store, sandbox_id, sandbox, state)

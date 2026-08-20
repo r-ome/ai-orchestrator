@@ -3,6 +3,7 @@ from dataclasses import replace
 from docker.client import DockerClient
 from docker.errors import DockerException
 
+from app.containers.config import get_git_settings
 from app.containers.git import (
     create_workspace_safety_ref,
     fetch_canonical_mirror,
@@ -14,7 +15,6 @@ from app.containers.git import (
 from app.controller.store import ControllerStore, SandboxAdmissionError
 from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.platform.naming import workspace_volume
-from app.previews.config import get_preview_settings
 from app.sandboxes.database import SandboxDatabaseError
 from app.sandboxes.engine_detection import discover_engine
 from app.sandboxes.lifecycle import (
@@ -65,7 +65,7 @@ def sync(
             f"Sandbox '{sandbox_id}' has no feature branch; recreate it explicitly to use v1."
         )
 
-    git_image = get_preview_settings().git_image
+    git_image = get_git_settings().git_image
     mirror_name = str(project["mirror_volume"])
     workspace_name = workspace_volume(sandbox_id)
     try:

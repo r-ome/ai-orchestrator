@@ -1,11 +1,11 @@
 import pytest
 
 from app.containers import git
-from app.previews.config import PreviewSettings
 from app.sandboxes import publish
 from app.sandboxes.feature_target import FeatureTargetError
 
 HEAD = "b" * 40
+GIT_IMAGE = "alpine/git:latest"
 
 
 class _Response:
@@ -43,19 +43,6 @@ class _Store:
         return self.publication
 
 
-def _settings() -> PreviewSettings:
-    return PreviewSettings(
-        inspection_image="alpine:latest",
-        default_expiry_minutes=30,
-        maximum_file_bytes=1,
-        maximum_snapshot_bytes=1,
-        proposal_lifetime_seconds=1,
-        prepare_timeout_seconds=1,
-        build_timeout_seconds=1,
-        git_image="alpine/git:latest",
-    )
-
-
 def _approved_review() -> dict[str, object]:
     return {
         "base_branch": "feature/publish-test",
@@ -69,7 +56,7 @@ def _publish(store: _Store) -> publish.PublishOutcome:
     return publish.publish_reviewed_feature(
         object(),  # type: ignore[arg-type]
         store=store,  # type: ignore[arg-type]
-        preview_settings=_settings(),
+        git_image=GIT_IMAGE,
         sandbox_id="sandbox",
         workspace_volume="workspace",
         mirror_volume="mirror",
@@ -186,7 +173,7 @@ def test_force_with_lease_extension_refuses_after_an_observed_pr(
         publish.publish_reviewed_feature(
             object(),  # type: ignore[arg-type]
             store=_Store(_approved_review(), {"pr_number": 42}),  # type: ignore[arg-type]
-            preview_settings=_settings(),
+            git_image=GIT_IMAGE,
             sandbox_id="sandbox",
             workspace_volume="workspace",
             mirror_volume="mirror",

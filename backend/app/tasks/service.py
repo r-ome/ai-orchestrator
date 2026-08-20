@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from docker.client import DockerClient
 
+from app.containers.config import get_git_settings
 from app.containers.git import run_git
 from app.controller.store import (
     ControllerStore,
@@ -20,7 +21,6 @@ from app.controller.store.task_status import (
 )
 from app.platform.dirty_state import parse_snapshot, serialize_snapshot, snapshot_shell
 from app.platform.errors import OperationError
-from app.previews.config import get_preview_settings
 from app.previews.service import stop_task_preview
 from app.projects.models import ProjectRegistration
 from app.projects.service import (
@@ -95,7 +95,7 @@ def start_task(
     # The preparing row covers baseline creation too. ensure_git_baseline can
     # initialize Git and create a commit, so it is sandbox mutation rather
     # than a harmless read.
-    git_image = get_preview_settings().git_image
+    git_image = get_git_settings().git_image
     try:
         base_commit = ensure_git_baseline(
             docker_client,
@@ -440,7 +440,7 @@ def report_task_complete(
         raise TaskOperationError(404, f"Sandbox '{task.sandbox_id}' is unknown")
     volume_name = str(sandbox["volume_name"])
 
-    git_image = get_preview_settings().git_image
+    git_image = get_git_settings().git_image
     output = run_git(
         docker_client,
         image=git_image,
@@ -519,7 +519,7 @@ def accept_task(
     base_branch = _base_branch(task)
     output = run_git(
         docker_client,
-        image=get_preview_settings().git_image,
+        image=get_git_settings().git_image,
         volumes={str(sandbox["volume_name"]): {"bind": "/project", "mode": "rw"}},
         script=_accept_script(
             task.branch,
@@ -599,7 +599,7 @@ def reject_task(
     base_branch = _base_branch(task)
     output = run_git(
         docker_client,
-        image=get_preview_settings().git_image,
+        image=get_git_settings().git_image,
         volumes={str(sandbox["volume_name"]): {"bind": "/project", "mode": "rw"}},
         script=_reject_script(task.branch, base_branch),
     )

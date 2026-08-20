@@ -2,6 +2,7 @@ from dataclasses import replace
 
 from docker.client import DockerClient
 
+from app.containers.config import get_git_settings
 from app.controller.store import ControllerStore, SandboxAdmissionError
 from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.platform.naming import database_name, db_data_volume, workspace_volume
@@ -88,7 +89,7 @@ def complete_database_provision(
         settings = get_preview_settings()
         schema_files = discover_schema_baseline_files(
             docker_client,
-            image=settings.git_image,
+            image=get_git_settings().git_image,
             volume_name=workspace_volume(sandbox_id),
         )
         _runtime, baseline_hash = provision_sandbox_database(

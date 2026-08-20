@@ -3,6 +3,7 @@ from dataclasses import replace
 from docker.client import DockerClient
 from docker.errors import DockerException, NotFound
 
+from app.containers.config import get_git_settings
 from app.controller.store import ControllerStore, SandboxAdmissionError
 from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.platform.naming import (
@@ -111,7 +112,7 @@ def create_or_resolve(
                 return CreateOutcome(sandbox, False)
 
             try:
-                git_image = get_preview_settings().git_image
+                git_image = get_git_settings().git_image
                 # Fixed global order: sandbox lease, then project mirror lock.
                 # The lock ends before the clone, so separate sandbox creates
                 # only serialize their shared fetch.
@@ -245,7 +246,7 @@ def resume(
                     )
                 verify_workspace_identity(
                     docker_client,
-                    image=get_preview_settings().git_image,
+                    image=get_git_settings().git_image,
                     sandbox_id=sandbox_id,
                     feature_branch=manifest.feature_branch,
                 )
@@ -266,7 +267,7 @@ def resume(
                 )
                 ensure_workspace_import(
                     docker_client,
-                    image=get_preview_settings().git_image,
+                    image=get_git_settings().git_image,
                     sandbox_id=sandbox_id,
                     project_id=str(project["id"]),
                     mirror=MirrorPin(
@@ -286,7 +287,7 @@ def resume(
                 if detection is None:
                     detected = discover_engine(
                         docker_client,
-                        image=get_preview_settings().git_image,
+                        image=get_git_settings().git_image,
                         volume_name=workspace_volume(sandbox_id),
                     )
                     if detected.tracked_database_paths:

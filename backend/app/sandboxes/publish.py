@@ -18,7 +18,6 @@ from app.containers.git import (
     remote_branch_sha,
 )
 from app.controller.store import ControllerStore
-from app.previews.config import PreviewSettings
 from app.sandboxes.feature_target import (
     FeatureTarget,
     FeatureTargetError,
@@ -311,7 +310,7 @@ def publish_reviewed_feature(
     docker_client: DockerClient,
     *,
     store: ControllerStore,
-    preview_settings: PreviewSettings,
+    git_image: str,
     sandbox_id: str,
     workspace_volume: str,
     mirror_volume: str,
@@ -331,7 +330,7 @@ def publish_reviewed_feature(
         # branch and HEAD still match the reviewed commit before network Git.
         ensure_target_unchanged(
             docker_client,
-            preview_settings,
+            git_image,
             store,
             sandbox_id,
             target,
@@ -350,7 +349,7 @@ def publish_reviewed_feature(
     # mirror so a retry of the same reviewed commit does not issue a push.
     observed_sha = remote_branch_sha(
         docker_client,
-        image=preview_settings.git_image,
+        image=git_image,
         mirror_volume=mirror_volume,
         remote_branch=remote_branch,
         credential_source=credential_source,
@@ -359,7 +358,7 @@ def publish_reviewed_feature(
     if observed_sha == target.head_commit:
         assert_workspace_has_no_remotes(
             docker_client,
-            image=preview_settings.git_image,
+            image=git_image,
             workspace_volume=workspace_volume,
             ensure_image=True,
         )
@@ -372,7 +371,7 @@ def publish_reviewed_feature(
 
     mirror_commit = push_workspace_to_mirror(
         docker_client,
-        image=preview_settings.git_image,
+        image=git_image,
         workspace_volume=workspace_volume,
         mirror_volume=mirror_volume,
         feature_branch=feature_branch,
@@ -384,7 +383,7 @@ def publish_reviewed_feature(
         raise PublishError(409, "Mirror did not receive the reviewed feature commit")
     push_mirror_to_remote(
         docker_client,
-        image=preview_settings.git_image,
+        image=git_image,
         mirror_volume=mirror_volume,
         remote_branch=remote_branch,
         credential_source=credential_source,
@@ -393,7 +392,7 @@ def publish_reviewed_feature(
     )
     verified_sha = remote_branch_sha(
         docker_client,
-        image=preview_settings.git_image,
+        image=git_image,
         mirror_volume=mirror_volume,
         remote_branch=remote_branch,
         credential_source=credential_source,
@@ -405,7 +404,7 @@ def publish_reviewed_feature(
         )
     assert_workspace_has_no_remotes(
         docker_client,
-        image=preview_settings.git_image,
+        image=git_image,
         workspace_volume=workspace_volume,
         ensure_image=True,
     )
