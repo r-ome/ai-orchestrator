@@ -51,7 +51,7 @@ def describe_git_failure(error: Exception) -> str:
     if not isinstance(error, ContainerError):
         try:
             return str(error)
-        except Exception:
+        except Exception:  # noqa: BLE001 - error objects can fail during string conversion
             return type(error).__name__
 
     try:
@@ -83,14 +83,14 @@ def describe_git_failure(error: Exception) -> str:
                 "permission (fine-grained)."
             )
         return "; ".join(_without_remote_prefix(line) for line in lines[-3:])[:500]
-    except Exception:
+    except Exception:  # noqa: BLE001 - error inspection must not mask the original Git failure
         return f"Git failed with exit status {_container_error_exit_status(error)}"
 
 
 def _container_error_exit_status(error: ContainerError) -> str:
     try:
         return str(error.exit_status)
-    except Exception:
+    except Exception:  # noqa: BLE001 - error inspection must not mask the original Git failure
         return "unknown"
 
 

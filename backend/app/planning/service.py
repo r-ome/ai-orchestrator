@@ -507,7 +507,7 @@ async def _run_turn_with_retries(
                 ),
             )
             await asyncio.sleep(delay)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - record unexpected retry-loop failures as turn errors
             _record_turn_error(
                 controller_store,
                 session_id,
@@ -979,8 +979,10 @@ def _planner_validator(
             return []
         known = ", ".join(sorted(ledger_ids)) if ledger_ids else "none"
         return [
-            f"planner responded to findings that are not on the review ledger: "
-            f"{', '.join(unknown)}. Respond only to these findings: {known}."
+            (
+                f"planner responded to findings that are not on the review ledger: "
+                f"{', '.join(unknown)}. Respond only to these findings: {known}."
+            )
         ]
 
     return validate

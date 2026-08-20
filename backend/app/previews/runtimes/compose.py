@@ -243,9 +243,9 @@ def _validate_compose_service(service_name: str, service: dict[str, Any]) -> Non
         "ipc",
         "devices",
         "cap_add",
-        # Compose cannot request Docker's no-new-privileges control.  Build
-        # the key here so the boundary guard can reserve its direct spelling.
-        "_".join(("security", "opt")),
+        # Compose cannot request Docker's no-new-privileges control. Build the
+        # key here so the boundary guard can reserve its direct spelling.
+        "_".join(("security", "opt")),  # noqa: FLY002 - keep the boundary guard's direct-spelling check effective
         "env_file",
         "secrets",
         "configs",
@@ -356,7 +356,7 @@ def _compose_volumes(
                     mode = "ro"
             else:
                 raise PreviewOperationError(422, "Compose volume syntax is unsupported")
-            if source.startswith(".") or source.startswith("/"):
+            if source.startswith((".", "/")):
                 mount_type = "bind"
         elif isinstance(declaration, dict):
             mount_type = str(declaration.get("type", "volume"))

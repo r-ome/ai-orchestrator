@@ -275,8 +275,10 @@ def _attach_shared_database(
         raise PreviewOperationError(500, "Generated database password is unusable")
 
     statements = [
-        f"CREATE DATABASE IF NOT EXISTS `{schema_name}` "
-        "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+        (
+            f"CREATE DATABASE IF NOT EXISTS `{schema_name}` "
+            "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+        ),
         f"CREATE USER IF NOT EXISTS '{user_name}'@'%' IDENTIFIED BY '{password}'",
         f"ALTER USER '{user_name}'@'%' IDENTIFIED BY '{password}'",
         f"GRANT ALL PRIVILEGES ON `{schema_name}`.* TO '{user_name}'@'%'",

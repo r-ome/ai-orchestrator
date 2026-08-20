@@ -6,6 +6,7 @@ these, removing its error policy leaves the suite green.
 
 import pytest
 from conftest import register_ready_v1_sandbox
+from docker.errors import DockerException
 from fastapi.testclient import TestClient
 
 from app.controller.store import get_controller_store
@@ -81,7 +82,7 @@ def test_delete_removes_only_a_mirror_volume_it_owns(
 
     assert response.status_code == 200
     assert response.json()["removed_mirror_volume"] == volume_name
-    with pytest.raises(Exception):
+    with pytest.raises(DockerException):
         fake_docker_client.volumes.get(volume_name)
 
 

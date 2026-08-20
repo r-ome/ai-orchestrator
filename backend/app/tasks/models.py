@@ -164,7 +164,7 @@ class TaskRunResponse(BaseModel):
     read from git. They can disagree, and when they do the branch is right.
     """
 
-    task: Task
+    task: Task  # noqa: F821 - Pydantic resolves this same-module forward reference
     turn_status: str
     turn_error: str | None = None
     committed: bool

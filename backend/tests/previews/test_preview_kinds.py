@@ -243,7 +243,7 @@ def test_task_preview_serves_its_commit_and_keeps_it_across_a_restart(
                     project_name,
                     remove_data_volumes=True,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - test cleanup must not mask the assertion failure
                 pass
         volume.remove(force=True)
         client.close()
@@ -455,7 +455,7 @@ def test_live_preview_build_output_stays_out_of_the_sandbox_worktree() -> None:
         ):
             try:
                 stale.remove(force=True)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - test cleanup must not mask the assertion failure
                 pass
         volume.remove(force=True)
         client.close()

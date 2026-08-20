@@ -320,7 +320,7 @@ def sync(
                         safety_ref=safety_ref,
                         ensure_image=True,
                     )
-                except Exception as restore_error:
+                except Exception as restore_error:  # noqa: BLE001 - preserve the failed restore detail for the caller
                     detail = (
                         f"Git sync failed: {sync_error}. The controller could not restore "
                         f"safety ref '{safety_ref}': {restore_error}"
@@ -619,7 +619,7 @@ def staleness(
                     mirror_volume=mirror_name,
                     ensure_image=True,
                 )
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - staleness continues with the last recorded mirror state
                 fetch_failure_reason = str(error)
                 project = (
                     controller_store.project(str(sandbox["project_id"])) or project
@@ -905,7 +905,7 @@ def sync_engine_report(
             image=image,
             volume_name=workspace_volume(sandbox_id),
         )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - engine detection failures are returned as report data
         return EngineSyncReport(
             confirmed_engine=confirmed,
             detected_engine=None,

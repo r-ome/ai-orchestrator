@@ -213,9 +213,11 @@ def test_shell_websocket_rejects_a_stopped_container() -> None:
     app.dependency_overrides[get_docker_client] = _override(docker_client)
 
     try:
-        with pytest.raises(WebSocketDisconnect) as disconnect:
-            with client.websocket_connect("/containers/abc123def456/shell"):
-                pass
+        with (
+            pytest.raises(WebSocketDisconnect) as disconnect,
+            client.websocket_connect("/containers/abc123def456/shell"),
+        ):
+            pass
     finally:
         app.dependency_overrides.clear()
 
@@ -228,9 +230,11 @@ def test_shell_websocket_rejects_a_missing_container() -> None:
     app.dependency_overrides[get_docker_client] = _override(docker_client)
 
     try:
-        with pytest.raises(WebSocketDisconnect) as disconnect:
-            with client.websocket_connect("/containers/missing/shell"):
-                pass
+        with (
+            pytest.raises(WebSocketDisconnect) as disconnect,
+            client.websocket_connect("/containers/missing/shell"),
+        ):
+            pass
     finally:
         app.dependency_overrides.clear()
 

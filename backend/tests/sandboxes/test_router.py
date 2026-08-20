@@ -76,7 +76,7 @@ def _stub_canonical_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
         name = mirror_volume(project_id)
         try:
             docker_client.volumes.get(name)
-        except Exception:
+        except Exception:  # noqa: BLE001 - fake creates the mirror only when lookup fails
             docker_client.volumes.create(
                 name=name,
                 driver="local",

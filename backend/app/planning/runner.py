@@ -242,12 +242,14 @@ def _command(provider: AgentProvider, settings: PlanningSettings) -> list[str]:
         return [
             "sh",
             "-c",
-            'exec claude -p "$PLANNING_PROMPT"'
-            " --output-format json"
-            f" --model {shlex.quote(settings.claude_model)}"
-            " --permission-mode plan"
-            ' --allowedTools "Read,Glob,Grep"'
-            " < /dev/null",
+            (
+                'exec claude -p "$PLANNING_PROMPT"'
+                " --output-format json"
+                f" --model {shlex.quote(settings.claude_model)}"
+                " --permission-mode plan"
+                ' --allowedTools "Read,Glob,Grep"'
+                " < /dev/null"
+            ),
         ]
     # Codex's own sandbox is bubblewrap, and bubblewrap cannot start here: the
     # container drops every capability and sets no-new-privileges, so bwrap fails
@@ -263,16 +265,18 @@ def _command(provider: AgentProvider, settings: PlanningSettings) -> list[str]:
     return [
         "sh",
         "-c",
-        'codex exec "$PLANNING_PROMPT"'
-        " --sandbox danger-full-access"
-        " --ephemeral"
-        " --skip-git-repo-check"
-        " -C /workspace"
-        f" -m {shlex.quote(settings.codex_model)}"
-        f" -c model_reasoning_effort={shlex.quote(settings.codex_reasoning_effort)}"
-        " --output-last-message /tmp/planning-output.json"
-        " < /dev/null"
-        " && cat /tmp/planning-output.json",
+        (
+            'codex exec "$PLANNING_PROMPT"'
+            " --sandbox danger-full-access"
+            " --ephemeral"
+            " --skip-git-repo-check"
+            " -C /workspace"
+            f" -m {shlex.quote(settings.codex_model)}"
+            f" -c model_reasoning_effort={shlex.quote(settings.codex_reasoning_effort)}"
+            " --output-last-message /tmp/planning-output.json"
+            " < /dev/null"
+            " && cat /tmp/planning-output.json"
+        ),
     ]
 
 

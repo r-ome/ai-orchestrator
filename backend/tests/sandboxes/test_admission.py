@@ -726,9 +726,11 @@ def test_preview_stop_is_explicit_and_then_retries_admission(
 
     monkeypatch.setattr(sandbox_lifecycle, "_stop_blocking_preview", stop_preview)
 
-    with pytest.raises(SandboxLeaseBlockedByWriterError):
-        with sandbox_lifecycle.lifecycle_lease(store, "sandbox-1", "sync"):
-            pass
+    with (
+        pytest.raises(SandboxLeaseBlockedByWriterError),
+        sandbox_lifecycle.lifecycle_lease(store, "sandbox-1", "sync"),
+    ):
+        pass
     assert stopped == []
 
     with sandbox_lifecycle.lifecycle_lease(

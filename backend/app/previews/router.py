@@ -16,7 +16,6 @@ from app.platform.docker_errors import (
     docker_response,
 )
 from app.platform.log_stream import (
-    LOG_READ_TIMEOUT_SECONDS,
     cancel_tasks,
     close_log_stream,
     forward_container_log,

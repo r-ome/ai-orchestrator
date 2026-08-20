@@ -542,7 +542,7 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
             .decode()
             .strip()
         )
-        head = (
+        (
             git(
                 "set -eu\n"
                 "git clone -q /target /workspace\n"

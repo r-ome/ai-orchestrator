@@ -495,7 +495,7 @@ def _run_coding_turn(
             raise_status=error.status_code,
             include_cleanup_in_detail=True,
         )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - convert unexpected turn failures to settlement data
         return Settlement(
             failure_detail=str(error) or type(error).__name__,
             failure_kind=FailureKind.UNKNOWN,

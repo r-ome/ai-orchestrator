@@ -65,15 +65,17 @@ def test_folder_already_a_git_repository_keeps_its_history() -> None:
             GIT_IMAGE,
             entrypoint=["sh", "-c"],
             command=[
-                "set -eu\n"
-                "cd /project\n"
-                "git init -q -b main\n"
-                'git config user.name "agent"\n'
-                'git config user.email "agent@localhost"\n'
-                "printf 'work' > work.txt\n"
-                "git add -A\n"
-                'git commit -q -m "agent work"\n'
-                "git rev-parse HEAD\n"
+                (
+                    "set -eu\n"
+                    "cd /project\n"
+                    "git init -q -b main\n"
+                    'git config user.name "agent"\n'
+                    'git config user.email "agent@localhost"\n'
+                    "printf 'work' > work.txt\n"
+                    "git add -A\n"
+                    'git commit -q -m "agent work"\n'
+                    "git rev-parse HEAD\n"
+                )
             ],
             remove=True,
             volumes={volume.name: {"bind": "/project", "mode": "rw"}},
@@ -142,13 +144,15 @@ def test_git_baseline_does_not_run_a_project_pre_commit_hook() -> None:
             GIT_IMAGE,
             entrypoint=["sh", "-c"],
             command=[
-                "set -eu\n"
-                "cd /project\n"
-                "git init -q -b main\n"
-                "mkdir -p .git/hooks\n"
-                "printf '#!/bin/sh\\ntouch /project/hook-ran\\n' > .git/hooks/pre-commit\n"
-                "chmod +x .git/hooks/pre-commit\n"
-                "printf 'work' > work.txt\n"
+                (
+                    "set -eu\n"
+                    "cd /project\n"
+                    "git init -q -b main\n"
+                    "mkdir -p .git/hooks\n"
+                    "printf '#!/bin/sh\\ntouch /project/hook-ran\\n' > .git/hooks/pre-commit\n"
+                    "chmod +x .git/hooks/pre-commit\n"
+                    "printf 'work' > work.txt\n"
+                )
             ],
             remove=True,
             volumes={volume.name: {"bind": "/project", "mode": "rw"}},
@@ -508,21 +512,23 @@ def test_controller_scaffolding_is_excluded_from_the_sandbox_repository() -> Non
             GIT_IMAGE,
             entrypoint=["sh", "-c"],
             command=[
-                "set -eu\n"
-                "cd /project\n"
-                "git init -q -b main\n"
-                'git config user.name "agent"\n'
-                'git config user.email "agent@localhost"\n'
-                "printf 'work' > work.txt\n"
-                "git add -A\n"
-                'git commit -q -m "project history"\n'
-                # Pre-existing local excludes must survive.
-                "mkdir -p .git/info\n"
-                "printf '.env\\n' >> .git/info/exclude\n"
-                # Scaffolding the controller writes, plus real untracked content.
-                "mkdir -p .agent .claude .orchestrator notes\n"
-                "printf 'x' > .claude/settings.json\n"
-                "printf 'x' > notes/todo.md\n"
+                (
+                    "set -eu\n"
+                    "cd /project\n"
+                    "git init -q -b main\n"
+                    'git config user.name "agent"\n'
+                    'git config user.email "agent@localhost"\n'
+                    "printf 'work' > work.txt\n"
+                    "git add -A\n"
+                    'git commit -q -m "project history"\n'
+                    # Pre-existing local excludes must survive.
+                    "mkdir -p .git/info\n"
+                    "printf '.env\\n' >> .git/info/exclude\n"
+                    # Scaffolding the controller writes, plus real untracked content.
+                    "mkdir -p .agent .claude .orchestrator notes\n"
+                    "printf 'x' > .claude/settings.json\n"
+                    "printf 'x' > notes/todo.md\n"
+                )
             ],
             remove=True,
             volumes={volume.name: {"bind": "/project", "mode": "rw"}},

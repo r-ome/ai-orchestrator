@@ -102,9 +102,13 @@ def _package_import_graph(app_root: Path) -> dict[str, set[str]]:
             if not isinstance(node, (ast.Import, ast.ImportFrom)):
                 continue
             for target in _import_targets(node, package):
-                if len(target) > 1 and target[0] == "app" and target[1] in packages:
-                    if target[1] != source:
-                        graph[source].add(target[1])
+                if (
+                    len(target) > 1
+                    and target[0] == "app"
+                    and target[1] in packages
+                    and target[1] != source
+                ):
+                    graph[source].add(target[1])
     return graph
 
 

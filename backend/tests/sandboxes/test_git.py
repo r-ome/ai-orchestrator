@@ -519,10 +519,12 @@ def test_credential_file_is_readable_inside_fetch_container_and_not_in_environme
                 "alpine/git:latest",
                 entrypoint=["sh", "-c"],
                 command=[
-                    "set -eu\n"
-                    "git init --bare -q /remote/repository.git\n"
-                    "git init --bare -q /mirror\n"
-                    "git -C /mirror remote add origin /remote/repository.git\n"
+                    (
+                        "set -eu\n"
+                        "git init --bare -q /remote/repository.git\n"
+                        "git init --bare -q /mirror\n"
+                        "git -C /mirror remote add origin /remote/repository.git\n"
+                    )
                 ],
                 remove=True,
                 volumes={
@@ -578,17 +580,19 @@ def test_publish_pushes_a_reviewed_branch_through_the_mirror_to_a_local_remote(
             "alpine/git:latest",
             entrypoint=["sh", "-c"],
             command=[
-                "set -eu\n"
-                "git init --bare -q /remote/repository.git\n"
-                "git init -q -b main /tmp/seed\n"
-                "git -C /tmp/seed config user.name test\n"
-                "git -C /tmp/seed config user.email test@example.invalid\n"
-                "printf initial > /tmp/seed/source.txt\n"
-                "git -C /tmp/seed add source.txt\n"
-                "git -C /tmp/seed commit -qm initial\n"
-                "git -C /tmp/seed remote add origin /remote/repository.git\n"
-                "git -C /tmp/seed push -q origin main\n"
-                "git -C /remote/repository.git symbolic-ref HEAD refs/heads/main\n"
+                (
+                    "set -eu\n"
+                    "git init --bare -q /remote/repository.git\n"
+                    "git init -q -b main /tmp/seed\n"
+                    "git -C /tmp/seed config user.name test\n"
+                    "git -C /tmp/seed config user.email test@example.invalid\n"
+                    "printf initial > /tmp/seed/source.txt\n"
+                    "git -C /tmp/seed add source.txt\n"
+                    "git -C /tmp/seed commit -qm initial\n"
+                    "git -C /tmp/seed remote add origin /remote/repository.git\n"
+                    "git -C /tmp/seed push -q origin main\n"
+                    "git -C /remote/repository.git symbolic-ref HEAD refs/heads/main\n"
+                )
             ],
             remove=True,
             volumes={remote_volume.name: {"bind": "/remote", "mode": "rw"}},
@@ -598,9 +602,11 @@ def test_publish_pushes_a_reviewed_branch_through_the_mirror_to_a_local_remote(
             "alpine/git:latest",
             entrypoint=["sh", "-c"],
             command=[
-                "apk add --no-cache git-daemon >/dev/null 2>&1\n"
-                "exec git daemon --reuseaddr --export-all --enable=receive-pack "
-                "--base-path=/remote /remote\n"
+                (
+                    "apk add --no-cache git-daemon >/dev/null 2>&1\n"
+                    "exec git daemon --reuseaddr --export-all --enable=receive-pack "
+                    "--base-path=/remote /remote\n"
+                )
             ],
             detach=True,
             # rw, unlike the read-only staleness fixture: --enable=receive-pack
@@ -640,9 +646,11 @@ def test_publish_pushes_a_reviewed_branch_through_the_mirror_to_a_local_remote(
             "alpine/git:latest",
             entrypoint=["sh", "-c"],
             command=[
-                "set -eu\n"
-                'git clone --mirror -q "$ORCHESTRATOR_REMOTE" /mirror\n'
-                "git -C /mirror config --unset-all remote.origin.mirror || true\n"
+                (
+                    "set -eu\n"
+                    'git clone --mirror -q "$ORCHESTRATOR_REMOTE" /mirror\n'
+                    "git -C /mirror config --unset-all remote.origin.mirror || true\n"
+                )
             ],
             remove=True,
             environment={"ORCHESTRATOR_REMOTE": remote_url},
@@ -675,13 +683,15 @@ def test_publish_pushes_a_reviewed_branch_through_the_mirror_to_a_local_remote(
                 "alpine/git:latest",
                 entrypoint=["sh", "-c"],
                 command=[
-                    "set -eu\n"
-                    "git -C /workspace config user.name test\n"
-                    "git -C /workspace config user.email test@example.invalid\n"
-                    "printf reviewed > /workspace/reviewed.txt\n"
-                    "git -C /workspace add reviewed.txt\n"
-                    "git -C /workspace commit -qm reviewed\n"
-                    "git -C /workspace rev-parse HEAD\n"
+                    (
+                        "set -eu\n"
+                        "git -C /workspace config user.name test\n"
+                        "git -C /workspace config user.email test@example.invalid\n"
+                        "printf reviewed > /workspace/reviewed.txt\n"
+                        "git -C /workspace add reviewed.txt\n"
+                        "git -C /workspace commit -qm reviewed\n"
+                        "git -C /workspace rev-parse HEAD\n"
+                    )
                 ],
                 remove=True,
                 volumes={workspace_volume.name: {"bind": "/workspace", "mode": "rw"}},

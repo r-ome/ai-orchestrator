@@ -188,7 +188,7 @@ def test_a_provider_reported_error_is_a_provider_failure() -> None:
 
 
 def test_non_json_lines_are_ignored() -> None:
-    assert _run("\n".join(["not json", "", "  ", _envelope()])).status == SUCCEEDED
+    assert _run(f"not json\n\n  \n{_envelope()}").status == SUCCEEDED
 
 
 def test_a_json_result_is_extracted_when_the_turn_reports_one() -> None:
@@ -397,7 +397,7 @@ def test_repair_returns_the_first_valid_turn_without_retrying() -> None:
 def test_repair_feeds_validation_errors_back_exactly_once() -> None:
     recorder = _Recorder([_succeeded({}), _succeeded({"changed": ["x"]})])
 
-    _result_, attempts, errors = run_with_repair(
+    _result, attempts, errors = run_with_repair(
         recorder, prompt="go", validate=_requires_changed
     )
 
@@ -409,7 +409,7 @@ def test_repair_feeds_validation_errors_back_exactly_once() -> None:
 def test_repair_stops_after_the_second_attempt() -> None:
     recorder = _Recorder([_succeeded({}), _succeeded({})])
 
-    _result_, attempts, errors = run_with_repair(
+    _result, attempts, errors = run_with_repair(
         recorder, prompt="go", validate=_requires_changed
     )
 
@@ -420,7 +420,7 @@ def test_repair_stops_after_the_second_attempt() -> None:
 def test_a_provider_failure_retries_with_the_original_prompt() -> None:
     recorder = _Recorder([_failed(), _succeeded({"changed": ["x"]})])
 
-    _result_, _attempts, errors = run_with_repair(
+    _result, _attempts, errors = run_with_repair(
         recorder, prompt="go", validate=_requires_changed
     )
 

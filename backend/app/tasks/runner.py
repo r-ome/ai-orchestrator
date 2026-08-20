@@ -215,25 +215,29 @@ def _command(
         return [
             "sh",
             "-c",
-            'exec claude -p "$CODING_PROMPT"'
-            " --output-format stream-json --verbose"
-            f" --model {shlex.quote(model)}"
-            " --permission-mode acceptEdits"
-            f' --allowedTools "{",".join(WRITABLE_TOOLS)}"'
-            " < /dev/null",
+            (
+                'exec claude -p "$CODING_PROMPT"'
+                " --output-format stream-json --verbose"
+                f" --model {shlex.quote(model)}"
+                " --permission-mode acceptEdits"
+                f' --allowedTools "{",".join(WRITABLE_TOOLS)}"'
+                " < /dev/null"
+            ),
         ]
     return [
         "sh",
         "-c",
-        'exec codex exec "$CODING_PROMPT"'
-        " --json"
-        " --sandbox danger-full-access"
-        " --ephemeral"
-        " --skip-git-repo-check"
-        f" -C {CODING_WORKSPACE}"
-        f" -m {shlex.quote(model)}"
-        f" -c model_reasoning_effort={shlex.quote(codex_reasoning_effort)}"
-        " < /dev/null",
+        (
+            'exec codex exec "$CODING_PROMPT"'
+            " --json"
+            " --sandbox danger-full-access"
+            " --ephemeral"
+            " --skip-git-repo-check"
+            f" -C {CODING_WORKSPACE}"
+            f" -m {shlex.quote(model)}"
+            f" -c model_reasoning_effort={shlex.quote(codex_reasoning_effort)}"
+            " < /dev/null"
+        ),
     ]
 
 

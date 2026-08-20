@@ -413,9 +413,11 @@ def test_denying_an_install_still_counts_as_behavior_verification() -> None:
             ],
             "verification": {
                 "ran": [
-                    "node scripts/verify-action-bar.mjs "
-                    "(== npm run verify:action-bar), using the sandbox's global "
-                    "Playwright via NODE_PATH — no install of any kind"
+                    (
+                        "node scripts/verify-action-bar.mjs "
+                        "(== npm run verify:action-bar), using the sandbox's global "
+                        "Playwright via NODE_PATH — no install of any kind"
+                    )
                 ],
                 "outcome": "passed",
             },

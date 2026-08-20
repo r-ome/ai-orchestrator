@@ -385,15 +385,13 @@ def test_failure_detail_leads_with_the_provider_error_not_the_prompt_echo(
     settings: PlanningSettings,
 ) -> None:
     """The CLI echoes its prompt, so a plain tail buries the reason."""
-    output = "\n".join(
-        [
-            "Verify the plan against the project at /workspace. It is read-only.",
-            "Cover expected behaviour including errors and edge cases.",
-            "Review ledger: [] Prior findings are context, not truth.",
-            "ERROR: Selected model is at capacity. Please try a different model.",
-            "ERROR: Selected model is at capacity. Please try a different model.",
-        ]
-    ).encode()
+    output = (
+        b"Verify the plan against the project at /workspace. It is read-only.\n"
+        b"Cover expected behaviour including errors and edge cases.\n"
+        b"Review ledger: [] Prior findings are context, not truth.\n"
+        b"ERROR: Selected model is at capacity. Please try a different model.\n"
+        b"ERROR: Selected model is at capacity. Please try a different model."
+    )
     docker_client = _StubDockerClient([_StubContainer(output=output, status=1)])
 
     with pytest.raises(PlanningTurnError) as error:

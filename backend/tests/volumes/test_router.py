@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from docker.errors import DockerException
@@ -14,7 +14,7 @@ client = TestClient(app)
 class StubContainer:
     short_id = "abc123def456"
     name = "example-api"
-    attrs = {
+    attrs: ClassVar[dict[str, Any]] = {
         "Mounts": [
             {
                 "Type": "volume",

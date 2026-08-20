@@ -183,18 +183,20 @@ def test_workspace_import_has_no_network_remote_hooks_or_shared_objects(
                 "alpine/git:latest",
                 entrypoint=["sh", "-c"],
                 command=[
-                    "set -eu\n"
-                    "git init --bare -q /remote/repository.git\n"
-                    "git init -q -b main /tmp/seed\n"
-                    "git -C /tmp/seed config user.name test\n"
-                    "git -C /tmp/seed config user.email test@example.invalid\n"
-                    "printf source > /tmp/seed/source.txt\n"
-                    "git -C /tmp/seed add source.txt\n"
-                    "git -C /tmp/seed commit -qm source\n"
-                    "git -C /tmp/seed remote add origin /remote/repository.git\n"
-                    "git -C /tmp/seed push -q origin main\n"
-                    "git -C /remote/repository.git symbolic-ref HEAD refs/heads/main\n"
-                    "git -C /remote/repository.git rev-parse refs/heads/main\n"
+                    (
+                        "set -eu\n"
+                        "git init --bare -q /remote/repository.git\n"
+                        "git init -q -b main /tmp/seed\n"
+                        "git -C /tmp/seed config user.name test\n"
+                        "git -C /tmp/seed config user.email test@example.invalid\n"
+                        "printf source > /tmp/seed/source.txt\n"
+                        "git -C /tmp/seed add source.txt\n"
+                        "git -C /tmp/seed commit -qm source\n"
+                        "git -C /tmp/seed remote add origin /remote/repository.git\n"
+                        "git -C /tmp/seed push -q origin main\n"
+                        "git -C /remote/repository.git symbolic-ref HEAD refs/heads/main\n"
+                        "git -C /remote/repository.git rev-parse refs/heads/main\n"
+                    )
                 ],
                 remove=True,
                 volumes={remote_volume.name: {"bind": "/remote", "mode": "rw"}},
@@ -207,8 +209,10 @@ def test_workspace_import_has_no_network_remote_hooks_or_shared_objects(
             "alpine/git:latest",
             entrypoint=["sh", "-c"],
             command=[
-                "apk add --no-cache git-daemon >/dev/null 2>&1\n"
-                "exec git daemon --reuseaddr --export-all --base-path=/remote /remote\n"
+                (
+                    "apk add --no-cache git-daemon >/dev/null 2>&1\n"
+                    "exec git daemon --reuseaddr --export-all --base-path=/remote /remote\n"
+                )
             ],
             detach=True,
             volumes={remote_volume.name: {"bind": "/remote", "mode": "ro"}},
@@ -263,14 +267,16 @@ def test_workspace_import_has_no_network_remote_hooks_or_shared_objects(
             "alpine/git:latest",
             entrypoint=["sh", "-c"],
             command=[
-                "set -eu\n"
-                f'test "$(git -C /mirror rev-parse refs/heads/main)" = {commit}\n'
-                'test "$(git -C /mirror symbolic-ref HEAD)" = refs/heads/main\n'
-                "test \"$(git -C /mirror config --get-all remote.origin.fetch)\" = '+refs/*:refs/*'\n"
-                # remote.origin.mirror conflicts with the single-ref publish push.
-                "! git -C /mirror config --get remote.origin.mirror\n"
-                "test -z \"$(git -C /mirror for-each-ref --format='%(refname)' refs/remotes/origin)\"\n"
-                "printf mirrored\n"
+                (
+                    "set -eu\n"
+                    f'test "$(git -C /mirror rev-parse refs/heads/main)" = {commit}\n'
+                    'test "$(git -C /mirror symbolic-ref HEAD)" = refs/heads/main\n'
+                    "test \"$(git -C /mirror config --get-all remote.origin.fetch)\" = '+refs/*:refs/*'\n"
+                    # remote.origin.mirror conflicts with the single-ref publish push.
+                    "! git -C /mirror config --get remote.origin.mirror\n"
+                    "test -z \"$(git -C /mirror for-each-ref --format='%(refname)' refs/remotes/origin)\"\n"
+                    "printf mirrored\n"
+                )
             ],
             remove=True,
             volumes={mirror.name: {"bind": "/mirror", "mode": "ro"}},
@@ -291,23 +297,25 @@ def test_workspace_import_has_no_network_remote_hooks_or_shared_objects(
             "alpine/git:latest",
             entrypoint=["sh", "-c"],
             command=[
-                "set -eu\n"
-                'test -z "$(git -C /workspace remote)"\n'
-                'test -z "$(find /workspace/.git/hooks -mindepth 1 -print -quit)"\n'
-                f'test "$(git -C /workspace rev-parse HEAD)" = {commit}\n'
-                # The real proof that --no-local was used. `git clone --local`
-                # hardlinks the source object and pack files, so those entries
-                # would report a link count of 2. --no-local copies them over the
-                # regular transport, so every object file is unshared at count 1.
-                # Writing a NEW file into the clone and finding it absent from the
-                # mirror proves nothing here: hardlinks are per file, so a fresh
-                # file is unshared either way.
-                "links=$(find /workspace/.git/objects -type f -exec stat -c '%h' {} \\; "
-                "| sort -u | tr '\\n' ',')\n"
-                "test \"$links\" = '1,'\n"
-                "printf clone-only > /workspace/.git/objects/clone-only-object\n"
-                "test ! -e /mirror/objects/clone-only-object\n"
-                "printf verified\n"
+                (
+                    "set -eu\n"
+                    'test -z "$(git -C /workspace remote)"\n'
+                    'test -z "$(find /workspace/.git/hooks -mindepth 1 -print -quit)"\n'
+                    f'test "$(git -C /workspace rev-parse HEAD)" = {commit}\n'
+                    # The real proof that --no-local was used. `git clone --local`
+                    # hardlinks the source object and pack files, so those entries
+                    # would report a link count of 2. --no-local copies them over the
+                    # regular transport, so every object file is unshared at count 1.
+                    # Writing a NEW file into the clone and finding it absent from the
+                    # mirror proves nothing here: hardlinks are per file, so a fresh
+                    # file is unshared either way.
+                    "links=$(find /workspace/.git/objects -type f -exec stat -c '%h' {} \\; "
+                    "| sort -u | tr '\\n' ',')\n"
+                    "test \"$links\" = '1,'\n"
+                    "printf clone-only > /workspace/.git/objects/clone-only-object\n"
+                    "test ! -e /mirror/objects/clone-only-object\n"
+                    "printf verified\n"
+                )
             ],
             remove=True,
             volumes={

@@ -403,7 +403,7 @@ def publish_sandbox(
     sandbox_id: str,
     docker_client: Annotated[DockerClient, Depends(get_docker_client)],
     controller_store: Annotated[ControllerStore, Depends(get_controller_store)],
-    request: PublishSandboxRequest = PublishSandboxRequest(),
+    request: PublishSandboxRequest = PublishSandboxRequest(),  # noqa: B008 - FastAPI body model default for omitted request body
 ) -> PublishSandboxResponse:
     """Push one reviewed branch, then discover or create and verify its PR."""
     outcome = _docker_response(

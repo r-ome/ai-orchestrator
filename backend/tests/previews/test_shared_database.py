@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pytest
 from conftest import register_ready_v1_sandbox
@@ -90,7 +90,7 @@ class _FakeDocker:
     class _Container:
         name = "orchestrator-shared-db-1f2e3d4c5b6a"
         status = "running"
-        attrs: dict[str, object] = {}
+        attrs: ClassVar[dict[str, object]] = {}
 
         def reload(self) -> None:
             return None

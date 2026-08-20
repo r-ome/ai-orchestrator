@@ -88,8 +88,10 @@ def build_packet(
 def render(packet: Packet) -> str:
     """Render a packet for a writable coding turn."""
     sections = [
-        "You are implementing one work item in a larger feature.\n\n"
-        f"The feature, in short:\n{packet.feature_summary}",
+        (
+            "You are implementing one work item in a larger feature.\n\n"
+            f"The feature, in short:\n{packet.feature_summary}"
+        ),
         f"## What this item must do\n\n{packet.objective}",
         f"## In scope\n\n{packet.scope}",
     ]

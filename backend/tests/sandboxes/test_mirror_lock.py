@@ -85,18 +85,22 @@ def test_startup_reclaims_a_stale_project_mirror_lock(tmp_path: Path) -> None:
 
 def test_sandbox_lease_then_mirror_lock_is_acquirable(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    with lifecycle_lease(store, "sandbox-1", "create"):
-        with project_mirror_lock(store, "project-1", "create") as lock:
-            assert lock["project_id"] == "project-1"
+    with (
+        lifecycle_lease(store, "sandbox-1", "create"),
+        project_mirror_lock(store, "project-1", "create") as lock,
+    ):
+        assert lock["project_id"] == "project-1"
 
 
 def test_mirror_lock_then_sandbox_lease_raises_lock_order_error(tmp_path: Path) -> None:
     """The wrong order fails where it happens, not later as a deadlock."""
     store = _store(tmp_path)
-    with project_mirror_lock(store, "project-1", "staleness"):
-        with pytest.raises(LockOrderError) as raised:
-            with lifecycle_lease(store, "sandbox-1", "create"):
-                pass
+    with (
+        project_mirror_lock(store, "project-1", "staleness"),
+        pytest.raises(LockOrderError) as raised,
+        lifecycle_lease(store, "sandbox-1", "create"),
+    ):
+        pass
 
     assert "sandbox-1" in str(raised.value)
     # The refused lease must not be recorded, or the next caller is blocked
@@ -143,11 +147,15 @@ def test_the_guard_does_not_leak_between_scopes(tmp_path: Path) -> None:
 def test_the_guard_clears_after_a_refused_lease(tmp_path: Path) -> None:
     """The correct order still works after a violation was refused."""
     store = _store(tmp_path)
-    with project_mirror_lock(store, "project-1", "staleness"):
-        with pytest.raises(LockOrderError):
-            with lifecycle_lease(store, "sandbox-1", "create"):
-                pass
+    with (
+        project_mirror_lock(store, "project-1", "staleness"),
+        pytest.raises(LockOrderError),
+        lifecycle_lease(store, "sandbox-1", "create"),
+    ):
+        pass
 
-    with lifecycle_lease(store, "sandbox-1", "create"):
-        with project_mirror_lock(store, "project-1", "create") as lock:
-            assert lock["project_id"] == "project-1"
+    with (
+        lifecycle_lease(store, "sandbox-1", "create"),
+        project_mirror_lock(store, "project-1", "create") as lock,
+    ):
+        assert lock["project_id"] == "project-1"

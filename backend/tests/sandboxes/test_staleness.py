@@ -229,18 +229,20 @@ def test_staleness_endpoint_counts_commits_after_a_local_remote_advances(
                 "alpine/git:latest",
                 entrypoint=["sh", "-c"],
                 command=[
-                    "set -eu\n"
-                    "git init --bare -q /remote/repository.git\n"
-                    "git init -q -b main /tmp/seed\n"
-                    "git -C /tmp/seed config user.name test\n"
-                    "git -C /tmp/seed config user.email test@example.invalid\n"
-                    "printf initial > /tmp/seed/source.txt\n"
-                    "git -C /tmp/seed add source.txt\n"
-                    "git -C /tmp/seed commit -qm initial\n"
-                    "git -C /tmp/seed remote add origin /remote/repository.git\n"
-                    "git -C /tmp/seed push -q origin main\n"
-                    "git -C /remote/repository.git symbolic-ref HEAD refs/heads/main\n"
-                    "git -C /remote/repository.git rev-parse refs/heads/main\n"
+                    (
+                        "set -eu\n"
+                        "git init --bare -q /remote/repository.git\n"
+                        "git init -q -b main /tmp/seed\n"
+                        "git -C /tmp/seed config user.name test\n"
+                        "git -C /tmp/seed config user.email test@example.invalid\n"
+                        "printf initial > /tmp/seed/source.txt\n"
+                        "git -C /tmp/seed add source.txt\n"
+                        "git -C /tmp/seed commit -qm initial\n"
+                        "git -C /tmp/seed remote add origin /remote/repository.git\n"
+                        "git -C /tmp/seed push -q origin main\n"
+                        "git -C /remote/repository.git symbolic-ref HEAD refs/heads/main\n"
+                        "git -C /remote/repository.git rev-parse refs/heads/main\n"
+                    )
                 ],
                 remove=True,
                 volumes={remote_volume.name: {"bind": "/remote", "mode": "rw"}},
@@ -258,8 +260,10 @@ def test_staleness_endpoint_counts_commits_after_a_local_remote_advances(
             # KeyError that looks nothing like the real cause. Alpine keeps the
             # daemon in its own package.
             command=[
-                "apk add --no-cache git-daemon >/dev/null 2>&1\n"
-                "exec git daemon --reuseaddr --export-all --base-path=/remote /remote\n"
+                (
+                    "apk add --no-cache git-daemon >/dev/null 2>&1\n"
+                    "exec git daemon --reuseaddr --export-all --base-path=/remote /remote\n"
+                )
             ],
             detach=True,
             volumes={remote_volume.name: {"bind": "/remote", "mode": "ro"}},
@@ -298,11 +302,13 @@ def test_staleness_endpoint_counts_commits_after_a_local_remote_advances(
             "alpine/git:latest",
             entrypoint=["sh", "-c"],
             command=[
-                "set -eu\n"
-                "git init --bare -q /mirror\n"
-                'git -C /mirror remote add origin "$ORCHESTRATOR_REMOTE"\n'
-                "git -C /mirror config --replace-all remote.origin.fetch '+refs/*:refs/*'\n"
-                "git -C /mirror symbolic-ref HEAD refs/heads/main\n"
+                (
+                    "set -eu\n"
+                    "git init --bare -q /mirror\n"
+                    'git -C /mirror remote add origin "$ORCHESTRATOR_REMOTE"\n'
+                    "git -C /mirror config --replace-all remote.origin.fetch '+refs/*:refs/*'\n"
+                    "git -C /mirror symbolic-ref HEAD refs/heads/main\n"
+                )
             ],
             remove=True,
             environment={"ORCHESTRATOR_REMOTE": remote_url},
@@ -339,16 +345,18 @@ def test_staleness_endpoint_counts_commits_after_a_local_remote_advances(
             "alpine/git:latest",
             entrypoint=["sh", "-c"],
             command=[
-                "set -eu\n"
-                "git clone -q /remote/repository.git /tmp/work\n"
-                "git -C /tmp/work config user.name test\n"
-                "git -C /tmp/work config user.email test@example.invalid\n"
-                "for number in 1 2 3; do\n"
-                '  printf \'%s\' "$number" > /tmp/work/"$number".txt\n'
-                '  git -C /tmp/work add "$number".txt\n'
-                '  git -C /tmp/work commit -qm "advance $number"\n'
-                "done\n"
-                "git -C /tmp/work push -q origin main\n"
+                (
+                    "set -eu\n"
+                    "git clone -q /remote/repository.git /tmp/work\n"
+                    "git -C /tmp/work config user.name test\n"
+                    "git -C /tmp/work config user.email test@example.invalid\n"
+                    "for number in 1 2 3; do\n"
+                    '  printf \'%s\' "$number" > /tmp/work/"$number".txt\n'
+                    '  git -C /tmp/work add "$number".txt\n'
+                    '  git -C /tmp/work commit -qm "advance $number"\n'
+                    "done\n"
+                    "git -C /tmp/work push -q origin main\n"
+                )
             ],
             remove=True,
             volumes={remote_volume.name: {"bind": "/remote", "mode": "rw"}},

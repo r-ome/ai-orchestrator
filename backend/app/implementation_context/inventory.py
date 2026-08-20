@@ -117,8 +117,10 @@ def confirm_command(command: str, inventory: CommandInventory) -> tuple[bool, st
         if proven in _NODE_MANAGERS and program != proven:
             return (
                 False,
-                f"this project's lockfile is {proven}'s, so '{program}' is the "
-                f"wrong package manager; use '{proven}'",
+                (
+                    f"this project's lockfile is {proven}'s, so '{program}' is the "
+                    f"wrong package manager; use '{proven}'"
+                ),
             )
         script = _node_script(program, arguments)
         if script is None:

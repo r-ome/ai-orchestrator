@@ -1,7 +1,7 @@
 import io
 import tarfile
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, ClassVar
 
 from docker.errors import NotFound
 from fastapi.testclient import TestClient
@@ -27,7 +27,7 @@ class StubContainer:
     short_id = "abc123def456"
     name = "example-api"
     status = "running"
-    attrs = {
+    attrs: ClassVar[dict[str, Any]] = {
         "Config": {
             "Image": "example-api:latest",
             "Labels": {"project": "example"},

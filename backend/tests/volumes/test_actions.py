@@ -1,7 +1,7 @@
 import io
 import tarfile
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, ClassVar
 
 from docker.errors import NotFound
 from fastapi.testclient import TestClient
@@ -24,7 +24,7 @@ def _file_archive(content: bytes) -> bytes:
 
 class StubVolume:
     name = "example-data"
-    attrs = {
+    attrs: ClassVar[dict[str, Any]] = {
         "Name": "example-data",
         "Driver": "local",
         "Mountpoint": "/var/lib/docker/volumes/example-data/_data",
@@ -67,7 +67,7 @@ class StubContainer:
     short_id = "abc123def456"
     name = "example-api"
     status = "running"
-    attrs = {
+    attrs: ClassVar[dict[str, Any]] = {
         "Mounts": [
             {
                 "Type": "volume",

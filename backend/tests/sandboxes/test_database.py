@@ -206,7 +206,7 @@ def _thread_results(
     def run(call: Callable[[], object]) -> None:
         try:
             result = call()
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001 - test helper must collect every thread failure
             with result_lock:
                 errors.append(error)
         else:

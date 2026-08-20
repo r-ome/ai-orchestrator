@@ -495,7 +495,7 @@ def start_preview(
                     status="failed",
                     stopped_at=_now(),
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - failed state recording is best-effort during cleanup
                 pass
             if kind is PreviewKind.TASK:
                 _move_task(controller_store, task_id, TaskStatus.REVIEW)

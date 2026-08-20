@@ -165,11 +165,12 @@ class PreviewConfiguration(BaseModel):
             )
         if self.mode is PreviewMode.DOCKERFILE and not self.dockerfile:
             raise ValueError("Dockerfile previews require dockerfile")
-        if self.mode is PreviewMode.COMPOSE:
-            if not self.compose_file or not self.selected_service:
-                raise ValueError(
-                    "Compose previews require compose_file and selected_service"
-                )
+        if self.mode is PreviewMode.COMPOSE and (
+            not self.compose_file or not self.selected_service
+        ):
+            raise ValueError(
+                "Compose previews require compose_file and selected_service"
+            )
         unsupported_services = sorted(set(self.services) - {"database"})
         if unsupported_services:
             raise ValueError(

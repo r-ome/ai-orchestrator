@@ -396,7 +396,6 @@ def test_dockerfile_preview_builds_current_sandbox_and_cleans_its_image() -> Non
         name=f"orchestrator-dockerfile-test-{run_id[:12]}"
     )
     resources = {"containers": [], "networks": [], "volumes": [], "images": []}
-    tag = f"orchestrator-preview:{run_id}"
     try:
         port = _available_host_port()
         response_command = (
@@ -594,7 +593,7 @@ def test_approved_proposal_starts_and_stops_through_the_full_service(
                     project_name,
                     remove_data_volumes=True,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - test cleanup must not mask the assertion failure
                 pass
         project_volume.remove(force=True)
         client.close()
@@ -673,10 +672,10 @@ def test_native_preview_reports_real_container_and_dependency_durations() -> Non
 
         container_events = [event for event in events if event[0] == "container"]
         assert len(container_events) == 2
-        (start_step, start_message, start_duration, start_started_at) = (
+        (_start_step, _start_message, start_duration, start_started_at) = (
             container_events[0]
         )
-        (done_step, done_message, done_duration, done_started_at) = container_events[1]
+        (_done_step, done_message, done_duration, done_started_at) = container_events[1]
         assert start_duration is None
         assert start_started_at is not None
         assert done_duration is not None and done_duration >= 0
@@ -783,7 +782,7 @@ def test_reused_dependency_volume_still_reports_zero_duration(
         # (skipped, zero duration) because the dependency volume from the
         # first run already has content under the same lockfile digest.
         assert len(dependency_messages) == 3
-        reused_step, reused_message, reused_duration, reused_started_at = (
+        _reused_step, reused_message, reused_duration, reused_started_at = (
             dependency_messages[-1]
         )
         assert "skipping install" in reused_message
@@ -938,7 +937,7 @@ def test_events_websocket_replays_and_streams_live_container_logs() -> None:
                     project_name,
                     remove_data_volumes=True,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - test cleanup must not mask the assertion failure
                 pass
         app.dependency_overrides.clear()
         project_volume.remove(force=True)

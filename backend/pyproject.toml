@@ -40,3 +40,7 @@ target-version = "py311"
 [tool.ruff.lint]
 # The default rule set. Pinned to ruff 0.16.x above, because the default
 # selection widens between minor releases and would reopen the gate silently.
+
+[tool.ruff.lint.per-file-ignores]
+# Pytest injects fixtures by parameter name after tests import them for discovery.
+"tests/**/*.py" = ["F811"]

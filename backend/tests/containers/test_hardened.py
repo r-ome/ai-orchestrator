@@ -24,13 +24,14 @@ from app.containers.hardened import (
 
 # Each later migration deletes a line. An empty set means the migration is complete.
 _NOT_YET_MIGRATED: set[str] = set()
+_DEFAULT_STATUS = {"StatusCode": 0}
 
 
 class _Container:
     def __init__(
         self,
         *,
-        status: Any = {"StatusCode": 0},
+        status: Any = _DEFAULT_STATUS,
         logs: dict[tuple[bool, bool], bytes] | None = None,
         wait_error: Exception | None = None,
         logs_error: Exception | None = None,

@@ -292,8 +292,10 @@ class MySQLDatabaseEngine:
                     healthcheck={
                         "test": [
                             "CMD-SHELL",
-                            'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin ping '
-                            "-h 127.0.0.1 -u root --silent",
+                            (
+                                'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin ping '
+                                "-h 127.0.0.1 -u root --silent"
+                            ),
                         ],
                         "interval": 1_000_000_000,
                         "timeout": 3_000_000_000,
@@ -449,13 +451,15 @@ class MySQLDatabaseEngine:
                 command=[
                     "sh",
                     "-c",
-                    "set -eu; "
-                    'for id in $(mysql --protocol=TCP -h "$PREVIEW_HOST" -u root -Nse '
-                    '"SELECT ID FROM information_schema.PROCESSLIST '
-                    "WHERE DB = '$PREVIEW_DATABASE' AND ID <> CONNECTION_ID()\"); do "
-                    'mysql --protocol=TCP -h "$PREVIEW_HOST" -u root -e "KILL $id"; '
-                    "done; printf '%s' \"$PREVIEW_SQL\" | "
-                    'mysql --protocol=TCP -h "$PREVIEW_HOST" -u root',
+                    (
+                        "set -eu; "
+                        'for id in $(mysql --protocol=TCP -h "$PREVIEW_HOST" -u root -Nse '
+                        '"SELECT ID FROM information_schema.PROCESSLIST '
+                        "WHERE DB = '$PREVIEW_DATABASE' AND ID <> CONNECTION_ID()\"); do "
+                        'mysql --protocol=TCP -h "$PREVIEW_HOST" -u root -e "KILL $id"; '
+                        "done; printf '%s' \"$PREVIEW_SQL\" | "
+                        'mysql --protocol=TCP -h "$PREVIEW_HOST" -u root'
+                    ),
                 ],
                 environment={
                     "PREVIEW_SQL": script,
@@ -503,8 +507,10 @@ class MySQLDatabaseEngine:
                 command=[
                     "sh",
                     "-c",
-                    'set -eu; printf "%s" "$PREVIEW_SQL" | '
-                    'mysql --protocol=TCP -h "$PREVIEW_HOST" -u root',
+                    (
+                        'set -eu; printf "%s" "$PREVIEW_SQL" | '
+                        'mysql --protocol=TCP -h "$PREVIEW_HOST" -u root'
+                    ),
                 ],
                 environment={
                     "PREVIEW_SQL": script,
@@ -694,8 +700,10 @@ class PostgreSQLDatabaseEngine(MySQLDatabaseEngine):
                 command=[
                     "sh",
                     "-c",
-                    'set -eu; printf "%s" "$PREVIEW_SQL" | '
-                    'psql -v ON_ERROR_STOP=1 -h "$PREVIEW_HOST" -U postgres -d postgres',
+                    (
+                        'set -eu; printf "%s" "$PREVIEW_SQL" | '
+                        'psql -v ON_ERROR_STOP=1 -h "$PREVIEW_HOST" -U postgres -d postgres'
+                    ),
                 ],
                 environment={
                     "PREVIEW_SQL": script,
@@ -1048,8 +1056,10 @@ def postgres_drop_statements(sandbox_id: str, error: ErrorFactory) -> list[str]:
     name = postgres_shared_database_name(sandbox_id, error)
     escaped_name = name.replace("'", "''")
     return [
-        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-        f"WHERE datname = '{escaped_name}' AND pid <> pg_backend_pid()",
+        (
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            f"WHERE datname = '{escaped_name}' AND pid <> pg_backend_pid()"
+        ),
         f'DROP DATABASE IF EXISTS "{name}"',
         f'DROP ROLE IF EXISTS "{name}"',
     ]
@@ -1651,8 +1661,10 @@ def _drop_statements(engine_name: str, db_name: str) -> list[str]:
     if engine_name == "postgres":
         escaped = db_name.replace("'", "''")
         return [
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-            f"WHERE datname = '{escaped}' AND pid <> pg_backend_pid()",
+            (
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                f"WHERE datname = '{escaped}' AND pid <> pg_backend_pid()"
+            ),
             f'DROP DATABASE IF EXISTS "{db_name}"',
             f'DROP ROLE IF EXISTS "{db_name}"',
         ]

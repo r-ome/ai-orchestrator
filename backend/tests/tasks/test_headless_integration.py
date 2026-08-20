@@ -105,7 +105,9 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         subprocess.run(command, shell=True, cwd=SOURCE, check=True)
 
     client = docker.from_env()
-    subprocess.run(f"docker volume rm -f {VOLUME}", shell=True, capture_output=True)
+    subprocess.run(
+        f"docker volume rm -f {VOLUME}", shell=True, capture_output=True, check=False
+    )
     client.volumes.create(name=VOLUME)
     subprocess.run(
         f'docker run --rm -v "{SOURCE}":/source:ro -v {VOLUME}:/project alpine:3 '
@@ -141,7 +143,12 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     try:
         yield store, client
     finally:
-        subprocess.run(f"docker volume rm -f {VOLUME}", shell=True, capture_output=True)
+        subprocess.run(
+            f"docker volume rm -f {VOLUME}",
+            shell=True,
+            capture_output=True,
+            check=False,
+        )
         subprocess.run(f"rm -rf {SOURCE}", shell=True, check=False)
         client.close()
 

@@ -105,9 +105,7 @@ def test_timed_step_emits_no_completion_event_when_the_block_fails(
         )
 
     try:
-        with _timed_step(
-            report, "dependencies", "Running the install command"
-        ) as finish:
+        with _timed_step(report, "dependencies", "Running the install command"):
             raise RuntimeError("npm exploded")
     except RuntimeError:
         pass

@@ -97,7 +97,7 @@ async def _stream(
                 stream = await asyncio.to_thread(
                     open_preview_log_stream, docker_client, container
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001, S112 - one unreadable container must not stop other log streams
                 continue
             set_log_read_timeout(stream)
             log_streams[container.name] = stream
