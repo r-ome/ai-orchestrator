@@ -415,10 +415,10 @@ where the code actually lives.**
 
 Three of the four items here are done, 20 Aug 2026, and keep their entries because each
 returned a finding. **What is still open is the 2-node import cycle, one cut from gone.** The function-local
-imports are no longer part of it: 1 of the original 14 remains and it is intra-package. One
-more thing is open and undecided: **two vocabularies — Docker labels and preview status —
-are each close to undefended by tests**, which is now its own entry, and stage 3 added a
-third case of the same shape to it.
+imports are no longer part of it: 1 of the original 14 remains and it is intra-package. The three undefended
+vocabularies — Docker labels, preview status, and the `active_preview` argument — were
+**decided on 20 Aug 2026** and are now partly closed; see their entry below. What remains
+of them is behavioural path coverage for four statuses, deferred on purpose.
 
 Done 20 Aug 2026: the preview-status write sites (`4fe0e37`), the dead `rebuilding` status
 and migration 32 (`d0f0d07`), the `startup.py` import hoist (`a787fdc`), the remaining
@@ -585,8 +585,10 @@ for `148d907` names the exact expected failure message for that reason, and it m
 `controller_store.active_preview`. Passing `task_id` where `sandbox_id` belongs passes all
 875 gated tests, because `tests/tasks/test_service.py` stubs `active_preview` with a lambda
 that ignores its argument. Measured as pre-existing: the same corruption at `be81e44` passes
-all 57 tests in that file. It belongs with the two undefended vocabularies below; nobody has
-decided to close it.
+all 57 tests in that file. **Closed 20 Aug 2026** — the three stubs now assert their
+argument. Note the corruption above is *one-sided*; swapping the two arguments is a
+different and already-covered case. See the tripwire warning in the vocabularies entry
+below.
 
 #### Stage 4, done 20 Aug 2026
 
@@ -707,7 +709,8 @@ change apart from the two new names.
 `LABEL_CONTROLLER_MANAGED` to a junk value moves all five dependent sites, proving the
 constants are on the call path — but it fails exactly **one** test of 835,
 `tests/turns/test_events_websocket.py::test_the_context_locator_targets_the_planning_turn_container`.
-834 tests do not notice a corrupted label key. Nobody has decided to close that.
+834 tests do not notice a corrupted label key. **Closed 20 Aug 2026** by
+`tests/test_labels.py`, which pins all 16 constants and the closed name set.
 
 ### Function-local imports — 12 hoisted or removed 20 Aug 2026, 1 remains
 
@@ -886,7 +889,7 @@ index where a test can see it.
 list every migration version explicitly. Adding a migration fails all ten until you add the
 number. That is the mechanism forcing you to notice; do not weaken it to a length check.
 
-### Two vocabularies are close to undefended by tests — open, measured 20 Aug 2026
+### The undefended vocabularies — decided and partly closed, 20 Aug 2026
 
 The label tripwire and the preview-status tripwire found the same thing in two different
 vocabularies. Both are pre-existing. Neither was caused by the change that found it.
@@ -931,11 +934,69 @@ unmodified file, a green run, and a result indistinguishable from a real coverag
 `RUNNING` doubles as the positive control: it was confirmed at 8 failures by hand first, so
 a sweep reporting zero for `RUNNING` is a broken sweep, not a coverage gap.
 
-**Undecided, and it is one decision, not two.** Both vocabularies pose the same question:
-what should assert a vocabulary? A snapshot test is the cheap answer for both and catches an
-accidental edit; it catches neither a container labelled with the wrong constant nor a
-status written through the wrong member. **Ask before choosing, and decide both together** —
-answering them separately will produce two different mechanisms for one problem.
+#### Decided, 20 Aug 2026 — and the framing above was wrong
+
+The paragraph this replaces said it was **one decision, not two**, and that one mechanism
+should cover both vocabularies. That is what kept it open across four sessions. There are
+**three** cases, not two, and they are **three different failure modes**. No single
+mechanism covers them:
+
+| Mode | Example | What catches it |
+|---|---|---|
+| Value corruption | `LABEL_MANAGED` edited to junk | A contract test. Fully. |
+| Wrong member used | code writes `STOPPED` where `EXPIRED` belongs | Only a test driving that path |
+| Wrong value passed | `active_preview(task_id)` | Only a test at the calling path |
+
+**The policy, by user decision:**
+
+- Pin closed vocabularies with explicit contract tests.
+- Test important argument selection at the calling path.
+- Test status transitions through their behaviour.
+- **Do not claim one mechanism covers all three failure modes.**
+
+**What landed.** `tests/test_labels.py` pins all 16 `LABEL_*` constants;
+`tests/controller/test_preview_status.py` pins all 9 `PreviewStatus` members. Both assert an
+explicit literal name-to-value map **and** that the set is closed, so a new constant fails
+until it is listed. The three `active_preview` stubs in `tests/tasks/test_service.py` now
+assert their argument. Gated suite 878 -> 882.
+
+**Rejected, with reasons.** A runtime guard on `active_preview` was proposed and rejected:
+`task_id` is `uuid4().hex` and `sandbox_id` is `uuid5(...).hex`
+(`app/platform/naming.py:41`), so **both are 32-character hex and no shape check can
+separate them**. The guard would have rejected valid v1 sandbox ids.
+`app/projects/service.py:71` reads like a mint site and is not — it passes an
+already-resolved lookup key through under another name. Promoting `/tmp/schema_oracle.py`
+and `/tmp/label_oracle.py` into the repo was also rejected: they print diagnostics and
+contain no assertions. That is a separate piece of work, and it is **not** the same as
+open item 4, which names `probe_all.py` and `migration32_probe.py`.
+
+**Still open:** behavioural path coverage for the four statuses nothing catches — `STOPPED`,
+`FAILED`, `MISSING`, `EXPIRED`. Those are teardown, failure and expiry paths, so the tests
+are Docker-gated. Deferred on purpose. It is path coverage, not vocabulary protection, and
+it must be scoped separately rather than smuggled in beside cheap work.
+
+#### The tripwire tested the wrong corruption — read this before reusing it
+
+The obvious tripwire for the `active_preview` contract is to **swap** the two adjacent
+positional arguments at `app/tasks/service.py:564`. **That swap was never invisible.** It
+makes `active["task_id"] != task_id` inside `stop_task_preview`, so the function returns
+early at `app/previews/service.py:772`, `stop_preview` never runs, and the existing
+`assert stopped == [...]` catches it. Measured against the **old** stubs:
+
+| Corruption at the accept call site | Old stubs | New stubs |
+|---|---|---|
+| Swap both arguments | **2 of 3 already fail** | 3 fail |
+| One-sided: `sandbox_id` param receives `task.id` | **57 passed** | 3 fail |
+
+The invisible corruption is the **one-sided** one — the case this entry described from the
+start. A swap changes two things and the second change betrays the first. **A tripwire that
+corrupts two coupled arguments at once tests a corruption the suite already caught, and
+reports the guard as effective for the wrong reason.** Corrupt one argument, not the pair.
+
+**The negative control is what found this.** Running the tripwire against the *new* tests
+proved only that the new assertion fires. Running the same corruption against the *old*
+tests is what showed the swap was already covered — and it is the only step that
+distinguishes a test that closes a gap from a test that restates existing coverage.
 
 ---
 
