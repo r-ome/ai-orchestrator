@@ -414,9 +414,10 @@ where the code actually lives.**
 
 Two of the four items here are done, 20 Aug 2026, and keep their entries because each
 returned a finding. **What is still open is the import cycle and the function-local
-imports**, plus three smaller things recorded inside the entries below: the label
-vocabulary is close to uncovered, `rebuilding` is a dead status still in the index, and the
-16 preview-status write sites are still literals. Nobody has decided on any of them.
+imports**, plus three smaller things recorded inside the entries below: `rebuilding` is a
+dead status still in the index, and **two vocabularies — Docker labels and preview status —
+are each close to undefended by tests**, which is now its own entry. Nobody has decided on
+any of them. The preview-status write sites are done, `4fe0e37`.
 
 ### The 8-node domain import cycle
 
@@ -539,8 +540,18 @@ precedent (`_include_preparing_in_open_tasks`, a DROP INDEX and recreate with a 
 status set). Harmless where it sits, because no row can ever hold it. Nobody has decided
 to remove it.
 
-**Still strings, deliberately:** the 16 `status="..."` write sites in `previews/service.py`
-and `app/startup.py`. Converting the write sites is a separate change and was not asked for.
+**The write sites are done, `4fe0e37`, and the count recorded here was wrong.** This entry
+said 16. There are 20. The four it missed are a dict-literal insert at
+`previews/service.py:303`, the `stop_preview` status default at `:710`, and the two result
+branches of the ternary at `startup.py:195` and `:197`. The first two were missed because
+the grep looked for `status="` and these spell it `"status":` and `status: str =`. The last
+two were missed because the entry classified `startup.py` down to one site and stopped
+reading at that line, inside the same loop.
+
+**That ternary is the sharpest trap in the file.** Its condition
+(`item.status == "running"`) is Docker's vocabulary and its two result branches are ours —
+one statement, two vocabularies, same spelling. A blind replace corrupts the condition and
+nothing catches it.
 
 **The frontend constrains nothing.** Five sites render `status` as text and none branch on
 a value, so no frontend change was needed. `ContainerStatusBadge.tsx` reads Docker's
@@ -553,6 +564,57 @@ vocabulary, not this one.
 tuple moves both the index and the UNION, and leaves the `tasks` branch of the same UNION
 alone. That last part is the negative control — without it the tripwire cannot tell
 generation from over-generation.
+
+### Two vocabularies are close to undefended by tests — open, measured 20 Aug 2026
+
+The label tripwire and the preview-status tripwire found the same thing in two different
+vocabularies. Both are pre-existing. Neither was caused by the change that found it.
+
+**Preview status, measured at `4fe0e37`.** Corrupt one `PreviewStatus` member's value and
+run the gated suite. Only two of eight members are defended:
+
+| Member | Gated tests that fail |
+|---|---|
+| `RUNNING` | 8 |
+| `PREPARING` | 5 |
+| `RESTARTING` | 0 |
+| `STOPPING` | 0 |
+| `STOPPED` | 0 |
+| `FAILED` | 0 |
+| `MISSING` | 0 |
+| `EXPIRED` | 0 |
+
+**The obvious explanation is wrong, and the wrong one was written down first.** The first
+reading was that `RUNNING` is defended because it sits in the
+`one_active_preview_per_sandbox` index and `FAILED` is not because it is terminal. But
+`RESTARTING` and `STOPPING` are *also* in that index — corrupting either rewrites the index
+SQL — and both score zero. **Being load-bearing in SQL defends nothing.** What defends
+`PREPARING` and `RUNNING` is that a preview passes through them on the happy path, so
+functional tests observe them in passing. Every status reachable only on a teardown,
+failure, or expiry path is unasserted.
+
+So the defences split three ways, and only the first is a test:
+
+- **Tests catch it:** `PREPARING`, `RUNNING`.
+- **Only the schema oracle catches it:** `RESTARTING`, `STOPPING`, and `REBUILDING`. The
+  oracle is a `/tmp` script, not a test, so it fires only when someone remembers to run it.
+- **Nothing catches it:** `STOPPED`, `FAILED`, `MISSING`, `EXPIRED`.
+
+**Labels, measured the same day.** A junk `LABEL_CONTROLLER_MANAGED` fails exactly one test
+of 835. Details in the label entry above.
+
+**The sweep needs its own guard, and that guard is the finding's credibility.**
+`/tmp/status_coverage.sh` greps for the junk value after each `sed` and records
+`SED-FAILED` if it did not match. Without it a `sed` that matched nothing yields an
+unmodified file, a green run, and a result indistinguishable from a real coverage gap.
+`RUNNING` doubles as the positive control: it was confirmed at 8 failures by hand first, so
+a sweep reporting zero for `RUNNING` is a broken sweep, not a coverage gap.
+
+**Undecided, and it is one decision, not two.** Both vocabularies pose the same question:
+what should assert a vocabulary? A snapshot test is the cheap answer for both and catches an
+accidental edit; it catches neither a container labelled with the wrong constant nor a
+status written through the wrong member. **Ask before choosing, and decide both together** —
+answering them separately will produce two different mechanisms for one problem.
 
 ---
 
@@ -780,6 +842,11 @@ These came out of eleven phases. Each one is here because ignoring it cost somet
   *skipped* suite proves even less. Six gated tests rotted unnoticed over four handoffs
   because the gate hid them, and one of the six is green on any first run and red on the
   second.
+- **When a tripwire fires on some inputs and not others, test your explanation of why.** The
+  preview-status sweep looked like "the index defends it" after two data points, and that
+  reading was reported before the other six ran. It was wrong: two more members sit in the
+  same index and nothing notices when they change. Two data points suggest a mechanism; they
+  do not establish one. Sweep the whole vocabulary before naming the cause.
 - **Verify a monkeypatch retarget by DELETING the patch**, not by aiming it at a module that
   binds no such name — the latter raises from `monkeypatch.setattr` itself and so fails for
   the wrong reason. If the test still passes without the patch, check whether it is green for
