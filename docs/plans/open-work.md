@@ -1,8 +1,8 @@
 # Open work
 
-**State:** `refactor/cycle-stage-3` @ `148d907`, 20 Aug 2026. Two commits ahead of
-`origin/main` (`afec862`), not pushed.
-**Suites:** backend 836 passed, 43 skipped, ~30s. Gated backend 875 passed, 4 skipped, ~140s,
+**State:** `refactor/cycle-stage-4` @ `0b05b89`, 20 Aug 2026. Two commits ahead of
+`origin/main` (`e36c358`), not pushed.
+**Suites:** backend 839 passed, 43 skipped, ~28s. Gated backend 878 passed, 4 skipped, ~150s,
 run twice. Frontend 80 passed, `npm run build` clean — **not re-run since `189a840`; no
 frontend file has changed since.**
 **Lint:** `ruff check app tests` passes. `ruff format --check` reports 240 files formatted.
@@ -424,17 +424,17 @@ Done 20 Aug 2026: the preview-status write sites (`4fe0e37`), the dead `rebuildi
 and migration 32 (`d0f0d07`), the `startup.py` import hoist (`a787fdc`), the remaining
 11 hoistable function-local imports, stage 1 of the cycle (`6e5a30b`) and stage 2 (`ba65624`).
 
-### The domain import cycle — 4 nodes, was 8
+### The domain import cycle — 3 nodes, was 8
 
-`agents, previews, projects, sandboxes`. **9 intra-cycle edges**, was 29.
+`previews, projects, sandboxes`. **5 intra-cycle edges**, was 29.
 
 **The "15 intra-cycle edges" recorded here for the 5-node graph was wrong; it was 14.**
 Re-measured with `/tmp/cycle_edges.py`. Assume the next figure on this page is wrong too.
 
 Phase 9 cut it from 10 nodes to 8. Stage 1 (`6e5a30b`, 20 Aug 2026) cut it to 6 by removing
 `delegation` and `implementation_context`. Stage 2 (`ba65624`) cut it to 5 by removing
-`planning`. Stage 3 (`be81e44` and `148d907`) cut it to 4 by removing `tasks`. See below for
-what each took.
+`planning`. Stage 3 (`be81e44` and `148d907`) cut it to 4 by removing `tasks`. Stage 4 (`7fe6ee8` and `0b05b89`)
+cut it to 3 by removing `agents`. See below for what each took.
 
 **The old entry claimed "no further file move can shrink it". That was wrong**, and it was
 wrong in the direction that stops work: it argued the whole cycle needed signature changes.
@@ -448,29 +448,28 @@ that owns it; stage 3's remaining edge was three more such moves. Treat "this ca
 cheaply" as the least-tested sentence on any page.
 
 **What is left is measured, not asserted.** The exact minimum feedback arc set for the
-original 8-node graph was **8 edges, 25 symbols, 19 files**. Stages 1 to 3 removed 20 of the
+original 8-node graph was **8 edges, 25 symbols, 19 files**. Stages 1 to 4 removed 24 of the
 29 intra-cycle edges. Which of those were members of that original minimum set has not been
 re-derived, so do not quote a "spent" count — re-measure the current graph instead.
 
-**What remains is not what this page predicted, and the difference is a cheap cut nobody
-had scoped.** Re-measured on the 4-node graph with `/tmp/cycle_cuts.py`:
+**This page has now predicted the remaining work wrongly twice.** It said the cycle could
+not shrink without signature changes; it did, nine times over. It then said `previews <->
+projects` was all that was left; `sandboxes -> agents` was sitting there at 2 symbols in
+1 file. **Re-measure with `/tmp/cycle_cuts.py` before believing the paragraph below.**
 
-- **`sandboxes -> agents` is a single-edge cut that takes it 4 nodes -> 3.** It is **2
-  symbols in 1 file**: `AgentOperationError` and `stop_agent`, imported by
-  `app/sandboxes/lifecycle.py:14`. Only `projects -> sandboxes` is cheaper, at 1 symbol, and
-  cutting that one shrinks nothing. Cutting this one drops `agents` out. **Not scoped, not
-  approved, and the seam is not obvious — a moved refusal moves an error type, and that has
-  been the load-bearing part every time so far.**
-- **The objection recorded against this edge no longer applies.** The stage-2 handoff ruled
-  it out because the route to 4 nodes needed `tasks -> agents` cut alongside it, and that
-  meant moving `extract_payload` back out of `agents/`, undoing `ba65624`. Stage 3 took
-  `tasks` out of the cycle altogether, so `sandboxes -> agents` now stands alone and costs
-  nothing from `ba65624`. That ruling was never written into section 4, and it is now spent.
-- After that the remainder is `previews <-> projects`: **17 symbols across two directions**,
-  `projects -> previews` 10 and `previews -> projects` 7, and no cheap cut. The minimum
-  feedback arc set for the whole current graph is **3 edges, 16 symbols, 14 files**.
+Measured on the 3-node graph:
 
-**Grill the scope before touching either.**
+- **Two single-edge cuts shrink it**, and they cost the same on symbols:
+  `previews -> projects` at **7 symbols in 3 files**, and `sandboxes -> previews` at
+  **7 symbols in 11 files**. Prefer the first on file count alone; 11 files is a much wider
+  blast radius.
+- **The whole cycle dissolves in 2 edges: `previews -> projects` + `sandboxes -> previews`,
+  14 symbols across 14 files.** That is the exact minimum feedback arc set, not an estimate.
+  There is no 1-edge cut that dissolves it.
+- The two fat edges are `previews -> sandboxes` (17 symbols) and `projects -> previews`
+  (10). Neither is on the cheapest path. **Do not start with the biggest edge.**
+
+**Nothing here is scoped or approved. Grill the scope before touching it.**
 
 **Every edge has a module-scope import site.** There are no `TYPE_CHECKING`-only or
 function-local-only edges, so no edge can be cut by re-scoping an import. Each needs the
@@ -574,6 +573,46 @@ for `148d907` names the exact expected failure message for that reason, and it m
 that ignores its argument. Measured as pre-existing: the same corruption at `be81e44` passes
 all 57 tests in that file. It belongs with the two undefended vocabularies below; nobody has
 decided to close it.
+
+#### Stage 4, done 20 Aug 2026
+
+**The first edge in this series that was not a misplaced symbol.** `agents` genuinely owns
+`stop_agent` and `AgentOperationError`: `replace_agent` and the agents router call the first,
+two routers map the second as a domain error. Nothing could move out of `agents`, so the nine
+previous cuts' method did not apply.
+
+What worked instead was **making the odd branch look like its neighbour**. The one consumer
+was a block in `drain_sandbox_writers` that called `agents.stop_agent`. Twelve lines below it,
+the task branch of the same function already did its Docker work inline with a label constant
+from `app/platform/labels.py`. Doing the same for the agent branch cut the edge with no new
+seam, no new module and no new constant.
+
+**The measurement that shaped the whole job: the branch had zero test coverage.** Replacing
+its `stop_agent` call with a raising tripwire left all 875 gated tests green. The existing
+drain test seeds `container_id=None`, so the `if container_id:` guard skipped it. With no
+coverage there is nothing to break, so **"prove a preserved contract by breaking it" had no
+contract to work on.** Three characterization tests landed first, in their own commit
+(`7fe6ee8`), written against the old implementation. They passed **unchanged** across the
+refactor, and that is the equivalence proof. They also defend the new code: changing
+`timeout=2`, `force=True`, or dropping the `update_agent_run` call each fails exactly one.
+
+**Write the characterization test before the cut, not after.** A test written after the
+change can only confirm what the change already does.
+
+Two traps that the scope found and the build avoided:
+
+- The run id is read from the container's `orchestrator.run.id` label, **not** from the
+  `agent_run_id` already in scope, and only when that label is present. An inline rewrite
+  that used the variable would have looked obviously correct and changed behaviour.
+- `LABEL_MANAGED` means `orchestrator.preview.managed` in `app/platform/labels.py` and
+  `orchestrator.agent.managed` in `app/agents/service.py`. **Two different constants, one
+  name.** Any move of the agent label vocabulary must rename, not just relocate.
+
+**One behaviour changed on purpose, by user decision.** The managed-label guard inside
+`get_managed_agent_container` is not reproduced inline. `container_id` there comes from the
+controller store, not from a caller, so the check was defence in depth rather than
+correctness. Keeping it would have forced the agent label vocabulary into `platform/labels.py`
+— see the trap above. No test pins the dropped guard, deliberately.
 
 ### Hardcoded label literals — done, 20 Aug 2026
 
