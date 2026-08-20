@@ -26,7 +26,6 @@ format` rewraps, so most files grew.
 ### The two largest backend modules were never decomposition targets
 
 ```text
-1,547  app/sandboxes/service.py
 1,347  app/planning/service.py
 1,262  app/delegation/execution.py
 1,082  app/tasks/service.py
@@ -38,10 +37,11 @@ format` rewraps, so most files grew.
 three steps, `27447e2`, `d1216a3` and `0366c17`, all on 20 Aug 2026. Its largest module is
 `provisioning.py` at 650 lines and its `__init__.py` is a 201-line facade, so it has left
 this table. See "Decomposing `sandboxes/database.py`" below for the measured seam, the
-method, and the four findings the three steps produced. That leaves `sandboxes/service.py`
-as the only backend module over 1,400 lines, and the only one of the two that no phase
-covered. It is now scoped — see "Decomposing `sandboxes/service.py`" below — but no code
-has moved.
+method, and the four findings the three steps produced.
+
+`sandboxes/service.py` was 1,547 lines and is now a package too, after steps 1 and 2 on 20 Aug 2026, so it has also left this table. Its largest module
+is `transitions.py` at 485 lines. Step 3, pruning its facade, is still open. **No backend
+module is over 1,400 lines any more.**
 
 Measured on `93add0c`, five of the six had grown by 2 to 65 lines against the previous
 reading. That was `ruff format` rewrapping, not new code. `previews/service.py` was the
@@ -51,18 +51,19 @@ unused imports, all phase 8 leftovers whose code had moved to
 
 Phase 7 split `ControllerStore`; phase 8 split `previews`. No phase touched these two.
 `database.py` is now being split outside the phase plan, one step at a time. Phase 5 grew
-`sandboxes/service.py` from 695 to 1,487 lines by design and recorded it; it is 1,547 now,
-after formatting, and is scoped but not started.
+`sandboxes/service.py` from 695 to 1,487 lines by design and recorded it; it reached 1,547
+after formatting, and is now a package whose largest module is 485 lines.
 The `sandboxes/database/` package also holds one of the two shared-database implementations
 that section 4 closes.
 
 For contrast, the frontend hotspots the review named were fixed: `DelegationWorkspace.tsx`
 went 1,780 → 525 lines, `PlanningSessionPage.tsx` 1,200+ → 635.
 
-### Decomposing `sandboxes/service.py` — scoped, 20 Aug 2026
+### Decomposing `sandboxes/service.py` — steps 1 and 2 done, 20 Aug 2026
 
-Scoped at `eb35b56`. Every figure below was re-measured from the tree by an AST pass, not
-carried over from a handoff. **No code has moved yet.**
+Scoped at `eb35b56`. Steps 1 and 2 landed on 20 Aug 2026 as `6911f82` and the commit that
+follows it. Step 3, pruning the facade, is still open. Every figure below was measured from
+the tree by an AST pass, not carried over from a handoff.
 
 **The module.** 1,547 lines: 75 lines of imports, 34 top-level definitions totalling 1,406
 lines, and **no module-level state**. The split has no shared mutable globals to preserve.
@@ -147,10 +148,61 @@ The patched test drives the orphan-removal route, so that one site retargets to
    destinations for `discover_engine` and `complete_database_provision`.
 3. **Three steps**, the database cadence:
    - Step 1: the leaves — errors, outcomes, coercion, resources. One retarget.
-   - Step 2: provisioning, engine, and the entrypoint modules. Carries all 16 retargets.
+   - Step 2: provisioning, engine, and the entrypoint modules. Carries the other 49
+     retargets.
    - Step 3: reduce `__init__.py` to the pruned facade.
 
-**Not started.** Nothing is agreed beyond this scope.
+**Steps 1 and 2, as landed.** The package is now:
+
+```text
+ 287  __init__.py           facade only, zero definitions
+ 485  transitions.py        create_or_resolve, resume, destroy, _sweep_manifest_resources
+ 247  syncing.py            sync, sync_engine_report
+ 234  publishing.py         publish
+ 216  provisioning.py       complete_database_provision, reset_database
+ 113  engine.py             confirm_engine, _confirm_engine_snapshot
+  88  mirror_staleness.py   staleness
+  77  resources.py          remove_orphan_resource + 2 private helpers
+  71  coercion.py           require_v1 + 6 private helpers
+  59  outcomes.py           6 result dataclasses
+  58  errors.py             6 exception classes
+1935  total
+```
+
+`sandboxes/service.py` has left the over-1,400-line table. The largest module is
+`transitions.py` at 485 lines. The 1,935 against 1,547 is duplicated import headers, the
+same tax the `database/` split paid.
+
+Names avoid the three collisions with modules the facade already imports from:
+`transitions.py` not `lifecycle.py`, which holds locks and leases; `publishing.py` not
+`publish.py`; `engine.py` sits beside `engine_detection.py`.
+
+**Finding: a submodule must never share a name with a function it exports.** Step 2 first
+named the module `staleness.py` while the function it holds is also `staleness`. The facade
+ends with a `globals().pop(...)` block that drops submodule names from the package namespace,
+copied from `database/__init__.py`. `globals().pop("staleness")` therefore deleted the
+**function**, and `service.staleness(...)` in the router broke. Renamed to
+`mirror_staleness.py`, which is the more honest name anyway. **The surface probe caught this,
+the test suite did not catch it first**, because the probe compares against a captured
+baseline instead of asking whether anything crashes. Check every new submodule name against
+the names it exports before writing the pop block.
+
+**Finding: ten patch sites do not affect their test's outcome.** A delete-test over all 50
+retargets — flip one (file, module, name) group back to the facade, run that file, require a
+failure — reported 6 groups as inert: all five sites in `tests/delegation/test_delivery.py`,
+and the five `complete_database_provision` sites in `tests/sandboxes/test_sync.py`. Aimed at
+a dead facade binding, the real function runs and succeeds harmlessly against the fake Docker
+client, so the test passes either way. The retargets themselves are correct, proved twice:
+`__globals__` identity for every entrypoint, and a counting wrapper on the real functions
+that recorded **zero** real calls with the retargets in place. This is a test-strength gap,
+not a refactor defect. It is open and nobody has decided to close it.
+
+**Method note: a delete-test that reports "inert" has found a weak test, not a wrong patch.**
+Prove the patch separately by `__globals__`, and confirm interception by counting real calls.
+
+**Still open: step 3.** Reduce `__init__.py` from the 91-name surface to the names
+`app/sandboxes/router.py` and the tests actually reach, about 21. That is what turns a stale
+monkeypatch into a loud `AttributeError` instead of a silent no-op.
 
 ### Decomposing `sandboxes/database.py` — done, 20 Aug 2026
 
