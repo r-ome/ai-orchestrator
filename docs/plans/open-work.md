@@ -1,9 +1,9 @@
 # Open work
 
-**State:** `main` @ `7950fba`, 20 Aug 2026
-**Suites:** backend 835 passed, 43 skipped, ~31s. Gated backend 874 passed, 4 skipped, ~139s.
-Frontend 80 passed, `npm run build` clean.
-**Lint:** `ruff check app tests` passes. `ruff format --check` reports 219 files formatted.
+**State:** `main` @ `27447e2`, 20 Aug 2026
+**Suites:** backend 835 passed, 43 skipped, ~31s. Gated backend 874 passed, 4 skipped, ~137s,
+run twice. Frontend 80 passed, `npm run build` clean.
+**Lint:** `ruff check app tests` passes. `ruff format --check` reports 223 files formatted.
 
 This replaces `architecture-review-verification-and-plan.md` and
 `ai-orchestrator-architecture-review-consolidated.md`. Both are deleted. The plan they
@@ -26,27 +26,86 @@ format` rewraps, so most files grew.
 ### The two largest backend modules were never decomposition targets
 
 ```text
-1,713  app/sandboxes/database.py
 1,547  app/sandboxes/service.py
+1,500  app/sandboxes/database/__init__.py
 1,347  app/planning/service.py
 1,262  app/delegation/execution.py
 1,082  app/tasks/service.py
   981  app/previews/service.py
 ```
 
-Five of the six grew, by 2 to 65 lines. That is `ruff format` rewrapping, not new code.
-`previews/service.py` is the exception and it dropped out of the top five: it fell 1,097 to
-981 because it carried 57 unused imports, all phase 8 leftovers whose code had moved to
+`database.py` was 1,713 lines and is now a package. Step 1 of its decomposition landed in
+`27447e2`; see "Decomposing `sandboxes/database.py`" below for the measured seam, the
+remaining steps, and why the split is safe.
+
+Measured on `93add0c`, five of the six had grown by 2 to 65 lines against the previous
+reading. That was `ruff format` rewrapping, not new code. `previews/service.py` was the
+exception and it dropped out of the top five: it fell 1,097 to 981 because it carried 57
+unused imports, all phase 8 leftovers whose code had moved to
 `resources.py`, `sharing.py`, `dependency_cache.py` and `health.py`. Nothing had noticed.
 
-Phase 7 split `ControllerStore`; phase 8 split `previews`. Nothing did this. Phase 5 grew
+Phase 7 split `ControllerStore`; phase 8 split `previews`. No phase touched these two.
+`database.py` is now being split outside the phase plan, one step at a time. Phase 5 grew
 `sandboxes/service.py` from 695 to 1,487 lines by design and recorded it; it is 1,547 now,
-after formatting.
-`sandboxes/database.py` also holds one of the two shared-database implementations
+after formatting, and is still unscoped.
+The `sandboxes/database/` package also holds one of the two shared-database implementations
 that section 4 closes.
 
 For contrast, the frontend hotspots the review named were fixed: `DelegationWorkspace.tsx`
 went 1,780 → 525 lines, `PlanningSessionPage.tsx` 1,200+ → 635.
+
+### Decomposing `sandboxes/database.py`
+
+Step 1 landed in `27447e2` on 20 Aug 2026. `app/sandboxes/database.py` is now the package
+`app/sandboxes/database/`.
+
+```text
+1,500  __init__.py     engine classes, orchestration functions, singletons, factory
+  164  shared.py       shared-server lock, naming, identifier, statement, health, hash
+  139  contracts.py    ErrorFactory, runtime, six request dataclasses, DatabaseEngine
+   15  constants.py    the eleven module-level literals
+    9  errors.py       SandboxDatabaseError, SandboxMigrationError
+```
+
+**The seam was measured before anything moved,** with an AST pass that built the internal
+reference graph over 14 regions. The result is why this is safe to do incrementally: the
+graph is a **DAG**, and the engine layer never calls the orchestration layer. The file was
+not tangled. It was two stacked layers sharing one file.
+
+Layering now: `constants <- contracts <- shared <- __init__`. No module imports its own
+package.
+
+Remaining steps, both still open:
+
+- **Step 2** — extract the engine layer: `_engine_ops.py` (131), `mysql.py` (323),
+  `postgres.py` (173), `sqlite.py` (107), `registry.py` (18).
+- **Step 3** — extract the orchestration layer into `provisioning.py` (~590), leaving
+  `__init__.py` as a pure facade.
+
+Three findings worth keeping:
+
+- **The import ratchet cannot move.** `KNOWN_CYCLE` names top-level packages, not modules,
+  so no intra-package split touches it. It stayed at 8 through step 1. Do not expect to
+  edit it in steps 2 or 3 either.
+- **The `__init__.py` re-export is deliberate,** and is the one documented exception to
+  "no shim, alias or re-export". It follows the `app/controller/store/` precedent and keeps
+  all eight consumer modules untouched. The rule still holds for everything else.
+- **A test trap waits in step 3.** `tests/sandboxes/test_database.py` patches module
+  attributes on `app.sandboxes.database`: `_run_database_command` (lines 235, 319),
+  `_wait_for_server_health` (309), `shared_database_names` (303), `ensure_image` (305),
+  `database_engine` (381). Each must retarget the module where the *caller* binds the name,
+  never the package facade — patching the facade leaves the real binding untouched and the
+  test passes for the wrong reason. Verify every retarget by deletion. The
+  `_run_database_command` patch at line 319 is probably already dead: it sits in the
+  `_ensure_shared_server` test, but that function has no path to it. The helper is used
+  only between original lines 448 and 930, all engine layer.
+
+Verification method for step 1, worth repeating for steps 2 and 3: compare all 67
+top-level definitions by `ast.dump` between the old file and the new tree, then diff a
+normalised public-surface probe of the package. The AST comparison is the check that
+cannot be gamed, and it should be the primary one. See section 5.
+
+---
 
 ### Runtime behaviour: the gated suite is green again
 
@@ -259,18 +318,21 @@ behaviour, but the import read as live and was not.
 
 ### Phase 3.4, two shared-database implementations — closed separate, 20 Aug 2026
 
-Decided in `docs/adr/0009-two-shared-database-implementations.md`. Keep both
+Decided in `docs/adr/0009-two-shared-database-implementations.md`. That ADR still cites
+the pre-package path `app/sandboxes/database.py` at four line numbers, all now wrong. It is
+left as written, because an ADR records a decision at a date. The current locations are
+below. Keep both
 `previews/sharing.py:133 _shared_database_server` and
-`sandboxes/database.py:1393 _ensure_shared_server`. Change no code.
+`sandboxes/database/__init__.py:1239 _ensure_shared_server`. Change no code.
 
-They are not duplication. `sandbox_database_runtime` (`sandboxes/database.py:1053`)
+They are not duplication. `sandbox_database_runtime` (`sandboxes/database/__init__.py:893`)
 routes a preview to the previews path whenever the sandbox has
 `lifecycle_version != "v1"` or `db_engine == "none"`, and to the sandboxes path
 otherwise. Previews is MySQL-only by construction, so it cannot address a PostgreSQL
 shared server at all.
 
 Two of the five behavioural differences the old entry listed are not behavioural.
-`database=` is unread when `shared=True` (`sandboxes/database.py:257`), and container
+`database=` is unread when `shared=True` (`sandboxes/database/__init__.py:187`), and container
 start is identical because `create_hardened` returns the container unstarted
 (`containers/hardened.py:180`). The `LABEL_DATA_MANAGED` volume difference is inert
 too: its only reader also filters on a run id, which shared volumes never carry.
@@ -382,9 +444,24 @@ These came out of eleven phases. Each one is here because ignoring it cost somet
   constant per file before and after and diff. The suite cannot tell you that 34 rewrapped
   prompts are byte-identical. Three files differed and each had to be accounted for by
   hand.
-- **Never mix a file move with a behaviour change** in one commit.
+- **Never mix a file move with a behaviour change** in one commit. On the `database.py`
+  step-1 split, Codex appended ten `SomeClass.__module__ = __name__` lines so signature
+  reprs would keep printing the old module path. Nothing needed them; 835 tests passed
+  either way. They were removed.
+- **A delegate will change behaviour to make your probe pass.** So normalise the probe
+  before you trust it — the first version of the step-1 probe printed raw memory
+  addresses, which gave Codex noise to "fix". Then diff the produced files for anything the
+  prompt never asked for, and delete-test each such line.
+- **Prove a pure move by comparing definitions, not output.** Parse the old file and the
+  new tree, and diff every top-level definition by `ast.dump`. Step 1 compared 67 of them:
+  none missing, none added, no body changed, none duplicated across modules. Unlike a repr
+  or surface probe, this cannot be satisfied by a cosmetic tweak, so make it the primary
+  check and the probe the secondary one.
 - **When removing or moving code, let the tests break loudly.** Repoint the test at the
-  module that now binds the name. A shim, alias or re-export is the wrong fix.
+  module that now binds the name. A shim, alias or re-export is the wrong fix. The one
+  standing exception is a package `__init__.py` acting as the public surface for a module
+  split into a package — `app/controller/store/` and `app/sandboxes/database/`. That is a
+  facade, not a shim left behind at an old path.
 - Every change leaves both suites green and the repo shippable.
 - ASD-STE100 plain language, see `CLAUDE.md`. Real figures, or write "unmeasured".
 
