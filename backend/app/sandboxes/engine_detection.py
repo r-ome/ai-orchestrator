@@ -20,6 +20,7 @@ from docker.client import DockerClient
 from docker.errors import DockerException
 
 from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
+from app.platform.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND
 from app.previews.detection import prisma_schema_providers
 
 MAX_FILE_BYTES = 200_000
@@ -384,8 +385,8 @@ def _read_schema_files(
                 working_dir="/workspace",
                 environment={"HOME": "/tmp/home"},
                 labels={
-                    "orchestrator.managed": "true",
-                    "orchestrator.kind": "schema-baseline",
+                    LABEL_CONTROLLER_MANAGED: "true",
+                    LABEL_KIND: "schema-baseline",
                 },
                 volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
                 tmpfs_size="16m",
@@ -469,8 +470,8 @@ def _read_project_files(
                 working_dir="/workspace",
                 environment={"HOME": "/tmp/home"},
                 labels={
-                    "orchestrator.managed": "true",
-                    "orchestrator.kind": "engine-detection",
+                    LABEL_CONTROLLER_MANAGED: "true",
+                    LABEL_KIND: "engine-detection",
                 },
                 volumes={volume_name: {"bind": "/workspace", "mode": "ro"}},
                 tmpfs_size="16m",

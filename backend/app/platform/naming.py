@@ -5,18 +5,28 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
-_OWNERSHIP_SANDBOX_ID = "orchestrator.sandbox.id"
-_OWNERSHIP_PROJECT_ID = "orchestrator.project.id"
-_OWNERSHIP_LIFECYCLE_VERSION = "orchestrator.lifecycle.version"
-_MIRROR_LABEL = "orchestrator.project.mirror"
+from app.platform.labels import (
+    LABEL_DATA_MANAGED,
+    LABEL_LIFECYCLE_VERSION,
+    LABEL_PERSISTENT,
+    LABEL_PROJECT_ID,
+    LABEL_PROJECT_MIRROR,
+    LABEL_SANDBOX_ID,
+    LABEL_SHARED_DATABASE,
+)
+
+_OWNERSHIP_SANDBOX_ID = LABEL_SANDBOX_ID
+_OWNERSHIP_PROJECT_ID = LABEL_PROJECT_ID
+_OWNERSHIP_LIFECYCLE_VERSION = LABEL_LIFECYCLE_VERSION
+_MIRROR_LABEL = LABEL_PROJECT_MIRROR
 _FEATURE_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 
 # These labels distinguish one sandbox's disposable resources from shared
 # infrastructure.  Orphan cleanup treats labels as the authority, never a
 # resource name alone.
-_SHARED_DATABASE_LABEL = "orchestrator.shared-database"
-_PREVIEW_DATA_MANAGED_LABEL = "orchestrator.preview.data-managed"
-_PREVIEW_PERSISTENT_LABEL = "orchestrator.preview.persistent"
+_SHARED_DATABASE_LABEL = LABEL_SHARED_DATABASE
+_PREVIEW_DATA_MANAGED_LABEL = LABEL_DATA_MANAGED
+_PREVIEW_PERSISTENT_LABEL = LABEL_PERSISTENT
 
 
 def validate_feature_key(feature_key: str) -> str:

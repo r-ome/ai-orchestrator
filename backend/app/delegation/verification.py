@@ -10,6 +10,7 @@ from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_harden
 from app.controller.store import ControllerStore
 from app.delegation.packet import ResolvedVerification
 from app.platform.errors import OperationError
+from app.platform.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND
 from app.sandboxes.database import (
     SandboxDatabaseError,
     SandboxDatabaseRuntime,
@@ -103,8 +104,8 @@ def _run_command(
                 working_dir="/workspace",
                 environment=environment,
                 labels={
-                    "orchestrator.managed": "true",
-                    "orchestrator.kind": "delegation-verification",
+                    LABEL_CONTROLLER_MANAGED: "true",
+                    LABEL_KIND: "delegation-verification",
                 },
                 volumes=volumes,
                 timeout_seconds=settings.timeout_seconds,

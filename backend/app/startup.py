@@ -10,7 +10,12 @@ from app.controller.config import ControllerSettings
 from app.controller.store import ControllerStore
 from app.planning.models import PlanningStatus
 from app.planning.service import transition_planning_session
-from app.platform.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND, LABEL_RUN_ID
+from app.platform.labels import (
+    LABEL_CONTROLLER_MANAGED,
+    LABEL_KIND,
+    LABEL_RUN_ID,
+    LABEL_SANDBOX_ID,
+)
 from app.platform.labels import LABEL_RUN_ID as AGENT_RUN_ID
 from app.previews.service import expire_previews
 from app.sandboxes.orphans import discover_orphans
@@ -199,7 +204,7 @@ def reconcile_controller_state(store: ControllerStore) -> dict[str, int]:
                 continue
             labels = (resources[0].attrs.get("Config") or {}).get("Labels") or {}
             store.event(
-                sandbox_id=labels.get("orchestrator.sandbox.id"),
+                sandbox_id=labels.get(LABEL_SANDBOX_ID),
                 run_id=run_id,
                 kind="controller.unexpected_resource",
                 payload={
