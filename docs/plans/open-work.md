@@ -139,7 +139,7 @@ bit the database refactor three times.
 The patched test drives the orphan-removal route, so that one site retargets to
 `sandbox_service.resources`. One retarget, and it must be proved by `__globals__`.
 
-`KNOWN_CYCLE` stays at 8. This is an intra-package split.
+`KNOWN_CYCLE` stays where it is — 6 since `6e5a30b`. This is an intra-package split.
 
 **Decisions taken, 20 Aug 2026.** The user chose all three:
 
@@ -415,24 +415,72 @@ where the code actually lives.**
 ## 2. Structural debt, measured
 
 Three of the four items here are done, 20 Aug 2026, and keep their entries because each
-returned a finding. **What is still open is the import cycle, and the 2 function-local
-imports of the original 14 that genuinely carry it.** One more thing is open and undecided:
-**two vocabularies — Docker labels and preview status — are each close to undefended by
-tests**, which is now its own entry.
+returned a finding. **What is still open is the 6-node import cycle, and the 2
+function-local imports of the original 14 that genuinely carry it.** One more thing is open
+and undecided: **two vocabularies — Docker labels and preview status — are each close to
+undefended by tests**, which is now its own entry.
 
 Done 20 Aug 2026: the preview-status write sites (`4fe0e37`), the dead `rebuilding` status
-and migration 32 (`d0f0d07`), the `startup.py` import hoist (`a787fdc`), and the remaining
-11 hoistable function-local imports.
+and migration 32 (`d0f0d07`), the `startup.py` import hoist (`a787fdc`), the remaining
+11 hoistable function-local imports, and stage 1 of the cycle (`6e5a30b`).
 
-### The 8-node domain import cycle
+### The domain import cycle — 6 nodes, was 8
 
-`agents, delegation, implementation_context, planning, previews, projects, sandboxes, tasks`.
+`agents, planning, previews, projects, sandboxes, tasks`. **18 intra-cycle edges**, was 29.
 
-Genuine mutual domain coupling. Phase 9 cut it from 10 nodes to 8 by moving three things:
-`dependency_cache` into `previews/`, the sandbox status enum into `controller/store/`, and
-startup composition out to `app/startup.py`. Every remaining edge runs between domain
-packages, so **no further file move can shrink it**. Cutting it needs signature changes,
-which means a phase of its own.
+Phase 9 cut it from 10 nodes to 8. Stage 1 (`6e5a30b`, 20 Aug 2026) cut it to 6 by removing
+`delegation` and `implementation_context`. See "Stage 1" below for what that took.
+
+**The old entry claimed "no further file move can shrink it". That was wrong**, and it was
+wrong in the direction that stops work: it argued the whole cycle needed signature changes.
+Two of the three stage-1 edges were cut by moving a symbol to the package that owns it. Only
+the third needed a new seam. Re-measure before believing any claim about what is left.
+
+**What is left is genuinely harder, and this is measured, not asserted.** The exact minimum
+feedback arc set for the original graph was **8 edges, 25 symbols, 19 files**. Stage 1 spent
+3 of those edges. The cheapest continuation is `tasks -> planning` alone — 1 symbol,
+`extract_payload` at `app/tasks/runner.py:25` — taking it to 5 nodes, then `previews -> tasks`
+plus `sandboxes -> tasks` (5 symbols) taking it to 4. The last pair, `previews <-> projects`
+at 17 symbols across two directions, has no cheap cut and no agreed seam. **Grill the scope
+before touching it.**
+
+**Every edge has a module-scope import site.** There are no `TYPE_CHECKING`-only or
+function-local-only edges, so no edge can be cut by re-scoping an import. Each needs the
+import gone.
+
+#### Stage 1, done 20 Aug 2026
+
+**The cut was atomic.** `delegation` had exactly three inbound edges from the cycle, and
+`implementation_context` had no inbound edge except from `delegation`. Removing any two of
+the three left the SCC at 8. It could not land as three commits that each move the ratchet.
+
+| Edge | Symbols | Cut by |
+|---|---|---|
+| `implementation_context -> delegation` | `DelegationStatus` | move to `controller/store/delegation_status.py` |
+| `sandboxes -> delegation` | `FeatureTarget`, `ensure_target_unchanged`, `DelegationOperationError` | move to `sandboxes/feature_target.py` |
+| `planning -> delegation` | `get_routing_settings` | new `agents/catalogue.py`, a real seam |
+
+The first two are moves toward the package that owns the data. `DelegationStatus` follows
+`preview_status.py` and `lifecycle_status.py`, with no re-export — all nine consumers import
+from the store module. `ensure_target_unchanged` reads a sandbox volume and compares branch,
+HEAD and dirty state, so it moved with the whole dirty-baseline cluster and now raises a
+sandboxes-owned `FeatureTargetError`.
+
+The third was not the 1-symbol freebie its count suggested. `get_routing_settings` returns
+`RoutingSettings`, holding `ProviderModels`, whose `for_complexity` takes `Complexity` from
+`delegation/models.py`. Moving the getter drags that chain. **A symbol count undercounts an
+edge whenever the symbol pulls a type chain behind it.** The seam taken instead: planning
+only ever asked which provider serves a model and what an operator may choose, so
+`agents/catalogue.py` owns the catalogue and delegation builds on it.
+
+**A moved refusal changes an error type, and one caller is easy to miss.** Both
+`capture_feature_target` and `feature_diff` reach the moved dirty-state check. The first
+attempt wrapped only `capture_feature_target`, silently changing what `feature_diff` raises.
+`tests/test_delivery.py` caught it. The conversion now lives in one helper,
+`_ensure_dirty_state`.
+
+**Ruff sorts imports in this project.** An earlier handoff said the default rule set has no
+isort and placement is by hand. `I` is configured here — `ruff check --fix` did the sorting.
 
 `tests/test_import_direction.py` guards it. Note it is a **two-way ratchet**: it fails if
 the cycle grows *and* if it shrinks, telling you to tighten `KNOWN_CYCLE`. Nobody can cut an
