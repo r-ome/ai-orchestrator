@@ -12,6 +12,7 @@ from docker.errors import (
 from docker.models.containers import Container
 
 from app.controller.store import ControllerStore, SandboxWriterAdmissionError
+from app.controller.store.preview_status import PreviewStatus
 from app.platform.labels import (
     LABEL_SERVICE,
 )
@@ -260,7 +261,7 @@ def start_preview(
                     controller_store,
                     project_name,
                     remove_data_volumes=True,
-                    status="stopped",
+                    status=PreviewStatus.STOPPED,
                 )
             else:
                 raise PreviewOperationError(
@@ -300,7 +301,7 @@ def start_preview(
             "kind": kind.value,
             "task_id": task_id or None,
             "commit_sha": commit_sha or None,
-            "status": "preparing",
+            "status": PreviewStatus.PREPARING,
             "selected_service": request.config.selected_service,
             "container_port": request.config.container_port,
             "host_port": host_port,
@@ -338,7 +339,7 @@ def start_preview(
                 sandbox_id=project.sandbox_id,
                 proposal_id=request.proposal_id,
                 preview_id=run_id,
-                status="preparing",
+                status=PreviewStatus.PREPARING,
                 step=step,
                 message=message,
                 duration_ms=duration_ms,
@@ -458,7 +459,7 @@ def start_preview(
             _remove_resources(resources, remove_data_volumes=True)
             controller_store.update_preview_run(
                 run_id,
-                status="failed",
+                status=PreviewStatus.FAILED,
                 stopped_at=_now(),
             )
             if kind is PreviewKind.TASK:
@@ -468,7 +469,7 @@ def start_preview(
                 sandbox_id=project.sandbox_id,
                 proposal_id=request.proposal_id,
                 preview_id=run_id,
-                status="failed",
+                status=PreviewStatus.FAILED,
                 step="failed",
                 message=f"Preview creation failed: {error}",
                 level="error",
@@ -481,7 +482,7 @@ def start_preview(
         try:
             controller_store.update_preview_run(
                 run_id,
-                status="running",
+                status=PreviewStatus.RUNNING,
                 config_digest=approved_digest,
                 network_name=network_name,
                 started_at=_now(),
@@ -492,7 +493,7 @@ def start_preview(
             try:
                 controller_store.update_preview_run(
                     run_id,
-                    status="failed",
+                    status=PreviewStatus.FAILED,
                     stopped_at=_now(),
                 )
             except Exception:  # noqa: BLE001, S110 - failed state recording is best-effort during cleanup
@@ -504,7 +505,7 @@ def start_preview(
                 sandbox_id=project.sandbox_id,
                 proposal_id=request.proposal_id,
                 preview_id=run_id,
-                status="failed",
+                status=PreviewStatus.FAILED,
                 step="record",
                 message=f"Preview containers started, but controller state failed: {error}",
                 level="error",
@@ -515,7 +516,7 @@ def start_preview(
             sandbox_id=project.sandbox_id,
             proposal_id=request.proposal_id,
             preview_id=run_id,
-            status="running",
+            status=PreviewStatus.RUNNING,
             step="ready",
             message=f"Preview is running at http://127.0.0.1:{host_port}",
         )
@@ -598,9 +599,9 @@ def restart_preview(
             )
     containers = _preview_containers(docker_client, str(record["id"]), all=True)
     if not containers:
-        controller_store.update_preview_run(str(record["id"]), status="missing")
+        controller_store.update_preview_run(str(record["id"]), status=PreviewStatus.MISSING)
         raise PreviewOperationError(409, "Preview containers are missing; rebuild it")
-    controller_store.update_preview_run(str(record["id"]), status="restarting")
+    controller_store.update_preview_run(str(record["id"]), status=PreviewStatus.RESTARTING)
     try:
         if kind is PreviewKind.TASK:
             # Containers restart against the same workspace volume, so the
@@ -685,15 +686,15 @@ def restart_preview(
             for container in containers:
                 container.restart(timeout=5)
     except DockerException:
-        controller_store.update_preview_run(str(record["id"]), status="failed")
+        controller_store.update_preview_run(str(record["id"]), status=PreviewStatus.FAILED)
         raise
     except PreviewOperationError:
-        controller_store.update_preview_run(str(record["id"]), status="failed")
+        controller_store.update_preview_run(str(record["id"]), status=PreviewStatus.FAILED)
         raise
     expires_at = _expiry(config.expiry_minutes)
     controller_store.update_preview_run(
         str(record["id"]),
-        status="running",
+        status=PreviewStatus.RUNNING,
         last_activity_at=_now(),
         expires_at=expires_at,
     )
@@ -707,14 +708,14 @@ def stop_preview(
     project_name: str,
     *,
     remove_data_volumes: bool,
-    status: str = "stopped",
+    status: str = PreviewStatus.STOPPED,
 ) -> StopPreviewResponse:
     project = _ready_project(docker_client, project_name, controller_store)
     record = controller_store.active_preview(project.sandbox_id)
     if record is None:
         raise PreviewOperationError(404, "Sandbox has no active preview")
     run_id = str(record["id"])
-    controller_store.update_preview_run(run_id, status="stopping")
+    controller_store.update_preview_run(run_id, status=PreviewStatus.STOPPING)
     resources = _resources_for_run(docker_client, run_id)
     counts = _remove_resources(resources, remove_data_volumes=remove_data_volumes)
     controller_store.update_preview_run(
@@ -892,7 +893,7 @@ def expire_previews(
         _remove_resources(resources, remove_data_volumes=True)
         controller_store.update_preview_run(
             run_id,
-            status="expired",
+            status=PreviewStatus.EXPIRED,
             stopped_at=_now(),
         )
         released = _release_shared_database(

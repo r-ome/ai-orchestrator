@@ -8,6 +8,7 @@ from docker.errors import DockerException
 
 from app.controller.config import ControllerSettings
 from app.controller.store import ControllerStore
+from app.controller.store.preview_status import PreviewStatus
 from app.planning.models import PlanningStatus
 from app.planning.service import transition_planning_session
 from app.platform.labels import (
@@ -188,13 +189,13 @@ def reconcile_controller_state(store: ControllerStore) -> dict[str, int]:
             known.add(run_id)
             resources = by_run.get(run_id, [])
             if not resources:
-                store.update_preview_run(run_id, status="missing")
+                store.update_preview_run(run_id, status=PreviewStatus.MISSING)
                 counts["missing"] += 1
                 continue
             status = (
-                "running"
+                PreviewStatus.RUNNING
                 if any(item.status == "running" for item in resources)
-                else "failed"
+                else PreviewStatus.FAILED
             )
             store.update_preview_run(run_id, status=status)
             counts["previews"] += 1
