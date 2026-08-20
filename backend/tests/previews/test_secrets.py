@@ -16,8 +16,8 @@ from app.previews.models import (
 )
 from app.previews.runtimes.compose import _compose_service_environment
 from app.previews.runtimes.environment import _secret_environment
+from app.previews.secrets import _project_secrets_response
 from app.previews.service import _environment_status
-from app.projects.secrets import _project_secrets_response
 
 ATC_DOTENV = b"""
 # DATABASE_URL="mysql://old-user:old-pass@localhost:3306/atc"

@@ -38,6 +38,12 @@ from app.previews.models import (
     StopPreviewRequest,
     StopPreviewResponse,
 )
+from app.previews.secrets import (
+    delete_project_secret,
+    get_project_secrets,
+    import_project_secrets,
+    set_project_secrets,
+)
 from app.previews.service import (
     get_current_preview,
     open_preview_log_stream,
@@ -52,12 +58,6 @@ from app.previews.service import (
     stop_preview,
 )
 from app.previews.sharing import database_sharing_state
-from app.projects.secrets import (
-    delete_project_secret,
-    get_project_secrets,
-    import_project_secrets,
-    set_project_secrets,
-)
 
 router = APIRouter(prefix="/projects/{project_name}", tags=["previews"])
 ResponseType = TypeVar("ResponseType")
