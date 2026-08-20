@@ -22,7 +22,6 @@ KNOWN_CYCLE = frozenset(
         "previews",
         "projects",
         "sandboxes",
-        "tasks",
     }
 )
 MODULES_OUTSIDE_KNOWN_CYCLE = frozenset(
@@ -34,6 +33,7 @@ MODULES_OUTSIDE_KNOWN_CYCLE = frozenset(
         "planning",
         "platform",
         "startup",
+        "tasks",
         "turns",
         "volumes",
     }

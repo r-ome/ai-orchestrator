@@ -23,14 +23,13 @@ from app.agents.output import extract_payload
 from app.agents.service import credential_volume
 from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
 from app.controller.store import ControllerStore
-from app.platform.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND
+from app.platform.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND, LABEL_TASK_ID
 from app.sandboxes.database import SandboxDatabaseError, sandbox_database_runtime
 from app.tasks.config import CodingTurnSettings
 
 CODING_WORKSPACE = "/workspace"
 CODING_CREDENTIALS = "/auth"
 PROMPT_VARIABLE = "CODING_PROMPT"
-LABEL_TASK_ID = "orchestrator.task.id"
 PLAYWRIGHT_BROWSERS_PATH = "/ms-playwright"
 GLOBAL_NODE_MODULES = "/usr/local/lib/node_modules"
 

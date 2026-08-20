@@ -75,6 +75,7 @@ from app.previews.sharing import (
     _sharing_state,
     _validate_sharing,
 )
+from app.projects.service import ProjectOperationError
 
 SHARED_DATABASE_PREFIX = "orchestrator-shared-db-"
 _preview_lock = Lock()
@@ -751,6 +752,44 @@ def stop_preview(
         removed_volumes=counts["volumes"],
         removed_images=counts["images"],
     )
+
+
+def stop_task_preview(
+    docker_client: DockerClient,
+    controller_store: ControllerStore,
+    task_id: str,
+    sandbox_id: str,
+    sandbox: dict[str, object],
+) -> None:
+    """Stops the settled task's preview stack and removes its run-scoped volumes.
+
+    Runs after the status moves, so a Docker failure here leaks containers
+    rather than leaving the task claiming a settlement that did not happen.
+    The dependency volume is keyed by lockfile rather than by run and is
+    labelled persistent, so preview cleanup leaves it in place.
+    """
+    active = controller_store.active_preview(sandbox_id)
+    if active is None or str(active.get("task_id") or "") != task_id:
+        return
+    try:
+        stop_preview(
+            docker_client,
+            controller_store,
+            (
+                str(sandbox["id"])
+                if sandbox.get("lifecycle_version") == "v1"
+                else str(sandbox["project_name"])
+            ),
+            remove_data_volumes=True,
+            status="stopped",
+        )
+    except (PreviewOperationError, ProjectOperationError, DockerException) as error:
+        controller_store.event(
+            sandbox_id=sandbox_id,
+            run_id=task_id,
+            kind="task.preview_stop_failed",
+            payload={"preview_run_id": str(active["id"]), "error": str(error)},
+        )
 
 
 def preview_logs(

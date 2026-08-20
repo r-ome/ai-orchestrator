@@ -18,10 +18,8 @@ from app.controller.store import (
     SandboxLeaseBlockedByWriterError,
     SandboxLeaseHeldError,
 )
-from app.previews.service import stop_preview
-from app.tasks.models import Task
-from app.tasks.runner import LABEL_TASK_ID
-from app.tasks.service import _stop_task_preview
+from app.platform.labels import LABEL_TASK_ID
+from app.previews.service import stop_preview, stop_task_preview
 
 _LEASE = "lease"
 _MIRROR = "mirror"
@@ -180,16 +178,17 @@ def _stop_blocking_preview(
         if task_row is None:
             return
         # Keep task preview teardown in its single established helper.
-        _stop_task_preview(
+        stop_task_preview(
             docker_client,
             store,
-            Task.model_validate(task_row),
+            task_id,
+            str(task_row["sandbox_id"]),
             sandbox,
         )
         return
 
     # Live previews use the same stop_preview teardown called by the task
-    # helper. There is no task row to pass to _stop_task_preview.
+    # helper. There is no task row to pass to stop_task_preview.
     stop_preview(
         docker_client,
         store,

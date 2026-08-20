@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from docker.client import DockerClient
-from docker.errors import DockerException
 
 from app.controller.store import (
     ControllerStore,
@@ -21,7 +20,7 @@ from app.controller.store.task_status import (
 from app.platform.dirty_state import parse_snapshot, serialize_snapshot, snapshot_shell
 from app.platform.errors import OperationError
 from app.previews.config import get_preview_settings
-from app.previews.errors import PreviewOperationError
+from app.previews.service import stop_task_preview
 from app.projects.models import ProjectRegistration
 from app.projects.service import (
     ProjectOperationError,
@@ -562,7 +561,13 @@ def accept_task(
                     "accepted; no commit was lost"
                 ),
             )
-    _stop_task_preview(docker_client, controller_store, task, sandbox)
+    stop_task_preview(
+        docker_client,
+        controller_store,
+        task.id,
+        task.sandbox_id,
+        sandbox,
+    )
     return _task(controller_store, task.id)
 
 
@@ -628,7 +633,13 @@ def reject_task(
                     "rejected"
                 ),
             )
-    _stop_task_preview(docker_client, controller_store, task, sandbox)
+    stop_task_preview(
+        docker_client,
+        controller_store,
+        task.id,
+        task.sandbox_id,
+        sandbox,
+    )
     return _task(controller_store, task.id)
 
 
@@ -707,48 +718,6 @@ def _validated_branch(name: str, *, task_id: str) -> str:
             f"Task '{task_id}' has an unusable base branch '{name}'",
         )
     return name
-
-
-def _stop_task_preview(
-    docker_client: DockerClient,
-    controller_store: ControllerStore,
-    task: Task,
-    sandbox: dict[str, object],
-) -> None:
-    """Stops the settled task's preview stack and removes its run-scoped volumes.
-
-    Runs after the status moves, so a Docker failure here leaks containers
-    rather than leaving the task claiming a settlement that did not happen.
-    The dependency volume is keyed by lockfile rather than by run and is
-    labelled persistent, so preview cleanup leaves it in place.
-    """
-    # Imported here because app.previews.service imports transition_task from
-    # this module; a module-level import would close the cycle. This is the
-    # only import in this module that must stay function-local.
-    from app.previews.service import stop_preview
-
-    active = controller_store.active_preview(task.sandbox_id)
-    if active is None or str(active.get("task_id") or "") != task.id:
-        return
-    try:
-        stop_preview(
-            docker_client,
-            controller_store,
-            (
-                str(sandbox["id"])
-                if sandbox.get("lifecycle_version") == "v1"
-                else str(sandbox["project_name"])
-            ),
-            remove_data_volumes=True,
-            status="stopped",
-        )
-    except (PreviewOperationError, ProjectOperationError, DockerException) as error:
-        controller_store.event(
-            sandbox_id=task.sandbox_id,
-            run_id=task.id,
-            kind="task.preview_stop_failed",
-            payload={"preview_run_id": str(active["id"]), "error": str(error)},
-        )
 
 
 def _validated_task_id(task_id: str) -> str:
