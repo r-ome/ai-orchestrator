@@ -1,7 +1,7 @@
 # Open work
 
-**State:** `refactor/cycle-stage-4` @ `0b05b89`, 20 Aug 2026. Two commits ahead of
-`origin/main` (`e36c358`), not pushed.
+**State:** `refactor/cycle-stage-5` @ `5a5a25b`, 20 Aug 2026. Two commits ahead of
+`origin/main` (`30da0ec`), not pushed.
 **Suites:** backend 839 passed, 43 skipped, ~28s. Gated backend 878 passed, 4 skipped, ~150s,
 run twice. Frontend 80 passed, `npm run build` clean — **not re-run since `189a840`; no
 frontend file has changed since.**
@@ -415,7 +415,7 @@ where the code actually lives.**
 ## 2. Structural debt, measured
 
 Three of the four items here are done, 20 Aug 2026, and keep their entries because each
-returned a finding. **What is still open is the 3-node import cycle.** The function-local
+returned a finding. **What is still open is the 2-node import cycle, one cut from gone.** The function-local
 imports are no longer part of it: 1 of the original 14 remains and it is intra-package. One
 more thing is open and undecided: **two vocabularies — Docker labels and preview status —
 are each close to undefended by tests**, which is now its own entry, and stage 3 added a
@@ -425,9 +425,9 @@ Done 20 Aug 2026: the preview-status write sites (`4fe0e37`), the dead `rebuildi
 and migration 32 (`d0f0d07`), the `startup.py` import hoist (`a787fdc`), the remaining
 11 hoistable function-local imports, stage 1 of the cycle (`6e5a30b`) and stage 2 (`ba65624`).
 
-### The domain import cycle — 3 nodes, was 8
+### The domain import cycle — 2 nodes, was 8
 
-`previews, projects, sandboxes`. **5 intra-cycle edges**, was 29.
+`previews, sandboxes`. **2 intra-cycle edges**, was 29.
 
 **The "15 intra-cycle edges" recorded here for the 5-node graph was wrong; it was 14.**
 Re-measured with `/tmp/cycle_edges.py`. Assume the next figure on this page is wrong too.
@@ -435,7 +435,8 @@ Re-measured with `/tmp/cycle_edges.py`. Assume the next figure on this page is w
 Phase 9 cut it from 10 nodes to 8. Stage 1 (`6e5a30b`, 20 Aug 2026) cut it to 6 by removing
 `delegation` and `implementation_context`. Stage 2 (`ba65624`) cut it to 5 by removing
 `planning`. Stage 3 (`be81e44` and `148d907`) cut it to 4 by removing `tasks`. Stage 4 (`7fe6ee8` and `0b05b89`)
-cut it to 3 by removing `agents`. See below for what each took.
+cut it to 3 by removing `agents`. Stage 5 (`aba2eeb` and `5a5a25b`) cut it to 2 by removing `projects`. See below
+for what each took.
 
 **The old entry claimed "no further file move can shrink it". That was wrong**, and it was
 wrong in the direction that stops work: it argued the whole cycle needed signature changes.
@@ -449,26 +450,39 @@ that owns it; stage 3's remaining edge was three more such moves. Treat "this ca
 cheaply" as the least-tested sentence on any page.
 
 **What is left is measured, not asserted.** The exact minimum feedback arc set for the
-original 8-node graph was **8 edges, 25 symbols, 19 files**. Stages 1 to 4 removed 24 of the
+original 8-node graph was **8 edges, 25 symbols, 19 files**. Stages 1 to 5 removed 27 of the
 29 intra-cycle edges. Which of those were members of that original minimum set has not been
 re-derived, so do not quote a "spent" count — re-measure the current graph instead.
 
-**This page has now predicted the remaining work wrongly twice.** It said the cycle could
-not shrink without signature changes; it did, nine times over. It then said `previews <->
-projects` was all that was left; `sandboxes -> agents` was sitting there at 2 symbols in
-1 file. **Re-measure with `/tmp/cycle_cuts.py` before believing the paragraph below.**
+**This page has predicted the remaining work wrongly three times now.** It said the cycle
+could not shrink without signature changes; it did, nine times over. It said `previews <->
+projects` was all that was left; `sandboxes -> agents` was sitting there at 2 symbols. It
+then said `previews -> projects` was the cheapest next cut; the actual cut was
+`projects -> sandboxes`, one symbol, which only became visible after an unrelated file
+moved. **Re-measure with `/tmp/cycle_cuts.py` before believing the paragraph below.**
 
-Measured on the 3-node graph:
+**One cut is left.** It is a 2-cycle, so severing either direction ends it. Measured:
 
-- **Two single-edge cuts shrink it**, and they cost the same on symbols:
-  `previews -> projects` at **7 symbols in 3 files**, and `sandboxes -> previews` at
-  **7 symbols in 11 files**. Prefer the first on file count alone; 11 files is a much wider
-  blast radius.
-- **The whole cycle dissolves in 2 edges: `previews -> projects` + `sandboxes -> previews`,
-  14 symbols across 14 files.** That is the exact minimum feedback arc set, not an estimate.
-  There is no 1-edge cut that dissolves it.
-- The two fat edges are `previews -> sandboxes` (17 symbols) and `projects -> previews`
-  (10). Neither is on the cheapest path. **Do not start with the biggest edge.**
+| Edge | Cost | Shape |
+|---|---|---|
+| `sandboxes -> previews` | 7 symbols, **11 files** | 9 of its 12 sites are `app/previews/config` |
+| `previews -> sandboxes` | 16 symbols, **3 files** | all three sites are `app/sandboxes/database` |
+
+**Neither is as bad as its headline number, and the pattern is the same one that cut the
+last three edges: a shared primitive filed inside a feature package.**
+
+- **`app/previews/config.py` is 60 lines and imports only `app.platform.env`.** It is a
+  settings dataclass and an `lru_cache` getter — `PreviewSettings` and
+  `get_preview_settings`. Nine of the twelve `sandboxes -> previews` sites want nothing but
+  those two names. Moving that module to a neutral home cuts three quarters of the edge in
+  one pure move, exactly as `git.py` did in stage 5.
+- What would remain of `sandboxes -> previews` is 3 sites: `stop_preview` and
+  `stop_task_preview` in `lifecycle.py`, `prisma_schema_providers` in `engine_detection.py`,
+  and `PreviewConfiguration` plus `PreviewDependencyService` in `database/contracts.py`.
+  Those are real coupling and are not scoped.
+- The other direction is 16 symbols but only 3 files, and every one is
+  `app.sandboxes.database`. Note `sandboxes/database` itself imports `previews/config` at
+  two of those sites, so the config move untangles part of this direction too.
 
 **Nothing here is scoped or approved. Grill the scope before touching it.**
 
@@ -614,6 +628,40 @@ Two traps that the scope found and the build avoided:
 controller store, not from a caller, so the check was defence in depth rather than
 correctness. Keeping it would have forced the agent label vocabulary into `platform/labels.py`
 — see the trap above. No test pins the dropped guard, deliberately.
+
+#### Stage 5, done 20 Aug 2026
+
+Two commits and two pure file moves, no signature changes anywhere.
+
+**`aba2eeb` moved `app/projects/secrets.py` to `app/previews/secrets.py`.** Of its eight
+imports, five were from `previews` and none were from `projects`. Its only consumer was
+`previews/router.py`, its only test was already `tests/previews/test_secrets.py`, and its
+models already lived in `previews/models.py`. The move deleted the whole
+`projects -> previews` edge — 5 sites, 10 symbols — and shrank nothing on its own. **That
+was the point:** it made the next cut small.
+
+**`5a5a25b` moved `app/sandboxes/git.py` to `app/containers/git.py`**, which cut
+`projects -> sandboxes` and dropped `projects` out. The file imported nothing from
+`sandboxes` — only `app.containers.*` and `app.controller.config` — while six packages
+imported from it. It is byte-identical in its new home.
+
+**The lesson is about sequencing.** `projects -> sandboxes` was one symbol, `run_git`, and
+had been the cheapest edge on the board for several stages. `/tmp/cycle_cuts.py` never
+listed it as a cut that shrinks anything, because while `projects -> previews` existed
+`projects` had two ways back into the cycle. Deleting the *other* edge first made a
+one-symbol cut decisive. **A cut that shrinks nothing today can be the one that makes
+tomorrow's cut trivial — read the two-edge cut list, not just the single-edge one.**
+
+**A brief undercounted its own importer list, and Codex caught it.** The list came from
+`grep -rn "app\.sandboxes\.git"`, which misses `from app.sandboxes import git` — the form
+in `tests/sandboxes/test_publish.py`. Codex hit the collection error, reported it, and left
+the file alone because the brief forbade touching other tests. **This is the same
+grep-undercount trap already recorded for the label literals.** Match the dotted path *and*
+the `from <package> import <module>` form, or the list is short.
+
+Also worth knowing: several import blocks moved position in files that this change touched.
+That is ruff sorting `app.containers` above `app.controller`, not an edit. Do not read it as
+one.
 
 ### Hardcoded label literals — done, 20 Aug 2026
 
