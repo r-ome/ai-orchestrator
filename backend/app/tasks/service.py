@@ -16,6 +16,7 @@ from app.controller.store import (
 from app.platform.dirty_state import parse_snapshot, serialize_snapshot, snapshot_shell
 from app.platform.errors import OperationError
 from app.previews.config import get_preview_settings
+from app.previews.errors import PreviewOperationError
 from app.projects.models import ProjectRegistration
 from app.projects.service import (
     ProjectOperationError,
@@ -42,6 +43,7 @@ from app.tasks.models import (
     TurnUsageView,
     source_statuses,
 )
+from app.tasks.runner import run_coding_turn
 
 TASK_BRANCH_PREFIX = "task/"
 _TASK_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
@@ -201,12 +203,6 @@ def run_task(
         kind="task.turn_started",
         payload={"provider": request.provider.value, "model": request.model or ""},
     )
-    # Imported here rather than at module scope: the runner reaches
-    # app.agents.service for the credential volume, and that module imports
-    # app.previews.service, which imports this one. A module-level import would
-    # close that ring at load time.
-    from app.tasks.runner import run_coding_turn
-
     result = run_coding_turn(
         docker_client,
         settings,
@@ -748,8 +744,8 @@ def _stop_task_preview(
     labelled persistent, so preview cleanup leaves it in place.
     """
     # Imported here because app.previews.service imports transition_task from
-    # this module; a module-level import would close the cycle.
-    from app.previews.errors import PreviewOperationError
+    # this module; a module-level import would close the cycle. This is the
+    # only import in this module that must stay function-local.
     from app.previews.service import stop_preview
 
     active = controller_store.active_preview(task.sandbox_id)

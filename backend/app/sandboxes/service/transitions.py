@@ -33,6 +33,7 @@ from app.sandboxes.manifest import (
     write_manifest,
 )
 from app.sandboxes.mirror import (
+    MirrorPin,
     WorkspaceMissing,
     ensure_project_mirror,
     ensure_workspace_import,
@@ -256,8 +257,6 @@ def resume(
                 # A missing workspace is safe to recreate.  It has no worktree
                 # to preserve.  We use the immutable original base, never the
                 # latest mirror head.
-                from app.sandboxes.mirror import MirrorPin
-
                 if not manifest.created_base_commit or not manifest.feature_branch:
                     raise RuntimeError(
                         "workspace is missing and the immutable clone identity is absent"

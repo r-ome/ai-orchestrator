@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from docker.client import DockerClient
 
+from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore, RevisionTaken, RunActive
 from app.delegation import service
 from app.delegation.config import get_routing_settings, get_verification_settings
@@ -1251,8 +1252,6 @@ def _sum_float(values: list[float | None]) -> float | None:
 
 
 def _provider(value: Any) -> Any:
-    from app.agents.models import AgentProvider
-
     try:
         return AgentProvider(str(value)) if value else None
     except ValueError:

@@ -11,12 +11,17 @@ from uuid import uuid4
 from docker.client import DockerClient
 from docker.errors import NotFound
 
+from app.agents.service import AgentOperationError, stop_agent
 from app.controller.store import (
     ControllerStore,
     SandboxAdmissionError,
     SandboxLeaseBlockedByWriterError,
     SandboxLeaseHeldError,
 )
+from app.previews.service import stop_preview
+from app.tasks.models import Task
+from app.tasks.runner import LABEL_TASK_ID
+from app.tasks.service import _stop_task_preview
 
 _LEASE = "lease"
 _MIRROR = "mirror"
@@ -175,9 +180,6 @@ def _stop_blocking_preview(
         if task_row is None:
             return
         # Keep task preview teardown in its single established helper.
-        from app.tasks.models import Task
-        from app.tasks.service import _stop_task_preview
-
         _stop_task_preview(
             docker_client,
             store,
@@ -188,8 +190,6 @@ def _stop_blocking_preview(
 
     # Live previews use the same stop_preview teardown called by the task
     # helper. There is no task row to pass to _stop_task_preview.
-    from app.previews.service import stop_preview
-
     stop_preview(
         docker_client,
         store,
@@ -248,8 +248,6 @@ def drain_sandbox_writers(
         run = store.agent_run(agent_run_id) if agent_run_id else None
         container_id = str((run or {}).get("container_id") or "")
         if container_id:
-            from app.agents.service import AgentOperationError, stop_agent
-
             try:
                 stop_agent(
                     docker_client,
@@ -267,8 +265,6 @@ def drain_sandbox_writers(
         if str(writer["writer_class"]) == "task"
     ]
     if task_ids:
-        from app.tasks.runner import LABEL_TASK_ID
-
         for task_id in task_ids:
             containers = docker_client.containers.list(
                 all=True,

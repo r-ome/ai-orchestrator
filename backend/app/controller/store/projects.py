@@ -1,6 +1,8 @@
 from collections.abc import Mapping
 from typing import Any
 
+from app.platform.remote import normalize_remote_url
+
 from ._shared import _now, _row
 from .errors import SandboxLeaseHeldError
 
@@ -18,10 +20,6 @@ class ProjectsMixin:
         created_at: str,
     ) -> dict[str, Any]:
         """Register a remote-keyed project without changing an existing project ID."""
-        # Importing at the persistence boundary makes credential-free storage an
-        # invariant, even when a future caller bypasses a service-layer helper.
-        from app.platform.remote import normalize_remote_url
-
         normalized_remote_url = normalize_remote_url(remote_url)
         now = _now()
         with self._connection() as connection:

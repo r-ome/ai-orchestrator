@@ -1050,7 +1050,9 @@ def _set_turn(monkeypatch: pytest.MonkeyPatch, result: Any) -> list[dict[str, An
         calls.append(kwargs)
         return result
 
-    monkeypatch.setattr("app.tasks.runner.run_coding_turn", _run)
+    # app.tasks.service imports run_coding_turn at module scope, so the live
+    # binding is the one in that module, not in app.tasks.runner.
+    monkeypatch.setattr("app.tasks.service.run_coding_turn", _run)
     return calls
 
 

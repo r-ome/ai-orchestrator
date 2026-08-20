@@ -3,6 +3,7 @@ import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
@@ -1205,8 +1206,6 @@ def _finding_data(finding: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _generated_at() -> str:
-    from datetime import UTC, datetime
-
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
