@@ -11,6 +11,7 @@ import app.previews.sharing as preview_sharing
 import app.sandboxes.database as sandbox_database
 import app.sandboxes.database._engine_ops as sandbox_database_engine_ops
 import app.sandboxes.database.mysql as sandbox_database_mysql
+import app.sandboxes.database.provisioning as sandbox_database_provisioning
 from app.previews.config import get_preview_settings
 from app.previews.errors import PreviewOperationError
 from app.previews.models import (
@@ -302,12 +303,14 @@ def test_sandbox_and_preview_shared_server_creation_use_the_same_project_lock(
         name_barrier.wait(timeout=5)
         return names
 
-    monkeypatch.setattr(sandbox_database, "shared_database_names", sandbox_names)
+    monkeypatch.setattr(
+        sandbox_database_provisioning, "shared_database_names", sandbox_names
+    )
     monkeypatch.setattr(preview_sharing, "_shared_database_names", preview_names)
-    monkeypatch.setattr(sandbox_database, "ensure_image", lambda *_: None)
+    monkeypatch.setattr(sandbox_database_provisioning, "ensure_image", lambda *_: None)
     monkeypatch.setattr(preview_sharing, "_ensure_preview_image", lambda *_: None)
     monkeypatch.setattr(
-        sandbox_database,
+        sandbox_database_provisioning,
         "_wait_for_server_health",
         lambda *_args, **_kwargs: None,
     )
@@ -380,12 +383,14 @@ def test_sandbox_shared_server_refuses_an_existing_container_with_another_image(
         image="mysql:8.0",
         labels={"orchestrator.shared-database.image": "mysql:8.0"},
     )
-    monkeypatch.setattr(sandbox_database, "ensure_image", lambda *_: None)
+    monkeypatch.setattr(sandbox_database_provisioning, "ensure_image", lambda *_: None)
 
     def unexpected_engine(*_: object) -> object:
         raise AssertionError("image mismatch must fail before provisioning")
 
-    monkeypatch.setattr(sandbox_database, "database_engine", unexpected_engine)
+    monkeypatch.setattr(
+        sandbox_database_provisioning, "database_engine", unexpected_engine
+    )
 
     with pytest.raises(sandbox_database.SandboxDatabaseError) as error:
         sandbox_database._ensure_shared_server(
