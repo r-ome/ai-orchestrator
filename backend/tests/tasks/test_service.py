@@ -713,10 +713,17 @@ def test_accept_stops_the_task_preview_and_keeps_the_dependency_volume(
 ) -> None:
     task = _to_review(docker_client, controller_store)
     stopped: list[dict[str, Any]] = []
+
+    def _active_preview(sandbox_id: str) -> dict[str, str]:
+        assert sandbox_id == task.sandbox_id, (
+            "active_preview must receive task.sandbox_id"
+        )
+        return {"id": "preview-1", "task_id": task.id}
+
     monkeypatch.setattr(
         controller_store,
         "active_preview",
-        lambda sandbox_id: {"id": "preview-1", "task_id": task.id},
+        _active_preview,
     )
     monkeypatch.setattr(
         "app.previews.service.stop_preview",
@@ -737,10 +744,17 @@ def test_a_preview_that_belongs_to_another_task_is_left_running(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     task = _to_review(docker_client, controller_store)
+
+    def _active_preview(sandbox_id: str) -> dict[str, str | None]:
+        assert sandbox_id == task.sandbox_id, (
+            "active_preview must receive task.sandbox_id"
+        )
+        return {"id": "preview-1", "task_id": None}
+
     monkeypatch.setattr(
         controller_store,
         "active_preview",
-        lambda sandbox_id: {"id": "preview-1", "task_id": None},
+        _active_preview,
     )
     monkeypatch.setattr(
         "app.previews.service.stop_preview",
@@ -758,10 +772,17 @@ def test_a_failed_preview_stop_does_not_unsettle_an_accepted_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     task = _to_review(docker_client, controller_store)
+
+    def _active_preview(sandbox_id: str) -> dict[str, str]:
+        assert sandbox_id == task.sandbox_id, (
+            "active_preview must receive task.sandbox_id"
+        )
+        return {"id": "preview-1", "task_id": task.id}
+
     monkeypatch.setattr(
         controller_store,
         "active_preview",
-        lambda sandbox_id: {"id": "preview-1", "task_id": task.id},
+        _active_preview,
     )
 
     def _explode(*args: Any, **kwargs: Any) -> None:
