@@ -460,28 +460,128 @@ then said `previews -> projects` was the cheapest next cut; the actual cut was
 `projects -> sandboxes`, one symbol, which only became visible after an unrelated file
 moved. **Re-measure with `/tmp/cycle_cuts.py` before believing the paragraph below.**
 
-**One cut is left.** It is a 2-cycle, so severing either direction ends it. Measured:
+**One edge is left, not one cut.** It is a 2-cycle, so severing either direction ends it —
+but neither direction falls to a single move. Re-measured 20 Aug 2026; the per-edge figures
+below held, the plan built on them did not. Measured:
 
 | Edge | Cost | Shape |
 |---|---|---|
 | `sandboxes -> previews` | 7 symbols, **11 files** | 9 of its 12 sites are `app/previews/config` |
 | `previews -> sandboxes` | 16 symbols, **3 files** | all three sites are `app/sandboxes/database` |
 
-**Neither is as bad as its headline number, and the pattern is the same one that cut the
-last three edges: a shared primitive filed inside a feature package.**
+**The "shared primitive filed inside a feature package" reading of this edge was wrong, and
+it is corrected here.** Scoped 20 Aug 2026. `app/previews/config.py` is **not** a misplaced
+primitive. **All seven existing settings modules live inside the package whose settings they
+define** — `agents`, `controller`, `delegation`, `implementation_context`, `planning`,
+`previews`, `tasks`. Not every package has one: there are 14 packages under `app/` and 7
+`config.py` modules. The claim is about where a settings module goes, not that every package
+needs one. The module is exactly where the convention puts it, and most of its contents are preview-owned
+policy: `inspection_image`, `default_expiry_minutes`, `proposal_lifetime_seconds`,
+`maximum_snapshot_bytes`. **Moving the module is rejected**: it would make `previews` the only
+domain whose settings live outside it, and it rewrites 31 importing files (24 under `app/`,
+7 under `tests/`) to cut 9 sites. `PreviewSettings` stays in `app.previews`.
 
-- **`app/previews/config.py` is 60 lines and imports only `app.platform.env`.** It is a
-  settings dataclass and an `lru_cache` getter — `PreviewSettings` and
-  `get_preview_settings`. Nine of the twelve `sandboxes -> previews` sites want nothing but
-  those two names. Moving that module to a neutral home cuts three quarters of the edge in
-  one pure move, exactly as `git.py` did in stage 5.
-- What would remain of `sandboxes -> previews` is 3 sites: `stop_preview` and
-  `stop_task_preview` in `lifecycle.py`, `prisma_schema_providers` in `engine_detection.py`,
-  and `PreviewConfiguration` plus `PreviewDependencyService` in `database/contracts.py`.
-  Those are real coupling and are not scoped.
+**The misplaced symbol is `git_image`, not the module.** It is `alpine/git:latest` under
+`PREVIEW_GIT_IMAGE`, and it is read by six packages — `agents`, `delegation`, `previews`,
+`sandboxes`, `tasks`, and by parameter in `projects`. A Git container image is not a preview
+concept. `app/containers/` already owns Git container execution after stage 5, so it is the
+right home. **`app/containers` is not a leaf package** — `containers/git.py:18` imports
+`app.controller.config`, and `service.py`, `actions.py` and `router.py` import `app.platform`.
+What matters is narrower: **the new `containers/config.py` can itself remain a leaf, and it
+imports neither `previews` nor `sandboxes`.**
+
+**Extracting `git_image` cuts 5 of the 12 `sandboxes -> previews` sites and leaves 7. It is
+preparation, not the cycle cut.** Do not describe it as the cut. The five fall into two
+groups, not five independent edits:
+
+- **Direct callers, drop cleanly:** `service/mirror_staleness.py:37` and
+  `service/syncing.py:68` both call `get_preview_settings().git_image` inline.
+- **The publish chain, one signature change threaded through three functions:**
+  `service/publishing.py:77` -> `publish.py:314` -> `feature_target.py:49`. Each carries a
+  whole `PreviewSettings` and reads **only** `git_image`; `publish.py:334` hands it to
+  `ensure_target_unchanged`.
+
+**Constraints on the extraction.** Preserve the `PREVIEW_GIT_IMAGE` environment variable
+initially, for compatibility. **Do not merge it with `app/implementation_context/config.py:9`**
+— that setting is a different image under a different variable (`TASK_GIT_IMAGE`).
+
+**The rewrite count for the extraction is unmeasured.** It depends on the new function
+signatures. Do not carry a figure into the plan until it is measured.
+
+**What remains is 7 sites, and the four settings sites are one concept.**
+`database/contracts.py:96`, `database/provisioning.py:37`, `service/provisioning.py:88` and
+`service/transitions.py:425` all need the whole settings object for preview resource limits —
+`preview_memory`, `shared_database_memory`, `shared_database_max_connections`,
+`prepare_timeout_seconds`. The other three are `PreviewConfiguration` plus
+`PreviewDependencyService` in `database/contracts.py:11`, `prisma_schema_providers` in
+`engine_detection.py:24`, and `stop_preview` plus `stop_task_preview` in `lifecycle.py:21`.
+**None of the seven is scoped.**
+
+**Preserve `previews -> sandboxes` as the surviving direction.** It matches the domain flow: a
+preview operates on a sandbox, so previews depending on sandboxes is the natural dependency.
+
+#### The extraction, measured 20 Aug 2026 — 19 files, not a pure move
+
+**Decided: the full move. No `PreviewSettings.git_image` shim.** A shim would preserve the
+wrong vocabulary and would let non-preview packages keep importing preview settings.
+**`PREVIEW_GIT_IMAGE` remains the single input; `app.containers.config` becomes the single
+Python authority.** Environment compatibility only.
+
+**Four functions take a whole `PreviewSettings` and read only `git_image`.** Their parameter
+becomes `git_image: str`. **19 call sites**, and the chain reaches three packages, not one:
+
+| Function | Callers |
+|---|---|
+| `delivery.capture_feature_target:55` | `delivery.py:170`, `integration_review.py:182`, 8 test sites |
+| `delivery.feature_diff:124` | `router.py:599`, 3 test sites |
+| `feature_target.ensure_target_unchanged:49` | `publish.py:333`, **`integration_review.py:286`** |
+| `publish.publish_reviewed_feature:314` | `service/publishing.py:114`, 2 test sites |
+
+**19 files: 17 modified, 2 added.**
+
+- **Source modified, 15.** `previews/config.py` drops the field at :21 and the env read at
+  :59. Direct readers: `agents/service.py`, `previews/service.py`,
+  `previews/runtimes/native.py`, `tasks/service.py`, and
+  `sandboxes/service/{mirror_staleness,syncing,provisioning,transitions}.py`. Signature
+  changes: `delegation/delivery.py`, `sandboxes/feature_target.py`, `sandboxes/publish.py`.
+  Pass-through, import drops: `delegation/integration_review.py`, `delegation/router.py`,
+  `sandboxes/service/publishing.py`.
+- **Source added, 1.** `containers/config.py`.
+- **Tests modified, 2.** `tests/delegation/test_delivery.py` — constructor plus 11 call
+  sites. `tests/sandboxes/test_publish.py` — constructor plus 2 call sites.
+- **Test added, 1.** `tests/containers/test_config.py`, covering the default and the
+  `PREVIEW_GIT_IMAGE` override.
+
+**Explicitly out of scope.** `implementation_context/config.py:9` and its `service.py` use a
+different image under `TASK_GIT_IMAGE`; do not merge them.
+`tests/delegation/test_docker_integration.py:31` constructs **`ContextSettings`**, not
+`PreviewSettings`, and must not change. `projects/service.py` only takes `git_image` as a
+parameter. The five test files that construct `PreviewSettings` without `git_image` are
+covered by the default. The `publish_reviewed_feature` stubs in `tests/sandboxes/test_router.py`
+take `*args, **kwargs` and need no change.
+
+**This is not a pure move.** Four signature changes mean the AST-identity probe that
+validated stages 3 to 5 does not apply. Verification has to be behavioural.
+
+**It cuts 5 of 12 sites and leaves 7. `KNOWN_CYCLE` stays 2.** Do not expect the ratchet to
+move.
+
+**Method note: `grep -v "app.containers"` deletes the whole package.** The `.` is a regex
+wildcard, so it matches the `/` in the *path* `app/containers/...` and silently drops every
+line from files in that directory. That false negative produced a wrong "imports nothing from
+any domain package" claim for both `containers` and `platform`. **Use `grep -vF`, or escape
+the dot, whenever the pattern could match the path.**
+
+**Method note: a per-file attribute grep undercounts settings consumers.** Counting
+`settings.<field>` reads per file scored `git_image` at 6 sites. Three of those pass the whole
+object onward — `service/provisioning.py:96` into database provisioning,
+`service/transitions.py:425` into database teardown, `service/publishing.py:77` into
+publishing — so the real figure is 5. `service/transitions.py` was miscounted because a
+`git_image` read at line 114 sits in a different function from the pass-through at 425.
+**Match whole-object pass-through as well as attribute reads.** Same trap shape as the
+grep-undercount already recorded for importers and label literals.
 - The other direction is 16 symbols but only 3 files, and every one is
-  `app.sandboxes.database`. Note `sandboxes/database` itself imports `previews/config` at
-  two of those sites, so the config move untangles part of this direction too.
+  `app.sandboxes.database`.
 
 **Nothing here is scoped or approved. Grill the scope before touching it.**
 
