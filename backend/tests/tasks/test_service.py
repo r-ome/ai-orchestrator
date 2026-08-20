@@ -528,7 +528,7 @@ def test_initial_migration_creates_task_constraints(tmp_path: Path) -> None:
     finally:
         connection.close()
 
-    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
     assert sandbox_rows[0] == 1
 
 

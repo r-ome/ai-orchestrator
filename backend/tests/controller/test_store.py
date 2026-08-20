@@ -596,6 +596,7 @@ def test_fresh_database_applies_sandbox_migrations(tmp_path: Path) -> None:
         29,
         30,
         31,
+        32,
     ]
 
 
@@ -626,6 +627,7 @@ def test_migration_21_applies_when_22_and_23_are_already_stamped(
         29,
         30,
         31,
+        32,
     ]
     with store._connection() as connection:
         assert (
@@ -751,6 +753,7 @@ def test_initialize_applies_migrations_in_order_once_and_skips_stamps(
         29,
         30,
         31,
+        32,
         101,
         102,
         103,
@@ -904,8 +907,8 @@ def test_add_column_is_idempotent_and_reraises_other_errors(tmp_path: Path) -> N
 @pytest.mark.parametrize(
     ("initial_versions", "upgraded_versions"),
     [
-        ([1], [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]),
-        (list(range(1, 18)), [*range(1, 32)]),
+        ([1], [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]),
+        (list(range(1, 18)), [*range(1, 33)]),
     ],
     ids=["initial-schema", "pre-squash-schema"],
 )
@@ -1018,6 +1021,7 @@ def test_initialize_is_idempotent_and_legacy_backfill_is_guarded(
         29,
         30,
         31,
+        32,
     ]
 
 
@@ -1171,7 +1175,7 @@ def test_initial_migration_creates_the_current_schema_once(tmp_path: Path) -> No
             "session_id",
         } == columns("sandbox_publications")
 
-    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+    assert versions == [1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
     assert {
         "tasks",
         "planning_sessions",

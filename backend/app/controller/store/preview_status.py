@@ -14,12 +14,11 @@ class PreviewStatus(StrEnum):
 
 
 #: Ordered to match the one_active_preview_per_sandbox index in existing
-#: databases.  Nothing writes REBUILDING; it stays because the index does.
+#: databases. REBUILDING stays so legacy database rows still parse.
 ACTIVE_PREVIEW_STATUSES: tuple[PreviewStatus, ...] = (
     PreviewStatus.PREPARING,
     PreviewStatus.RUNNING,
     PreviewStatus.RESTARTING,
-    PreviewStatus.REBUILDING,
     PreviewStatus.STOPPING,
 )
 

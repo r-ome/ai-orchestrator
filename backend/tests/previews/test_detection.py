@@ -373,6 +373,35 @@ def test_sqlite_enforces_one_active_preview_per_sandbox(tmp_path: Path) -> None:
         store.create_preview_run(values("preview-2", 41002))
 
 
+def test_the_active_preview_index_holds_exactly_the_active_statuses(
+    tmp_path: Path,
+) -> None:
+    """The index and ACTIVE_PREVIEW_STATUSES cannot drift.
+
+    Migration 32 recreates this index and runs on fresh databases too, so a
+    migration body that spells the status list wrong lands here. Nothing else
+    catches that: the version-list assertions only see that 32 was stamped.
+    Mirrors test_initial_migration_creates_task_constraints, which guards the
+    analogous one_open_task_per_sandbox index.
+    """
+    import re
+
+    from app.controller.store.preview_status import ACTIVE_PREVIEW_STATUSES
+
+    store = ControllerStore(tmp_path / "controller.sqlite3")
+    store.initialize()
+    with sqlite3.connect(store.database_path) as connection:
+        sql_text = connection.execute(
+            "SELECT sql FROM sqlite_master"
+            " WHERE name = 'one_active_preview_per_sandbox'"
+        ).fetchone()[0]
+
+    assert re.findall(r"'([a-z]+)'", sql_text) == [
+        status.value for status in ACTIVE_PREVIEW_STATUSES
+    ]
+    assert "rebuilding" not in sql_text
+
+
 def test_preview_progress_events_are_persistent_and_ordered(tmp_path: Path) -> None:
     store = ControllerStore(tmp_path / "controller.sqlite3")
     store.initialize()

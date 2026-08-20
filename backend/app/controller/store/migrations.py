@@ -2,6 +2,7 @@ import sqlite3
 from collections.abc import Callable, Mapping
 
 from ._shared import _now
+from .preview_status import ACTIVE_PREVIEW_STATUS_SQL
 
 
 def _violates(error: sqlite3.IntegrityError, index: str) -> bool:
@@ -373,6 +374,18 @@ def _create_sandbox_publications(connection: sqlite3.Connection) -> None:
     )
 
 
+def _remove_rebuilding_from_active_previews(connection: sqlite3.Connection) -> None:
+    connection.execute("DROP INDEX IF EXISTS one_active_preview_per_sandbox")
+    connection.execute(
+        """
+CREATE UNIQUE INDEX IF NOT EXISTS one_active_preview_per_sandbox
+ON preview_runs(sandbox_id)
+WHERE status IN ("""
+        + ACTIVE_PREVIEW_STATUS_SQL
+        + """);"""
+    )
+
+
 MIGRATIONS: Mapping[int, Callable[[sqlite3.Connection], None]] = {
     18: _add_sandbox_lifecycle_columns,
     19: _backfill_legacy_sandboxes,
@@ -388,6 +401,7 @@ MIGRATIONS: Mapping[int, Callable[[sqlite3.Connection], None]] = {
     29: _add_publication_merged_at,
     30: _add_planning_session_models,
     31: _add_publication_session_id,
+    32: _remove_rebuilding_from_active_previews,
 }
 
 
