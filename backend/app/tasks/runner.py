@@ -19,10 +19,10 @@ from typing import Any
 
 from app.agents.config import get_agent_settings
 from app.agents.models import AgentProvider
+from app.agents.output import extract_payload
 from app.agents.service import credential_volume
 from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
 from app.controller.store import ControllerStore
-from app.planning.runner import extract_payload
 from app.platform.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND
 from app.sandboxes.database import SandboxDatabaseError, sandbox_database_runtime
 from app.tasks.config import CodingTurnSettings

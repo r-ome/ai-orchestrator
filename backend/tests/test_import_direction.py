@@ -19,7 +19,6 @@ from pathlib import Path
 KNOWN_CYCLE = frozenset(
     {
         "agents",
-        "planning",
         "previews",
         "projects",
         "sandboxes",
@@ -32,6 +31,7 @@ MODULES_OUTSIDE_KNOWN_CYCLE = frozenset(
         "controller",
         "delegation",
         "implementation_context",
+        "planning",
         "platform",
         "startup",
         "turns",
