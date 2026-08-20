@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, status
 
 from app.agents.service import AgentOperationError
 from app.controller.store import ControllerStore, get_controller_store
+from app.controller.store.delegation_status import DelegationStatus
 from app.delegation.change_requests import (
     claim_change_request,
     execute_change_request,
@@ -38,7 +39,6 @@ from app.delegation.integration_review import (
 from app.delegation.models import (
     AcceptedJob,
     DelegationsResponse,
-    DelegationStatus,
     DelegationView,
     FeatureDiff,
     GenerateDelegationRequest,

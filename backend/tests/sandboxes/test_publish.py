@@ -1,8 +1,8 @@
 import pytest
 
-from app.delegation.service import DelegationOperationError
 from app.previews.config import PreviewSettings
 from app.sandboxes import git, publish
+from app.sandboxes.feature_target import FeatureTargetError
 
 HEAD = "b" * 40
 
@@ -123,7 +123,7 @@ def test_publish_refuses_a_moved_head_before_any_network_call(
         publish,
         "ensure_target_unchanged",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            DelegationOperationError(409, "Sandbox HEAD changed after review")
+            FeatureTargetError(409, "Sandbox HEAD changed after review")
         ),
     )
     monkeypatch.setattr(

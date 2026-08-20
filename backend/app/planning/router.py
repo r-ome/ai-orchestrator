@@ -4,8 +4,8 @@ from typing import Annotated, TypeVar
 from docker.client import DockerClient
 from fastapi import APIRouter, Depends, status
 
+from app.agents.catalogue import get_model_catalogue
 from app.controller.store import ControllerStore, get_controller_store
-from app.delegation.config import get_routing_settings
 from app.planning.config import (
     PlanningSettings,
     get_planning_settings,
@@ -71,7 +71,7 @@ async def defaults(
         max_review_turns=settings.max_review_turns,
         models_by_provider={
             provider: list(models)
-            for provider, models in get_routing_settings().catalogue().items()
+            for provider, models in get_model_catalogue().as_dict().items()
         },
         reasoning_efforts=reasoning_effort_choices(settings),
     )

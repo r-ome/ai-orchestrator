@@ -11,9 +11,9 @@ from uuid import uuid4
 import docker
 from docker.client import DockerClient
 
+from app.agents.catalogue import get_model_catalogue
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
-from app.delegation.config import get_routing_settings
 from app.planning.config import PlanningSettings, reasoning_effort_choices
 from app.planning.feature_status import derive_feature_status
 from app.planning.models import (
@@ -175,7 +175,7 @@ def _resolve_model(
     settings: PlanningSettings,
 ) -> str:
     if requested is not None:
-        owner = get_routing_settings().provider_for_model(requested)
+        owner = get_model_catalogue().provider_for_model(requested)
         if owner is not None and owner is not provider:
             raise PlanningOperationError(
                 422,

@@ -14,6 +14,7 @@ from app.controller.store import (
     RevisionTaken,
     SandboxWriterAdmissionError,
 )
+from app.controller.store.delegation_status import DelegationStatus
 from app.delegation import graph, prompts
 from app.delegation.config import (
     DelegatorSettings,
@@ -24,7 +25,6 @@ from app.delegation.models import (
     TERMINAL_DELEGATION_STATUSES,
     ChangeRequestStatus,
     Delegation,
-    DelegationStatus,
     DelegationView,
     FeatureChangeRequest,
     GenerateDelegationOutcome,

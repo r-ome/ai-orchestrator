@@ -8,7 +8,7 @@ from conftest import register_ready_v1_sandbox
 
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore
-from app.delegation.models import DelegationStatus
+from app.controller.store.delegation_status import DelegationStatus
 from app.implementation_context import service
 from app.implementation_context.config import ContextSettings
 from app.implementation_context.inventory import parse_inventory

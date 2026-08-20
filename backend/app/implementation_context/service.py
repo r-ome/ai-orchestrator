@@ -11,7 +11,7 @@ from app.controller.store import ControllerStore
 
 # Models only. `delegation.service` imports this module, so reaching for
 # anything further into that package would close a ring.
-from app.delegation.models import DelegationStatus
+from app.controller.store.delegation_status import DelegationStatus
 from app.implementation_context import prompts
 from app.implementation_context.config import ContextSettings
 from app.implementation_context.inventory import (

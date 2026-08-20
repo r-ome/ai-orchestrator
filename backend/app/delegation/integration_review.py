@@ -9,14 +9,11 @@ from uuid import uuid4
 from docker.client import DockerClient
 
 from app.controller.store import ControllerStore, ReviewGenerating, RevisionTaken
+from app.controller.store.delegation_status import DelegationStatus
 from app.delegation import service
 from app.delegation.config import IntegrationReviewSettings
-from app.delegation.delivery import (
-    capture_feature_target,
-    ensure_target_unchanged,
-)
+from app.delegation.delivery import capture_feature_target
 from app.delegation.models import (
-    DelegationStatus,
     GenerateIntegrationReviewOutcome,
     GenerateIntegrationReviewRequest,
     IntegrationFinding,
@@ -28,6 +25,10 @@ from app.planning.models import PlanningRole
 from app.planning.runner import TurnRequest, run_planning_turn, run_validated_turn
 from app.platform.coercions import json_object
 from app.previews.config import get_preview_settings
+from app.sandboxes.feature_target import (
+    FeatureTargetError,
+    ensure_target_unchanged,
+)
 
 
 @dataclass(frozen=True)
@@ -289,7 +290,7 @@ def execute_integration_review(
             claim.sandbox_id,
             target,
         )
-    except service.DelegationOperationError as error:
+    except FeatureTargetError as error:
         store.settle_delegation_review(
             review_id,
             to_status=IntegrationReviewStatus.FAILED.value,

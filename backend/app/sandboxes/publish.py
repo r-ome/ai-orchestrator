@@ -10,9 +10,12 @@ import requests
 from docker.client import DockerClient
 
 from app.controller.store import ControllerStore
-from app.delegation.delivery import FeatureTarget, ensure_target_unchanged
-from app.delegation.service import DelegationOperationError
 from app.previews.config import PreviewSettings
+from app.sandboxes.feature_target import (
+    FeatureTarget,
+    FeatureTargetError,
+    ensure_target_unchanged,
+)
 from app.sandboxes.git import (
     GITHUB_WRITE_TOKEN_ENVIRONMENT_VARIABLE,
     GitWriteCredentialSource,
@@ -333,7 +336,7 @@ def publish_reviewed_feature(
             sandbox_id,
             target,
         )
-    except DelegationOperationError as error:
+    except FeatureTargetError as error:
         raise PublishError(error.status_code, error.detail) from error
 
     publication = store.sandbox_publication(sandbox_id)

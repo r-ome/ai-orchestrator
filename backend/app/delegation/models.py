@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.agents.models import AgentProvider
+from app.controller.store.delegation_status import DelegationStatus
 
 
 class Complexity(StrEnum):
@@ -13,14 +14,6 @@ class Complexity(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
-
-
-class DelegationStatus(StrEnum):
-    READY = "ready"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    HALTED = "halted"
-    ABANDONED = "abandoned"
 
 
 class IntegrationReviewStatus(StrEnum):

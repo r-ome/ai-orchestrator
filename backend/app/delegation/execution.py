@@ -9,10 +9,10 @@ from docker.client import DockerClient
 
 from app.agents.models import AgentProvider
 from app.controller.store import ControllerStore, RevisionTaken, RunActive
+from app.controller.store.delegation_status import DelegationStatus
 from app.delegation import service
 from app.delegation.config import get_routing_settings, get_verification_settings
 from app.delegation.models import (
-    DelegationStatus,
     FailureKind,
     RunStatus,
     StartRunOutcome,

@@ -14,11 +14,11 @@ from app.controller.store import (
     ControllerStore,
     RevisionTaken,
 )
+from app.controller.store.delegation_status import DelegationStatus
 from app.delegation import service
 from app.delegation.config import get_verification_settings
 from app.delegation.models import (
     ChangeRequestStatus,
-    DelegationStatus,
     FeatureChangeRequest,
     RequestFeatureChange,
 )

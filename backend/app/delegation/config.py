@@ -2,6 +2,7 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 
+from app.agents.catalogue import get_model_catalogue
 from app.agents.models import AgentProvider
 from app.delegation.routing import ProviderModels, RoutingSettings
 from app.delegation.verification import VerificationSettings
@@ -29,22 +30,6 @@ class DriverSettings:
     max_seconds: int
 
 
-# Each provider serves its own models, so the catalogues never overlap. Order
-# is best first; it is the order the model override dropdown shows.
-DEFAULT_CLAUDE_MODELS = (
-    "claude-fable-5",
-    "claude-opus-5",
-    "claude-sonnet-5",
-    "claude-haiku-4-5-20251001",
-)
-DEFAULT_CODEX_MODELS = (
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-5.6-luna",
-    "gpt-5.5",
-)
-
-
 @lru_cache
 def get_routing_settings() -> RoutingSettings:
     claude_default = os.getenv("ROUTING_CLAUDE_DEFAULT_MODEL", "claude-sonnet-5")
@@ -68,14 +53,14 @@ def get_routing_settings() -> RoutingSettings:
                 os.getenv("ROUTING_HIGH_MODEL", "claude-opus-5"),
             ),
             default_model=claude_default,
-            catalogue=_catalogue("ROUTING_CLAUDE_MODELS", DEFAULT_CLAUDE_MODELS),
+            catalogue=get_model_catalogue().claude,
         ),
         codex=ProviderModels(
             low_model=os.getenv("ROUTING_CODEX_LOW_MODEL", "gpt-5.6-luna"),
             medium_model=os.getenv("ROUTING_CODEX_MEDIUM_MODEL", "gpt-5.6-terra"),
             high_model=os.getenv("ROUTING_CODEX_HIGH_MODEL", "gpt-5.6-sol"),
             default_model=codex_default,
-            catalogue=_catalogue("ROUTING_CODEX_MODELS", DEFAULT_CODEX_MODELS),
+            catalogue=get_model_catalogue().codex,
         ),
         default_provider=_provider("ROUTING_DEFAULT_PROVIDER", AgentProvider.CLAUDE),
     )
@@ -87,17 +72,6 @@ def _provider(variable: str, fallback: AgentProvider) -> AgentProvider:
         return AgentProvider(os.getenv(variable, fallback.value))
     except ValueError:
         return fallback
-
-
-def _catalogue(variable: str, fallback: tuple[str, ...]) -> tuple[str, ...]:
-    """Read a comma-separated model list, keeping order and dropping blanks."""
-    raw = os.getenv(variable)
-    if raw is None:
-        return fallback
-    models = tuple(
-        dict.fromkeys(part.strip() for part in raw.split(",") if part.strip())
-    )
-    return models or fallback
 
 
 @lru_cache

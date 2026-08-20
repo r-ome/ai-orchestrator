@@ -42,11 +42,11 @@ from dataclasses import dataclass, field
 from docker.client import DockerClient
 
 from app.controller.store import ControllerStore
+from app.controller.store.delegation_status import DelegationStatus
 from app.delegation import service
 from app.delegation.config import DriverSettings, get_driver_settings
 from app.delegation.execution import start_run
 from app.delegation.models import (
-    DelegationStatus,
     RunStatus,
     StartRunRequest,
     WorkItemState,
