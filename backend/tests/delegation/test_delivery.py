@@ -25,7 +25,7 @@ from app.platform.dirty_state import DirtyEntry, serialize_snapshot
 from app.platform.naming import ownership_labels, workspace_volume
 from app.previews.config import PreviewSettings
 from app.sandboxes import router as sandbox_router
-from app.sandboxes.engine_detection import NO_DATABASE, EngineDetection
+from app.sandboxes.engine_detection import NO_DATABASE
 from app.sandboxes.manifest import read_manifest, transition_sandbox_lifecycle
 
 BASE = "1" * 40
@@ -672,17 +672,6 @@ def test_managed_v1_delivery_fast_forwards_its_feature_branch_and_drains_writers
         )
         monkeypatch.setattr(
             sandbox_service_syncing, "complete_database_provision", complete_sync
-        )
-        monkeypatch.setattr(
-            sandbox_service_syncing,
-            "discover_engine",
-            lambda *_a, **_k: EngineDetection(
-                signals=(),
-                proposed_engine=NO_DATABASE,
-                migrate_commands=(),
-                seed_commands=(),
-                commands_source={},
-            ),
         )
         synced = sandbox_router.sync_sandbox(
             sandbox_id,

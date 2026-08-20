@@ -1,5 +1,6 @@
 import os
 import tempfile
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -166,14 +167,25 @@ def _complete_sync(*_args: object, **kwargs: object) -> None:
     )
 
 
+def _recording_complete_sync(calls: list[str]) -> Callable[..., None]:
+    def _record(*args: object, **kwargs: object) -> None:
+        calls.append("complete-db")
+        _complete_sync(*args, **kwargs)
+
+    return _record
+
+
 def test_sync_happy_path_advances_only_after_approved_migration_snapshot(
     client: TestClient, fake_docker_client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _register(fake_docker_client=fake_docker_client)
     calls: list[str] = []
     _stub_git(monkeypatch, calls)
+    db_calls: list[str] = []
     monkeypatch.setattr(
-        sandbox_service_syncing, "complete_database_provision", _complete_sync
+        sandbox_service_syncing,
+        "complete_database_provision",
+        _recording_complete_sync(db_calls),
     )
 
     response = client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={})
@@ -186,6 +198,7 @@ def test_sync_happy_path_advances_only_after_approved_migration_snapshot(
     assert body["lifecycle_status"] == "ready"
     assert body["strategy"] == "rebase"
     assert body["safety_ref"] == f"refs/orchestrator/safety/{body['operation_id']}"
+    assert db_calls == ["complete-db"]
 
 
 def test_sync_merges_only_after_an_observed_open_pull_request(
@@ -199,8 +212,11 @@ def test_sync_merges_only_after_an_observed_open_pull_request(
     write_manifest(store, replace(manifest, pr_requested=True))
     calls: list[str] = []
     _stub_git(monkeypatch, calls)
+    db_calls: list[str] = []
     monkeypatch.setattr(
-        sandbox_service_syncing, "complete_database_provision", _complete_sync
+        sandbox_service_syncing,
+        "complete_database_provision",
+        _recording_complete_sync(db_calls),
     )
 
     first = client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={})
@@ -221,11 +237,13 @@ def test_sync_merges_only_after_an_observed_open_pull_request(
         last_error=None,
     )
     calls.clear()
+    db_calls.clear()
 
     second = client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={})
 
     assert second.status_code == 202
     assert second.json()["strategy"] == "merge"
+    assert db_calls == ["complete-db"]
 
 
 def test_sync_preview_requires_opt_in_and_names_the_preview(
@@ -269,13 +287,17 @@ def test_sync_preview_requires_opt_in_and_names_the_preview(
     monkeypatch.setattr(sandbox_lifecycle, "_stop_blocking_preview", stop)
     calls: list[str] = []
     _stub_git(monkeypatch, calls)
+    db_calls: list[str] = []
     monkeypatch.setattr(
-        sandbox_service_syncing, "complete_database_provision", _complete_sync
+        sandbox_service_syncing,
+        "complete_database_provision",
+        _recording_complete_sync(db_calls),
     )
     proceeded = client.post(
         f"/sandboxes/{SANDBOX_ID}/sync", json={"stop_blocking_preview": True}
     )
     assert proceeded.status_code == 202
+    assert db_calls == ["complete-db"]
 
 
 def test_sync_refuses_an_active_delegation(
@@ -326,8 +348,11 @@ def test_sync_allows_idle_agent_but_refuses_open_agent_writer_session(
     )
     calls: list[str] = []
     _stub_git(monkeypatch, calls)
+    db_calls: list[str] = []
     monkeypatch.setattr(
-        sandbox_service_syncing, "complete_database_provision", _complete_sync
+        sandbox_service_syncing,
+        "complete_database_provision",
+        _recording_complete_sync(db_calls),
     )
     assert client.post(f"/sandboxes/{SANDBOX_ID}/sync", json={}).status_code == 202
 
@@ -346,6 +371,7 @@ def test_sync_allows_idle_agent_but_refuses_open_agent_writer_session(
         "class": "agent_writer_session",
         "id": "writer-1",
     }
+    assert db_calls == ["complete-db"]
 
 
 def test_git_failure_restores_safety_ref_and_dirty_workspace_changes_nothing(
@@ -421,8 +447,11 @@ def test_sync_reports_but_never_applies_an_engine_mismatch(
     _register(fake_docker_client=fake_docker_client)
     calls: list[str] = []
     _stub_git(monkeypatch, calls)
+    db_calls: list[str] = []
     monkeypatch.setattr(
-        sandbox_service_syncing, "complete_database_provision", _complete_sync
+        sandbox_service_syncing,
+        "complete_database_provision",
+        _recording_complete_sync(db_calls),
     )
     monkeypatch.setattr(
         sandbox_service_syncing,
@@ -447,6 +476,7 @@ def test_sync_reports_but_never_applies_an_engine_mismatch(
         get_controller_store().sandbox_engine_detection(SANDBOX_ID)["confirmed_engine"]
         == "sqlite"
     )
+    assert db_calls == ["complete-db"]
 
 
 def test_sync_reports_a_database_added_after_no_database_confirmation(
