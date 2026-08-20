@@ -40,7 +40,8 @@ three steps, `27447e2`, `d1216a3` and `0366c17`, all on 20 Aug 2026. Its largest
 this table. See "Decomposing `sandboxes/database.py`" below for the measured seam, the
 method, and the four findings the three steps produced. That leaves `sandboxes/service.py`
 as the only backend module over 1,400 lines, and the only one of the two that no phase
-covered. It is still unscoped.
+covered. It is now scoped — see "Decomposing `sandboxes/service.py`" below — but no code
+has moved.
 
 Measured on `93add0c`, five of the six had grown by 2 to 65 lines against the previous
 reading. That was `ruff format` rewrapping, not new code. `previews/service.py` was the
@@ -51,12 +52,105 @@ unused imports, all phase 8 leftovers whose code had moved to
 Phase 7 split `ControllerStore`; phase 8 split `previews`. No phase touched these two.
 `database.py` is now being split outside the phase plan, one step at a time. Phase 5 grew
 `sandboxes/service.py` from 695 to 1,487 lines by design and recorded it; it is 1,547 now,
-after formatting, and is still unscoped.
+after formatting, and is scoped but not started.
 The `sandboxes/database/` package also holds one of the two shared-database implementations
 that section 4 closes.
 
 For contrast, the frontend hotspots the review named were fixed: `DelegationWorkspace.tsx`
 went 1,780 → 525 lines, `PlanningSessionPage.tsx` 1,200+ → 635.
+
+### Decomposing `sandboxes/service.py` — scoped, 20 Aug 2026
+
+Scoped at `eb35b56`. Every figure below was re-measured from the tree by an AST pass, not
+carried over from a handoff. **No code has moved yet.**
+
+**The module.** 1,547 lines: 75 lines of imports, 34 top-level definitions totalling 1,406
+lines, and **no module-level state**. The split has no shared mutable globals to preserve.
+
+**External surface.** Six files import it. `app/sandboxes/router.py` takes 12 names by direct
+import and reaches 7 entrypoints by `service.X` attribute. Four test files import it as
+`sandbox_service` and monkeypatch it: `tests/sandboxes/test_router.py`, `test_sync.py`,
+`test_staleness.py` and `tests/delegation/test_delivery.py`. The module exposes 91
+attributes; about 21 are reached from outside.
+
+**The seam.** The internal call graph is a layered DAG with no cycles. Ten cohesive groups:
+
+```text
+   48  errors        6 exception classes, zero dependencies
+   46  outcomes      6 result dataclasses
+   51  coercion      require_v1 + 6 private helpers
+  189  provisioning  complete_database_provision, reset_database
+   95  engine        confirm_engine, _confirm_engine_snapshot
+  429  lifecycle     create_or_resolve, resume, destroy, _sweep_manifest_resources
+   58  resources     _docker_collection, _remove_manifest_resource, remove_orphan_resource
+  213  sync          sync, sync_engine_report
+  201  publish       publish
+   76  staleness     staleness
+```
+
+Each group pulls a distinct set of external packages, so the grouping is cohesion, not
+alphabetical tidiness. Two helper sets are shared and must sit in a lower layer:
+`complete_database_provision` has five callers across four groups, and `_docker_collection`
+with `_remove_manifest_resource` are shared by `destroy` and `remove_orphan_resource`.
+
+**Shape.** `service.py` becomes the package `app/sandboxes/service/` with a facade
+`__init__.py`. It cannot be flat modules — `lifecycle.py`, `publish.py` and `git.py` already
+exist in `app/sandboxes/`. This is the `database/` shape.
+
+**Where it will bite.** **15** names are monkeypatched on the service module across **50**
+sites in 4 test files. Every one needs a retarget. A grep-based count during scoping said 10
+names and 16 sites; it was wrong, because `monkeypatch.setattr(` often puts the module on one
+line and the name on the next. **Enumerate patch sites with an AST pass, never with grep.**
+
+```text
+name                             used by                                    destination
+require_clean_workspace          sync                                       sync
+create_workspace_safety_ref      sync                                       sync
+restore_workspace_safety_ref     sync                                       sync
+mirror_base_commit               sync                                       sync
+sync_workspace_from_mirror       sync                                       sync
+fetch_canonical_mirror           sync, staleness                            two modules
+count_mirror_staleness           staleness                                  staleness
+ensure_project_mirror            create_or_resolve                          lifecycle
+ensure_workspace_import          create_or_resolve, resume                  lifecycle
+verify_workspace_identity        resume                                     lifecycle
+reviewed_target                  publish                                    publish
+publish_reviewed_feature         publish                                    publish
+discover_or_create_pull_request  publish                                    publish
+discover_engine                  sync_engine_report, create_or_resolve,
+                                 resume                                     three modules
+complete_database_provision      sync, create_or_resolve, confirm_engine,
+                                 reset_database, resume                     five modules
+_remove_manifest_resource        remove_orphan_resource,
+                                 _sweep_manifest_resources                  two modules
+```
+
+Each site resolves to whichever module holds the entrypoint that test drives. That is a
+property of today's tests, not of the structure. `complete_database_provision` reaching five
+modules and `discover_engine` reaching three are the "one patch site becomes two" shape that
+bit the database refactor three times.
+
+**Step 1 is not retarget-free.** `_remove_manifest_resource` is patched at
+`tests/sandboxes/test_router.py:1035`. Step 1 moves it and `remove_orphan_resource` into
+`resources.py` while its other caller, `_sweep_manifest_resources`, stays in `__init__.py`.
+The patched test drives the orphan-removal route, so that one site retargets to
+`sandbox_service.resources`. One retarget, and it must be proved by `__globals__`.
+
+`KNOWN_CYCLE` stays at 8. This is an intra-package split.
+
+**Decisions taken, 20 Aug 2026.** The user chose all three:
+
+1. **Prune the facade** to the names router and tests actually reach. A wide facade would let
+   a stale monkeypatch silently patch a dead binding while the real code runs. A pruned
+   facade turns that into a loud `AttributeError`. Same policy as the database facade.
+2. **`lifecycle` stays one module** at 429 lines. Splitting it would add two more retarget
+   destinations for `discover_engine` and `complete_database_provision`.
+3. **Three steps**, the database cadence:
+   - Step 1: the leaves — errors, outcomes, coercion, resources. One retarget.
+   - Step 2: provisioning, engine, and the entrypoint modules. Carries all 16 retargets.
+   - Step 3: reduce `__init__.py` to the pruned facade.
+
+**Not started.** Nothing is agreed beyond this scope.
 
 ### Decomposing `sandboxes/database.py` — done, 20 Aug 2026
 
