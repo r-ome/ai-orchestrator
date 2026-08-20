@@ -21,6 +21,7 @@ from app.previews.models import (
     PreviewServiceType,
     ProtectedFileChange,
 )
+from app.sandboxes.engine_detection import prisma_schema_providers
 
 COMPOSE_NAMES = (
     "compose.yaml",
@@ -546,27 +547,6 @@ def _native_dependencies(
         PreviewInitialization(commands=commands),
         {"DATABASE_URL": PreviewEnvironmentSource(from_service="database")},
     )
-
-
-def prisma_schema_providers(files: dict[str, bytes]) -> list[tuple[str, str]]:
-    """Return every Prisma datasource provider without choosing an engine."""
-    found: list[tuple[str, str]] = []
-    for path, content in sorted(files.items()):
-        if PurePosixPath(path).name != "schema.prisma":
-            continue
-        try:
-            schema = content.decode("utf-8")
-        except UnicodeDecodeError:
-            continue
-        for block in re.finditer(
-            r"(?s)\bdatasource\s+[A-Za-z_][A-Za-z0-9_]*\s*\{(.*?)\}", schema
-        ):
-            provider = re.search(
-                r"\bprovider\s*=\s*[\"']([^\"']+)[\"']", block.group(1)
-            )
-            if provider is not None:
-                found.append((path, provider.group(1).strip().lower()))
-    return found
 
 
 def _prisma_schema_provider(files: dict[str, bytes]) -> tuple[str, str] | None:

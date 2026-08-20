@@ -13,6 +13,7 @@ import json
 import re
 import tarfile
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
 
 import yaml
@@ -21,7 +22,6 @@ from docker.errors import DockerException
 
 from app.containers.hardened import Capture, Egress, HardenedRunSpec, run_hardened
 from app.platform.labels import LABEL_CONTROLLER_MANAGED, LABEL_KIND
-from app.previews.detection import prisma_schema_providers
 
 MAX_FILE_BYTES = 200_000
 MAX_LOG_BYTES = 16 * 1_048_576
@@ -45,6 +45,27 @@ _ENGINE_ALIASES = {
     "sqlite": "sqlite",
     "sqlite3": "sqlite",
 }
+
+
+def prisma_schema_providers(files: dict[str, bytes]) -> list[tuple[str, str]]:
+    """Return every Prisma datasource provider without choosing an engine."""
+    found: list[tuple[str, str]] = []
+    for path, content in sorted(files.items()):
+        if PurePosixPath(path).name != "schema.prisma":
+            continue
+        try:
+            schema = content.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        for block in re.finditer(
+            r"(?s)\bdatasource\s+[A-Za-z_][A-Za-z0-9_]*\s*\{(.*?)\}", schema
+        ):
+            provider = re.search(
+                r"\bprovider\s*=\s*[\"']([^\"']+)[\"']", block.group(1)
+            )
+            if provider is not None:
+                found.append((path, provider.group(1).strip().lower()))
+    return found
 
 
 @dataclass(frozen=True)
