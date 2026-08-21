@@ -3,8 +3,8 @@
 **State:** `main`, 21 Aug 2026, pushed and level with `origin/main`. **This header carries no
 commit hash on purpose.** A tracked file cannot state its own commit accurately, because
 recording the hash changes the hash. Read `git log` for the exact HEAD. The figures below are
-measured after the `DatabaseConnectionRequest` narrowing recorded in section 2.
-**Suites:** backend 851 passed, 43 skipped, ~30s. Gated backend 890 passed, 4 skipped, ~210s.
+measured after the preview size-limit sweep recorded in section 2.
+**Suites:** backend 854 passed, 43 skipped, ~27s. Gated backend 893 passed, 4 skipped, ~174s.
 Frontend 80 passed, `npm run build` clean — **not re-run since `189a840`; no
 frontend file has changed since.**
 **Lint:** `ruff check app tests` passes. `ruff format --check app tests` reports 252 files
@@ -546,6 +546,35 @@ before touching it.
 **Preserve `previews -> sandboxes` as the surviving direction.** It matches the domain flow: a
 preview operates on a sandbox, so previews depending on sandboxes is the natural dependency.
 
+#### Preview size-limit defaults swept to single constants, 21 Aug 2026 — done
+
+`maximum_dependency_bytes` and `maximum_built_image_bytes` were the last two defaults written
+twice, at the dataclass field and again at the `integer_setting` fallback. Each now has one
+constant serving both, matching `app/containers/config.py`. **No default is restated anywhere
+under `app/previews/` or `app/containers/` now.**
+
+**The drift was the smaller problem. Neither setting was tested at all.** No test in the
+repository referenced either field name. Three corruptions, each applied alone, were invisible
+to the full 851-test suite:
+
+| Corruption | Effect in production | Caught before | Caught now |
+|---|---|---|---|
+| misspell `PREVIEW_MAXIMUM_DEPENDENCY_BYTES` | the operator's dependency cap is ignored | no | 1 test |
+| misspell `PREVIEW_MAXIMUM_BUILT_IMAGE_BYTES` | the operator's image cap is ignored | no | 1 test |
+| drift a field default from its constant | every direct construction gets the wrong cap | no | 1 test |
+
+**The field default and the factory fallback are different seams, and only one sweep test
+covers each.** `get_preview_settings` always passes both fields explicitly, so it never
+exercises the dataclass field defaults. Those defaults are still load-bearing: **all ten direct
+`PreviewSettings` constructions in the test suite omit both fields**, and `resources.py:85`
+enforces the built-image cap from one of them. A test that only drives the factory would have
+left the third corruption silent — it did, until a separate direct-construction test was added.
+
+**Cost: 3 files** — 1 source, 1 test modified, 3 tests added.
+
+**Verified:** ungated 854 passed, 43 skipped; gated 893 passed, 4 skipped; `probe_all.py`
+157 modules, 0 failed; ruff clean over 252 files; OpenAPI byte-identical.
+
 #### `DatabaseConnectionRequest` narrowed to sandbox vocabulary, 21 Aug 2026 — done
 
 `app/sandboxes/database/contracts.py:11` imported `PreviewConfiguration` and
@@ -637,10 +666,9 @@ names are unchanged. **All four `PREVIEW_*` variables keep their names, and
 `app/containers/config.py` is now their single Python authority.**
 
 **Four `DEFAULT_PREVIEW_*` constants serve both the dataclass default and the `os.getenv`
-fallback**, so no default is restated. **`app/previews/config.py` still restates its remaining
-defaults** — `maximum_dependency_bytes` and `maximum_built_image_bytes` each write the literal
-twice, at the field and at the environment fallback, which leaves the field default unasserted
-and free to drift. Not swept, deliberately.
+fallback**, so no default is restated. **`app/previews/config.py` restated its remaining
+defaults** — `maximum_dependency_bytes` and `maximum_built_image_bytes` each wrote the literal
+twice, at the field and at the environment fallback. **Swept 21 Aug 2026**; see below.
 
 **Cost: 20 files** — 13 source, 6 tests modified, 1 test added. Nine of the ten test
 constructors simply dropped `prepare_timeout_seconds=600`, which is now the default.
@@ -1652,10 +1680,13 @@ diff. It catches value-level defects a source diff cannot.
 **Running anything.** Work from `backend/`, using `backend/.venv/bin/python` and
 `backend/.venv/bin/ruff`. The system python has no `app` on its path.
 
-- Ungated: `.venv/bin/python -m pytest -q` → **835 passed, 43 skipped**, ~31s.
-- Gated: `RUN_DOCKER_PREVIEW_TESTS=1` from `backend/` → **875 passed, 4 skipped**, ~140s.
+- Ungated: `.venv/bin/python -m pytest -q` → **854 passed, 43 skipped**, ~27s.
+- Gated: `RUN_DOCKER_PREVIEW_TESTS=1` from `backend/` → **893 passed, 4 skipped**, ~174s.
   Run it twice and read the second run; see section 5.
-- Lint: `ruff check app tests`, then `ruff format --check` (239 files).
+- **`AGENTS.md` section 11 now documents all four `RUN_DOCKER_*` gates**, what each unlocks
+  and which three also need a real model and therefore cost money. It previously named none
+  of them while telling the reader to use "the documented opt-in command". Recorded 21 Aug 2026.
+- Lint: `ruff check app tests`, then `ruff format --check` (252 files).
 - Frontend gate: `npm run build`, not `tsc --noEmit`.
 
 **Colima.** Must be running for the gated suite. On a stale disk lock
