@@ -369,7 +369,28 @@ uv run pytest
 
 Docker integration tests require a running Docker daemon and explicit opt-in. Do not assume they are part of the normal suite.
 
-For preview integration work, use the documented opt-in command when the environment supports it.
+Four environment variables gate them. Each is off unless set to `1`:
+
+| Variable | Unlocks | Also requires |
+|---|---|---|
+| `RUN_DOCKER_PREVIEW_TESTS` | preview, sandbox and Git integration tests | a Docker daemon |
+| `RUN_DOCKER_DELEGATOR_TESTS` | `tests/delegation/test_docker_integration.py` | a Docker daemon and a real model |
+| `RUN_DOCKER_CONTEXT_TESTS` | `tests/implementation_context/test_docker_integration.py` | a Docker daemon and a real model |
+| `RUN_DOCKER_HEADLESS_TESTS` | `tests/tasks/test_headless_integration.py` | a Docker daemon and a real model |
+
+For preview, sandbox or Git work, run the gated suite from `backend/`:
+
+```bash
+RUN_DOCKER_PREVIEW_TESTS=1 uv run pytest -q
+```
+
+This resolves 39 skips into real tests. A change to `app/previews/`, `app/sandboxes/` or
+`backend/agent-images/` is not verified by the ungated suite alone, because the gate hides the
+tests that exercise it. Gated tests have rotted unnoticed before, precisely because a green
+ungated run looked like proof.
+
+The three model-backed gates cost money on every run. Leave them off unless the change is in
+that area and you have been asked to run them.
 
 ### Frontend
 
