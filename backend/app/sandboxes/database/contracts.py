@@ -6,8 +6,8 @@ from docker.client import DockerClient
 from docker.models.containers import Container
 from docker.types import Mount
 
+from app.containers.config import PreviewRuntimeLimits
 from app.platform.naming import db_data_volume
-from app.previews.config import PreviewSettings
 from app.previews.models import PreviewConfiguration, PreviewDependencyService
 
 from .constants import SQLITE_DATA_MOUNT_PATH
@@ -93,7 +93,7 @@ class DatabaseConnectionRequest:
 @dataclass(frozen=True)
 class DatabaseMigrationRequest:
     docker_client: DockerClient
-    settings: PreviewSettings
+    settings: PreviewRuntimeLimits
     image: str
     commands: list[str]
     runtime: str

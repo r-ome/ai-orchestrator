@@ -3,7 +3,7 @@ from dataclasses import replace
 from docker.client import DockerClient
 from docker.errors import DockerException, NotFound
 
-from app.containers.config import get_git_settings
+from app.containers.config import get_git_settings, get_preview_runtime_limits
 from app.controller.store import ControllerStore, SandboxAdmissionError
 from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.platform.naming import (
@@ -14,7 +14,6 @@ from app.platform.naming import (
     workspace_volume,
 )
 from app.platform.remote import project_id_for_remote
-from app.previews.config import get_preview_settings
 from app.sandboxes.database import (
     SandboxDatabaseError,
     drop_sandbox_database,
@@ -426,7 +425,7 @@ def destroy(
             drop_sandbox_database(
                 docker_client,
                 controller_store,
-                get_preview_settings(),
+                get_preview_runtime_limits(),
                 sandbox_id=sandbox_id,
             )
             _sweep_manifest_resources(docker_client, controller_store, sandbox)

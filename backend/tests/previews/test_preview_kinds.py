@@ -75,7 +75,6 @@ def _settings() -> PreviewSettings:
         maximum_file_bytes=1_048_576,
         maximum_snapshot_bytes=16_777_216,
         proposal_lifetime_seconds=900,
-        prepare_timeout_seconds=600,
         build_timeout_seconds=900,
     )
 

@@ -13,6 +13,7 @@ import yaml
 from conftest import register_ready_v1_sandbox
 from fastapi.testclient import TestClient
 
+from app.containers.config import PreviewRuntimeLimits
 from app.controller.store import ControllerStore, get_controller_store
 from app.main import app
 from app.platform.docker_client import get_docker_client
@@ -74,7 +75,6 @@ def _settings() -> PreviewSettings:
         maximum_file_bytes=1_048_576,
         maximum_snapshot_bytes=16_777_216,
         proposal_lifetime_seconds=900,
-        prepare_timeout_seconds=600,
         build_timeout_seconds=900,
     )
 
@@ -114,7 +114,6 @@ def test_native_preview_publishes_only_to_loopback() -> None:
             maximum_file_bytes=1_048_576,
             maximum_snapshot_bytes=16_777_216,
             proposal_lifetime_seconds=900,
-            prepare_timeout_seconds=600,
             build_timeout_seconds=900,
         )
         inspected = _volume_runtime_files(client, project_volume.name, settings)
@@ -238,8 +237,8 @@ def test_native_mysql_waits_for_initialization_and_hides_environment_files() -> 
             maximum_file_bytes=1_048_576,
             maximum_snapshot_bytes=16_777_216,
             proposal_lifetime_seconds=900,
-            prepare_timeout_seconds=120,
             build_timeout_seconds=900,
+            limits=PreviewRuntimeLimits(prepare_timeout_seconds=120),
         )
         labels = _labels("test-sandbox", run_id, "2099-01-01T00:00:00Z")
 
@@ -353,7 +352,6 @@ def test_compose_preview_starts_multiple_services_and_exposes_one() -> None:
             maximum_file_bytes=1_048_576,
             maximum_snapshot_bytes=16_777_216,
             proposal_lifetime_seconds=900,
-            prepare_timeout_seconds=600,
             build_timeout_seconds=900,
         )
         labels = _labels("test-sandbox", run_id, "2099-01-01T00:00:00Z")
@@ -440,7 +438,6 @@ def test_dockerfile_preview_builds_current_sandbox_and_cleans_its_image() -> Non
             maximum_file_bytes=1_048_576,
             maximum_snapshot_bytes=16_777_216,
             proposal_lifetime_seconds=900,
-            prepare_timeout_seconds=600,
             build_timeout_seconds=900,
         )
         labels = _labels("test-sandbox", run_id, "2099-01-01T00:00:00Z")
@@ -540,7 +537,6 @@ def test_approved_proposal_starts_and_stops_through_the_full_service(
             maximum_file_bytes=1_048_576,
             maximum_snapshot_bytes=16_777_216,
             proposal_lifetime_seconds=900,
-            prepare_timeout_seconds=600,
             build_timeout_seconds=900,
         )
         proposal = propose_preview(client, store, settings, project_name)

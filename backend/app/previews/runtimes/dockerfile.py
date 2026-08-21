@@ -94,7 +94,7 @@ def _start_dockerfile(
             egress=_preview_egress(config.network_access),
             ports=_direct_ports(config, host_port),
             restart_policy={"Name": "no"},
-            mem_limit=settings.preview_memory,
+            mem_limit=settings.limits.memory,
             nano_cpus=1_000_000_000,
             pids_limit=256,
         ),

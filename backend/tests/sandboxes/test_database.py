@@ -12,6 +12,7 @@ import app.sandboxes.database as sandbox_database
 import app.sandboxes.database._engine_ops as sandbox_database_engine_ops
 import app.sandboxes.database.mysql as sandbox_database_mysql
 import app.sandboxes.database.provisioning as sandbox_database_provisioning
+from app.containers.config import get_preview_runtime_limits
 from app.previews.config import get_preview_settings
 from app.previews.errors import PreviewOperationError
 from app.previews.models import (
@@ -329,7 +330,8 @@ def test_sandbox_and_preview_shared_server_creation_use_the_same_project_lock(
         "_run_database_command",
         docker.run_database_command,
     )
-    settings = get_preview_settings()
+    sandbox_settings = get_preview_runtime_limits()
+    preview_settings = get_preview_settings()
     database = PreviewDependencyService(
         type=PreviewServiceType.MYSQL,
         image="mysql:8.4",
@@ -338,7 +340,7 @@ def test_sandbox_and_preview_shared_server_creation_use_the_same_project_lock(
     def from_sandbox() -> object:
         return sandbox_database._ensure_shared_server(
             docker,
-            settings,
+            sandbox_settings,
             project_id="project-123456789",
             project_source="/projects/sample",
             engine_name="mysql",
@@ -347,7 +349,7 @@ def test_sandbox_and_preview_shared_server_creation_use_the_same_project_lock(
     def from_preview() -> object:
         return preview_sharing._shared_database_server(
             docker,
-            settings,
+            preview_settings,
             project_key="project-123456789",
             source_path="/projects/sample",
             database=database,
@@ -395,7 +397,7 @@ def test_sandbox_shared_server_refuses_an_existing_container_with_another_image(
     with pytest.raises(sandbox_database.SandboxDatabaseError) as error:
         sandbox_database._ensure_shared_server(
             docker,
-            get_preview_settings(),
+            get_preview_runtime_limits(),
             project_id=project_id,
             project_source="/projects/sample",
             engine_name="mysql",

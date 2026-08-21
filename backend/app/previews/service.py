@@ -652,7 +652,7 @@ def restart_preview(
             )
             _wait_for_mysql_health(
                 database_container,
-                timeout_seconds=settings.prepare_timeout_seconds,
+                timeout_seconds=settings.limits.prepare_timeout_seconds,
             )
             application_container.restart(timeout=5)
             gateway = by_service.get("gateway")
@@ -681,7 +681,7 @@ def restart_preview(
                 database_container.restart(timeout=5)
             _wait_for_mysql_health(
                 database_container,
-                timeout_seconds=settings.prepare_timeout_seconds,
+                timeout_seconds=settings.limits.prepare_timeout_seconds,
             )
             application_container.restart(timeout=5)
             gateway = by_service.get("gateway")

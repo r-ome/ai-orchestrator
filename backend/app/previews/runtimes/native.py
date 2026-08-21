@@ -355,7 +355,7 @@ def _start_native(
                 data_volume=database_volume.name,
                 credentials_volume=credentials_volume,
                 network_name=network.name,
-                memory_limit=settings.preview_memory,
+                memory_limit=settings.limits.memory,
                 nano_cpus=1_000_000_000,
                 pids_limit=256,
                 error=PreviewOperationError,
@@ -379,7 +379,7 @@ def _start_native(
         report("database-health", "Waiting for MySQL health check")
         _wait_for_mysql_health(
             database_container,
-            timeout_seconds=settings.prepare_timeout_seconds,
+            timeout_seconds=settings.limits.prepare_timeout_seconds,
         )
         report("database-health", "MySQL is healthy")
 
@@ -427,7 +427,7 @@ def _start_native(
                 egress=_preview_egress(config.network_access),
                 ports=_direct_ports(config, host_port),
                 restart_policy={"Name": "no"},
-                mem_limit=settings.preview_memory,
+                mem_limit=settings.limits.memory,
                 nano_cpus=1_000_000_000,
                 pids_limit=256,
             ),
@@ -443,7 +443,7 @@ def _start_native(
         container.start()
         _wait_for_container_health(
             container,
-            timeout_seconds=settings.prepare_timeout_seconds,
+            timeout_seconds=settings.limits.prepare_timeout_seconds,
         )
         finish("Application container started")
     containers.append(container)
@@ -555,7 +555,7 @@ def _run_initialization(
     return _database_engine.run_migrations(
         DatabaseMigrationRequest(
             docker_client=docker_client,
-            settings=settings,
+            settings=settings.limits,
             image=image,
             commands=commands,
             runtime=runtime,
@@ -613,18 +613,18 @@ def _run_prepare(
                 # No /tmp tmpfs. A package manager unpacks into /tmp, and this
                 # container had a disk-backed /tmp before the boundary owned it.
                 tmpfs_size=None,
-                mem_limit=settings.preview_memory,
+                mem_limit=settings.limits.memory,
                 pids_limit=256,
             ),
         )
         container.start()
         try:
-            result = container.wait(timeout=settings.prepare_timeout_seconds)
+            result = container.wait(timeout=settings.limits.prepare_timeout_seconds)
         except ReadTimeout as error:
             container.stop(timeout=2)
             raise PreviewOperationError(
                 408,
-                f"Dependency installation exceeded {settings.prepare_timeout_seconds} seconds",
+                f"Dependency installation exceeded {settings.limits.prepare_timeout_seconds} seconds",
             ) from error
         exit_code = int(result.get("StatusCode", 1))
         if exit_code != 0:

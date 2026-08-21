@@ -39,7 +39,6 @@ PREVIEW_SETTINGS = PreviewSettings(
     maximum_file_bytes=1_000,
     maximum_snapshot_bytes=10_000,
     proposal_lifetime_seconds=900,
-    prepare_timeout_seconds=600,
     build_timeout_seconds=900,
 )
 requires_docker = pytest.mark.skipif(

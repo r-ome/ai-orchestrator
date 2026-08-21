@@ -177,12 +177,12 @@ def _shared_database_server(
                 data_volume=data_volume.name,
                 credentials_volume=credentials_volume,
                 network_name=network.name,
-                memory_limit=settings.shared_database_memory,
+                memory_limit=settings.limits.shared_database_memory,
                 nano_cpus=2_000_000_000,
                 pids_limit=512,
                 error=PreviewOperationError,
                 shared=True,
-                max_connections=settings.shared_database_max_connections,
+                max_connections=settings.limits.shared_database_max_connections,
                 existing_container=container,
             )
         )
@@ -208,7 +208,7 @@ def _shared_database_server(
         report("database-health", "Waiting for the shared database health check")
         _wait_for_mysql_health(
             container,
-            timeout_seconds=settings.prepare_timeout_seconds,
+            timeout_seconds=settings.limits.prepare_timeout_seconds,
         )
         report("database-health", "Shared database is healthy")
     return container, credentials_volume, network

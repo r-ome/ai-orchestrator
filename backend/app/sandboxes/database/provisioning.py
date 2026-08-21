@@ -12,6 +12,7 @@ from docker.client import DockerClient
 from docker.errors import APIError, DockerException, NotFound
 from docker.models.containers import Container
 
+from app.containers.config import PreviewRuntimeLimits
 from app.containers.images import ensure_image
 from app.controller.store import ControllerStore
 from app.platform.labels import (
@@ -34,7 +35,6 @@ from app.platform.naming import (
 from app.platform.naming import (
     network as sandbox_network_name,
 )
-from app.previews.config import PreviewSettings
 from app.sandboxes.engine_detection import NO_DATABASE
 
 from .constants import (
@@ -121,7 +121,7 @@ def sandbox_database_runtime(
 def provision_sandbox_database(
     docker_client: DockerClient,
     store: ControllerStore,
-    settings: PreviewSettings,
+    settings: PreviewRuntimeLimits,
     *,
     sandbox_id: str,
     migrate_commands: list[str],
@@ -216,7 +216,7 @@ def provision_sandbox_database(
                     data_volume=data_volume,
                     credentials_volume=None,
                     network_name=network.name,
-                    memory_limit=settings.preview_memory,
+                    memory_limit=settings.memory,
                     nano_cpus=1_000_000_000,
                     pids_limit=64,
                     error=SandboxDatabaseError,
@@ -291,7 +291,7 @@ def provision_sandbox_database(
 def drop_sandbox_database(
     docker_client: DockerClient,
     store: ControllerStore,
-    settings: PreviewSettings,
+    settings: PreviewRuntimeLimits,
     *,
     sandbox_id: str,
 ) -> None:
@@ -408,7 +408,7 @@ def _ensure_owned_sqlite_volume(
 
 def _ensure_shared_server(
     docker_client: DockerClient,
-    settings: PreviewSettings,
+    settings: PreviewRuntimeLimits,
     *,
     project_id: str,
     project_source: str,
@@ -520,7 +520,7 @@ def _connect_database_endpoint(network: Any, container: Container) -> None:
 
 def _run_sandbox_migrations(
     docker_client: DockerClient,
-    settings: PreviewSettings,
+    settings: PreviewRuntimeLimits,
     *,
     runtime: SandboxDatabaseRuntime,
     workspace: str,

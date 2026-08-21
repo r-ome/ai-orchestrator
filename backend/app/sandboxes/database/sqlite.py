@@ -77,7 +77,7 @@ class SQLiteDatabaseEngine(MySQLDatabaseEngine):
                     if key != "/tmp"
                 },
                 restart_policy={"Name": "no"},
-                mem_limit=request.settings.preview_memory,
+                mem_limit=request.settings.memory,
                 nano_cpus=1_000_000_000,
                 pids_limit=256,
             ),

@@ -125,7 +125,6 @@ def test_task_archive_preview_mounts_the_same_sandbox_sqlite_database(
         maximum_file_bytes=1_048_576,
         maximum_snapshot_bytes=16_777_216,
         proposal_lifetime_seconds=900,
-        prepare_timeout_seconds=600,
         build_timeout_seconds=900,
     )
     run_id = "c" * 32
@@ -219,7 +218,6 @@ def test_server_preview_borrows_and_disconnects_the_persistent_sandbox_network(
         maximum_file_bytes=1_048_576,
         maximum_snapshot_bytes=16_777_216,
         proposal_lifetime_seconds=900,
-        prepare_timeout_seconds=600,
         build_timeout_seconds=900,
     )
     run_id = "1" * 32

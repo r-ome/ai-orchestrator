@@ -149,7 +149,7 @@ def _start_compose(
                     egress=_preview_egress(config.network_access),
                     ports=ports,
                     restart_policy={"Name": "no"},
-                    mem_limit=settings.preview_memory,
+                    mem_limit=settings.limits.memory,
                     nano_cpus=1_000_000_000,
                     pids_limit=256,
                 ),

@@ -2,11 +2,10 @@ from dataclasses import replace
 
 from docker.client import DockerClient
 
-from app.containers.config import get_git_settings
+from app.containers.config import get_git_settings, get_preview_runtime_limits
 from app.controller.store import ControllerStore, SandboxAdmissionError
 from app.controller.store.lifecycle_status import SandboxLifecycleStatus
 from app.platform.naming import database_name, db_data_volume, workspace_volume
-from app.previews.config import get_preview_settings
 from app.sandboxes.database import (
     SandboxDatabaseError,
     SandboxMigrationError,
@@ -86,7 +85,7 @@ def complete_database_provision(
             to_status=target_status,
         )
     try:
-        settings = get_preview_settings()
+        settings = get_preview_runtime_limits()
         schema_files = discover_schema_baseline_files(
             docker_client,
             image=get_git_settings().git_image,
