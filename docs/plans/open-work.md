@@ -3,11 +3,11 @@
 **State:** `main`, 20 Aug 2026, pushed and level with `origin/main`. **This header carries no
 commit hash on purpose.** A tracked file cannot state its own commit accurately, because
 recording the hash changes the hash. Read `git log` for the exact HEAD. The figures below are
-measured after the `prisma_schema_providers` move recorded in section 2.
-**Suites:** backend 845 passed, 43 skipped, ~29s. Gated backend 884 passed, 4 skipped, ~140s,
+measured after the `PreviewRuntimeLimits` extraction recorded in section 2.
+**Suites:** backend 848 passed, 43 skipped, ~28s. Gated backend 887 passed, 4 skipped, ~133s,
 run twice. Frontend 80 passed, `npm run build` clean — **not re-run since `189a840`; no
 frontend file has changed since.**
-**Lint:** `ruff check app tests` passes. `ruff format --check app tests` reports 250 files
+**Lint:** `ruff check app tests` passes. `ruff format --check app tests` reports 251 files
 formatted.
 
 This replaces `architecture-review-verification-and-plan.md` and
@@ -470,7 +470,7 @@ below held, the plan built on them did not. Measured:
 
 | Edge | Cost | Shape |
 |---|---|---|
-| `sandboxes -> previews` | 6 symbols, **5 files** | 6 sites; 4 of them are `app/previews/config` |
+| `sandboxes -> previews` | 4 symbols, **2 files** | `contracts.py:11` and `lifecycle.py:21` |
 | `previews -> sandboxes` | 17 symbols, **4 files** | 3 sites in `app/sandboxes/database`, 1 in `engine_detection` |
 
 **The "shared primitive filed inside a feature package" reading of this edge was wrong, and
@@ -512,19 +512,15 @@ initially, for compatibility. **Do not merge it with `app/implementation_context
 **The rewrite count for the extraction is unmeasured.** It depends on the new function
 signatures. Do not carry a figure into the plan until it is measured.
 
-**What remains is 6 sites**, after `prisma_schema_providers` moved to `app.sandboxes`
-(recorded below). Four are settings: `database/contracts.py:10`, `database/provisioning.py:37`,
-`service/provisioning.py:9` and `service/transitions.py:17`. All four need preview resource
-limits — `preview_memory`, `shared_database_memory`, `shared_database_max_connections`,
-`prepare_timeout_seconds`. **They are one semantic dependency in two implementation shapes**,
-which matters because the shapes admit different fixes: `database/contracts.py:96` and the four
-annotations in `database/provisioning.py` are annotation-only, while
-`service/provisioning.py:89` and `service/transitions.py:429` call `get_preview_settings()` at
-runtime. The other two sites are `PreviewConfiguration` plus `PreviewDependencyService` in
-`database/contracts.py:11`, and `stop_preview` plus `stop_task_preview` in `lifecycle.py:21`.
+**What remains is 2 sites**, after `prisma_schema_providers` moved to `app.sandboxes` and the
+four settings sites were extracted as `PreviewRuntimeLimits`. Both are recorded below. They are
+`PreviewConfiguration` plus `PreviewDependencyService` at `database/contracts.py:11`, and
+`stop_preview` plus `stop_task_preview` at `lifecycle.py:21`. **Neither is scoped.**
 
-**Only the Prisma site was ever scoped. The settings sites and `lifecycle.py:21` are
-classified, not scoped.** Do not treat the classification below as a plan.
+`contracts.py:11` types two Pydantic models onto frozen request dataclasses at `:86` and `:87`.
+Its only real cut is restructuring those requests so they stop carrying preview types, which is
+a design change rather than a move. `lifecycle.py:21` calls into previews at `:180` and `:191`
+during sandbox teardown; it needs an inversion.
 
 **Two rejection arguments were tested and failed. Do not reuse either.**
 
@@ -537,18 +533,68 @@ classified, not scoped.** Do not treat the classification below as a plan.
   the metric anyway: `tests/test_import_direction.py:101` uses `ast.walk`, which visits imports
   inside `TYPE_CHECKING` and inside function bodies. **Guarded imports still count as edges.**
 - **"Extracting settings would rename `PREVIEW_*` environment variables" is false.**
-  `app/containers/config.py:17` reads `PREVIEW_GIT_IMAGE` from the `containers` package: the
-  variable name survived the package move. The same technique preserves any other `PREVIEW_*`
-  name. **This does not make extraction correct — it only voids that objection.** The settings
-  decision stays open.
-
-**The known cost of value-passing.** `complete_database_provision` serves create, confirm,
-reset, resume and sync; destroy takes a separate settings path. Threading settings inward
-therefore widens preview vocabulary across sandbox signatures and their callers rather than
-removing it. Weigh that against extraction when the sites are scoped.
+  `app/containers/config.py:19` reads `PREVIEW_GIT_IMAGE` from the `containers` package: the
+  variable name survived the package move. The extraction below preserved all four remaining
+  `PREVIEW_*` names the same way.
 
 **Preserve `previews -> sandboxes` as the surviving direction.** It matches the domain flow: a
 preview operates on a sandbox, so previews depending on sandboxes is the natural dependency.
+
+#### `PreviewRuntimeLimits` extracted into `app.containers`, 21 Aug 2026 — done
+
+**The seam was exact, and that is what justified the extraction.** Every one of the twelve
+`PreviewSettings` fields was mapped to its reading packages. Eight are read only by `previews`.
+**Exactly four are shared with `sandboxes`, and `sandboxes` reads nothing else** —
+`preview_memory`, `prepare_timeout_seconds`, `shared_database_memory`,
+`shared_database_max_connections`. Extracting them left nothing behind.
+
+**Shape: composition, not a parallel parameter and not a shim.** `PreviewSettings` gained
+`limits: PreviewRuntimeLimits = field(default_factory=PreviewRuntimeLimits)`. Previews reads
+`settings.limits.<name>`; sandboxes parameters are retyped to `PreviewRuntimeLimits` and read
+`settings.<name>` with no prefix. There are no delegating properties. **The router at
+`previews/router.py:86` and the 15 previews signatures carrying `settings: PreviewSettings` did
+not change**, which is why this cost 20 files instead of threading a second parameter through
+all of them.
+
+**Why a direct factory call was rejected.** `previews/router.py` injects `PreviewSettings` via
+`Depends(get_preview_settings)`, and tests override behaviour by constructing it. Calling
+`get_preview_runtime_limits()` deep in previews would have returned the cached default and
+**silently discarded the 120-second timeout at `tests/previews/test_docker_integration.py:241`**
+— the one site of ten that sets anything other than the default. It would also have weakened
+FastAPI dependency overrides. Configuration resolves at an owning boundary and is passed on.
+
+**`default_factory=PreviewRuntimeLimits`, never `default_factory=get_preview_runtime_limits`.**
+Direct constructors must receive deterministic code defaults, not cached environment state. The
+environment-backed object is composed only inside `get_preview_settings`.
+
+**Only `preview_memory` was renamed**, to `memory`; `PreviewRuntimeLimits.memory` is clear from
+its type, and keeping the old name would have preserved redundant vocabulary. The other three
+names are unchanged. **All four `PREVIEW_*` variables keep their names, and
+`app/containers/config.py` is now their single Python authority.**
+
+**Four `DEFAULT_PREVIEW_*` constants serve both the dataclass default and the `os.getenv`
+fallback**, so no default is restated. **`app/previews/config.py` still restates its remaining
+defaults** — `maximum_dependency_bytes` and `maximum_built_image_bytes` each write the literal
+twice, at the field and at the environment fallback, which leaves the field default unasserted
+and free to drift. Not swept, deliberately.
+
+**Cost: 20 files** — 13 source, 6 tests modified, 1 test added. Nine of the ten test
+constructors simply dropped `prepare_timeout_seconds=600`, which is now the default.
+
+**Effect: `sandboxes -> previews` falls from 6 symbols in 6 sites and 5 files to 4 symbols in
+2 sites and 2 files.** `KNOWN_CYCLE` is unchanged: the component still holds both packages.
+
+**Verified:** gated 887 passed, 4 skipped, run twice; ungated 848 passed, 43 skipped;
+`probe_all.py` 157 modules, 0 failed; ruff clean; OpenAPI byte-identical.
+
+**The tripwire found a real gap, and it is the lesson worth keeping.** Replacing
+`limits=get_preview_runtime_limits()` with a bare `PreviewRuntimeLimits()` in the settings
+factory makes production ignore all four environment variables. **That corruption passed 847
+tests.** The new isolated limits tests in `tests/containers/test_config.py` did not catch it,
+because they exercise the factory directly and never assert that `get_preview_settings`
+composes it. `tests/previews/test_config.py` was added to close that, and the same corruption
+now fails exactly one test. **A settings extraction needs a composition test, not only a
+factory test** — otherwise the seam between the two objects is unasserted.
 
 #### `prisma_schema_providers` moved to `app.sandboxes`, 20 Aug 2026 — done
 
@@ -648,7 +694,8 @@ publishing — so the real figure is 5. `service/transitions.py` was miscounted 
 **Match whole-object pass-through as well as attribute reads.** Same trap shape as the
 grep-undercount already recorded for importers and label literals.
 - The other direction is 16 symbols but only 3 files, and every one is
-  `app.sandboxes.database`.
+  `app.sandboxes.database`. **Those are the figures at that scoping, not current** — see the
+  table at the head of this entry.
 
 **Nothing here is scoped or approved. Grill the scope before touching it.**
 
