@@ -1,13 +1,13 @@
 # Open work
 
-**State:** `main`, 20 Aug 2026, pushed and level with `origin/main`. **This header carries no
+**State:** `main`, 21 Aug 2026, pushed and level with `origin/main`. **This header carries no
 commit hash on purpose.** A tracked file cannot state its own commit accurately, because
 recording the hash changes the hash. Read `git log` for the exact HEAD. The figures below are
-measured after the `PreviewRuntimeLimits` extraction recorded in section 2.
-**Suites:** backend 848 passed, 43 skipped, ~28s. Gated backend 887 passed, 4 skipped, ~133s,
-run twice. Frontend 80 passed, `npm run build` clean — **not re-run since `189a840`; no
+measured after the `DatabaseConnectionRequest` narrowing recorded in section 2.
+**Suites:** backend 851 passed, 43 skipped, ~30s. Gated backend 890 passed, 4 skipped, ~210s.
+Frontend 80 passed, `npm run build` clean — **not re-run since `189a840`; no
 frontend file has changed since.**
-**Lint:** `ruff check app tests` passes. `ruff format --check app tests` reports 251 files
+**Lint:** `ruff check app tests` passes. `ruff format --check app tests` reports 252 files
 formatted.
 
 This replaces `architecture-review-verification-and-plan.md` and
@@ -470,7 +470,7 @@ below held, the plan built on them did not. Measured:
 
 | Edge | Cost | Shape |
 |---|---|---|
-| `sandboxes -> previews` | 4 symbols, **2 files** | `contracts.py:11` and `lifecycle.py:21` |
+| `sandboxes -> previews` | 2 symbols, **1 file** | `lifecycle.py:21` |
 | `previews -> sandboxes` | 17 symbols, **4 files** | 3 sites in `app/sandboxes/database`, 1 in `engine_detection` |
 
 **The "shared primitive filed inside a feature package" reading of this edge was wrong, and
@@ -512,15 +512,21 @@ initially, for compatibility. **Do not merge it with `app/implementation_context
 **The rewrite count for the extraction is unmeasured.** It depends on the new function
 signatures. Do not carry a figure into the plan until it is measured.
 
-**What remains is 2 sites**, after `prisma_schema_providers` moved to `app.sandboxes` and the
-four settings sites were extracted as `PreviewRuntimeLimits`. Both are recorded below. They are
-`PreviewConfiguration` plus `PreviewDependencyService` at `database/contracts.py:11`, and
-`stop_preview` plus `stop_task_preview` at `lifecycle.py:21`. **Neither is scoped.**
+**What remains is 1 site**, after `prisma_schema_providers` moved to `app.sandboxes`, the four
+settings sites were extracted as `PreviewRuntimeLimits`, and `DatabaseConnectionRequest` was
+narrowed. All three are recorded below. The survivor is `stop_preview` plus `stop_task_preview`
+at `lifecycle.py:21`.
 
-`contracts.py:11` types two Pydantic models onto frozen request dataclasses at `:86` and `:87`.
-Its only real cut is restructuring those requests so they stop carrying preview types, which is
-a design change rather than a move. `lifecycle.py:21` calls into previews at `:180` and `:191`
-during sandbox teardown; it needs an inversion.
+`lifecycle.py:21` calls into previews at `:180` and `:191` during sandbox teardown. **A callback
+inversion does not cut it, and this was traced rather than assumed.** `stop_blocking_previews` is
+born at `app/sandboxes/router.py:77` as an API request field and threads through
+`publishing.py:39`, `transitions.py:60`, `provisioning.py:176` and `syncing.py:38` into
+`lifecycle_lease` at `lifecycle.py:66`. Handing `lifecycle_lease` a teardown callable instead of
+a bool **relocates the import from `lifecycle.py` to `router.py`, both inside `sandboxes`.**
+Cutting it needs the injection point outside `sandboxes`: either DI wiring in a neutral module,
+or moving the stop-then-retry-admission orchestration into `previews` so the router calls
+previews before sandboxes. **Both are architectural changes, not refactors.** Grill the options
+before touching it.
 
 **Two rejection arguments were tested and failed. Do not reuse either.**
 
@@ -539,6 +545,64 @@ during sandbox teardown; it needs an inversion.
 
 **Preserve `previews -> sandboxes` as the surviving direction.** It matches the domain flow: a
 preview operates on a sandbox, so previews depending on sandboxes is the natural dependency.
+
+#### `DatabaseConnectionRequest` narrowed to sandbox vocabulary, 21 Aug 2026 — done
+
+`app/sandboxes/database/contracts.py:11` imported `PreviewConfiguration` and
+`PreviewDependencyService` to type two fields on one frozen request dataclass. **The scoping
+pass is what made this cheap.** Sandboxes read exactly two things off those two Pydantic
+models and nothing else: `config.environment[...].from_service`, at `sqlite.py:42`,
+`postgres.py:119` and `mysql.py:120`; and `database.database`, a name string used only as the
+fallback in `request.database_name or request.database.database`. Two Pydantic models were
+being carried across a package boundary to deliver a `str` and a mapping of `str` to `str`.
+
+The contract now names what it uses:
+
+```python
+@dataclass(frozen=True)
+class DatabaseConnectionRequest:
+    service_environment: Mapping[str, str]
+    database_name: str
+    credentials: dict[str, str]
+    error: ErrorFactory
+```
+
+**`database_name` is required, not defaulted to `""`.** The old empty default was safe only
+because of the `or` fallback behind it. With the fallback moved to the caller, a default would
+let an empty database name reach a connection URL silently. A required field is the guard.
+
+**Previews owns the translation, at one site.** `_native_service_environment`
+(`previews/runtimes/native.py:516`) keeps its signature and its two callers, and builds the
+narrowed request from preview models inside its body. The `database_name or database.database`
+precedence is preserved there exactly.
+
+**Cost: 7 files** — 4 source under `app/sandboxes/database`, 1 source under `app/previews`,
+1 test modified, 1 test added. No error code, message string or connection-URL format changed.
+
+**Effect: `sandboxes -> previews` falls from 4 symbols in 2 sites and 2 files to 2 symbols in
+1 site and 1 file.** `KNOWN_CYCLE` is unchanged: the component still holds both packages, and
+it will until `lifecycle.py:21` goes.
+
+**Verified:** ungated 851 passed, 43 skipped; gated 890 passed, 4 skipped; `probe_all.py`
+157 modules, 0 failed; ruff clean over 252 files; OpenAPI byte-identical.
+
+**The tripwire found a real gap, and it generalises past this change.** Narrowing a contract
+does not delete the mapping work — it moves it into a translator, and the translator sits in
+the blind spot between the two test suites. `_native_service_environment` had no test anywhere:
+the sandbox engine tests in `tests/sandboxes/test_database.py` construct
+`DatabaseConnectionRequest` directly and bypass it, and no preview test called it. Two
+corruptions, each applied alone:
+
+| Corruption | Before | After |
+|---|---|---|
+| drop the `database_name` override | silent across 848 ungated and 886 gated tests | fails exactly 1 test |
+| map every variable to `""` instead of `from_service` | silent across 848 ungated tests | fails 3 tests |
+
+`tests/previews/test_native_environment.py` closes it, and no test outside that file fires for
+either corruption. **Before the change there was nothing to get wrong at that seam; the
+refactor created it.** Note the shape is the same as the `PreviewRuntimeLimits` finding
+recorded below, one layer down: there an extraction left the composition unasserted, here a
+narrowing left the translation unasserted. Both were invisible to a full green suite.
 
 #### `PreviewRuntimeLimits` extracted into `app.containers`, 21 Aug 2026 — done
 
@@ -1451,6 +1515,14 @@ These came out of eleven phases. Each one is here because ignoring it cost somet
   reading was reported before the other six ran. It was wrong: two more members sit in the
   same index and nothing notices when they change. Two data points suggest a mechanism; they
   do not establish one. Sweep the whole vocabulary before naming the cause.
+- **A contract change moves logic into a translator, and nothing tests a translator.**
+  Twice now, one layer apart. Extracting `PreviewRuntimeLimits` left the composition between
+  the settings factory and the new object unasserted; narrowing `DatabaseConnectionRequest`
+  left the preview-to-sandbox translation unasserted. In both cases the tests on each side of
+  the seam were thorough and the seam itself had none, because each suite constructs the
+  object it owns and never exercises the hand-off. **When a change makes one type stop
+  carrying another, write the test that runs the conversion**, then tripwire it to prove that
+  test is the one that fires.
 - **Verify a monkeypatch retarget by DELETING the patch**, not by aiming it at a module that
   binds no such name — the latter raises from `monkeypatch.setattr` itself and so fails for
   the wrong reason. If the test still passes without the patch, check whether it is green for
