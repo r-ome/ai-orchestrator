@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -8,7 +8,6 @@ from docker.types import Mount
 
 from app.containers.config import PreviewRuntimeLimits
 from app.platform.naming import db_data_volume
-from app.previews.models import PreviewConfiguration, PreviewDependencyService
 
 from .constants import SQLITE_DATA_MOUNT_PATH
 
@@ -83,11 +82,10 @@ class DatabaseSchemaProvisionRequest:
 
 @dataclass(frozen=True)
 class DatabaseConnectionRequest:
-    config: PreviewConfiguration
-    database: PreviewDependencyService
+    service_environment: Mapping[str, str]
+    database_name: str
     credentials: dict[str, str]
     error: ErrorFactory
-    database_name: str = ""
 
 
 @dataclass(frozen=True)

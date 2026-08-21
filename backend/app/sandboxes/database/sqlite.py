@@ -39,10 +39,10 @@ class SQLiteDatabaseEngine(MySQLDatabaseEngine):
 
     def connection_url(self, request: DatabaseConnectionRequest) -> dict[str, str]:
         environment: dict[str, str] = {}
-        for variable, source in request.config.environment.items():
-            if not source.from_service:
+        for variable, from_service in request.service_environment.items():
+            if not from_service:
                 continue
-            if variable != "DATABASE_URL" or source.from_service != "database":
+            if variable != "DATABASE_URL" or from_service != "database":
                 raise request.error(
                     422,
                     "SQLite previews support only DATABASE_URL from the database service",

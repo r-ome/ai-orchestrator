@@ -115,11 +115,11 @@ class PostgreSQLDatabaseEngine(MySQLDatabaseEngine):
 
     def connection_url(self, request: DatabaseConnectionRequest) -> dict[str, str]:
         environment: dict[str, str] = {}
-        database_name = request.database_name or request.database.database
-        for variable, source in request.config.environment.items():
-            if not source.from_service:
+        database_name = request.database_name
+        for variable, from_service in request.service_environment.items():
+            if not from_service:
                 continue
-            if variable != "DATABASE_URL" or source.from_service != "database":
+            if variable != "DATABASE_URL" or from_service != "database":
                 raise request.error(
                     422,
                     "PostgreSQL previews support only DATABASE_URL from the database service",

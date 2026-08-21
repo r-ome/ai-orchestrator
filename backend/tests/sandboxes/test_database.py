@@ -66,8 +66,10 @@ def test_mysql_engine_builds_the_existing_database_url() -> None:
 
     environment = MYSQL_DATABASE.connection_url(
         DatabaseConnectionRequest(
-            config=config,
-            database=config.services["database"],
+            service_environment={
+                name: source.from_service for name, source in config.environment.items()
+            },
+            database_name=config.services["database"].database,
             credentials={"username": "preview user", "password": "pa/ss"},
             error=RuntimeError,
         )
@@ -467,8 +469,10 @@ def test_postgres_engine_builds_a_postgres_connection_url() -> None:
 
     assert POSTGRESQL_DATABASE.connection_url(
         DatabaseConnectionRequest(
-            config=config,
-            database=config.services["database"],
+            service_environment={
+                name: source.from_service for name, source in config.environment.items()
+            },
+            database_name=config.services["database"].database,
             credentials={"username": "preview user", "password": "pa/ss"},
             error=RuntimeError,
         )
@@ -537,8 +541,10 @@ def test_sqlite_uses_a_sandbox_volume_without_a_server_network_or_credentials(
     config = _config(PreviewServiceType.SQLITE)
     assert SQLITE_DATABASE.connection_url(
         DatabaseConnectionRequest(
-            config=config,
-            database=config.services["database"],
+            service_environment={
+                name: source.from_service for name, source in config.environment.items()
+            },
+            database_name=config.services["database"].database,
             credentials={},
             error=RuntimeError,
         )

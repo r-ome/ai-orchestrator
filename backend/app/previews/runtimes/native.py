@@ -522,10 +522,11 @@ def _native_service_environment(
 ) -> dict[str, str]:
     return _database_engine.connection_url(
         DatabaseConnectionRequest(
-            config=config,
-            database=database,
+            service_environment={
+                name: source.from_service for name, source in config.environment.items()
+            },
+            database_name=database_name or database.database,
             credentials=credentials,
-            database_name=database_name,
             error=PreviewOperationError,
         )
     )
